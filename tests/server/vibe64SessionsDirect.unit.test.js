@@ -327,7 +327,7 @@ test("deferred session changes publish modern top-level realtime events", async 
     originId: "tab:test",
     payload: {
       clientRefresh: {
-        includeLaunchTargets: true
+        includeOutputs: true
       }
     },
     reason: "workspace-setup-completed",
@@ -345,7 +345,7 @@ test("deferred session changes publish modern top-level realtime events", async 
   assert.equal(events[0].realtime.audience, "all_clients");
   assert.deepEqual(events[0].realtime.payload, {
     clientRefresh: {
-      includeLaunchTargets: true
+      includeOutputs: true
     },
     originId: "tab:test",
     reason: "workspace-setup-completed",

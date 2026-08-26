@@ -761,7 +761,8 @@ test("@preview-lifecycle Temporary AI keeps its shared upload queue across task 
     attachmentUploadResponseDelayMs: 1000
   });
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-  await page.getByRole("button", { name: "Open temporary AI" }).click();
+  await page.getByRole("button", { name: /^Session actions/u }).click();
+  await page.locator("[data-vibe64-temporary-ai-action]:visible").click();
 
   const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
   const navigation = workspace.getByRole("navigation", {
@@ -1129,14 +1130,21 @@ test("@preview-lifecycle auto-starts without exposing passive actions", async ({
     initialLaunchStatus: idleLaunchStatusPayload([
       {
         available: true,
+        default: false,
+        downloads: [],
         id: "built",
-        label: "Run built app"
+        label: "Run built app",
+        mode: "interactive",
+        presentation: { kind: "web" }
       },
       {
         available: true,
-        defaultPreview: true,
+        default: true,
+        downloads: [],
         id: "dev",
-        label: "Run app"
+        label: "Run app",
+        mode: "interactive",
+        presentation: { kind: "web" }
       }
     ]),
     launchTerminalDelayMs: 1000
@@ -1149,10 +1157,7 @@ test("@preview-lifecycle auto-starts without exposing passive actions", async ({
   await expect(waitingState.getByRole("button")).toHaveCount(0);
   await expect.poll(() => launchSession.getLaunchStartPayloads()).toEqual([
     {
-      launchInput: {
-        values: {}
-      },
-      launchTargetId: "dev",
+      outputTargetId: "dev",
       originId: expect.stringMatching(/^tab:/u)
     }
   ]);
@@ -1168,8 +1173,12 @@ test("@preview-lifecycle automatically recovers when the first status has no tar
       idleLaunchStatusPayload([
         {
           available: true,
+          default: true,
+          downloads: [],
           id: "dev",
-          label: "Run app"
+          label: "Run app",
+          mode: "interactive",
+          presentation: { kind: "web" }
         }
       ])
     ]
@@ -1182,10 +1191,7 @@ test("@preview-lifecycle automatically recovers when the first status has no tar
 
   await expect.poll(() => launchSession.getLaunchStartPayloads()).toEqual([
     {
-      launchInput: {
-        values: {}
-      },
-      launchTargetId: "dev",
+      outputTargetId: "dev",
       originId: expect.stringMatching(/^tab:/u)
     }
   ]);
@@ -1218,10 +1224,7 @@ test("@preview-lifecycle refreshes disabled targets after the selected session a
   await expect.poll(() => launchSession.getLaunchStatusRequestCount()).toBe(2);
   await expect.poll(() => launchSession.getLaunchStartPayloads()).toEqual([
     {
-      launchInput: {
-        values: {}
-      },
-      launchTargetId: "dev",
+      outputTargetId: "dev",
       originId: expect.stringMatching(/^tab:/u)
     }
   ]);
@@ -1245,10 +1248,7 @@ test("@preview-lifecycle lets the user recheck a disabled target without a sessi
   await expect.poll(() => launchSession.getLaunchStatusRequestCount()).toBe(2);
   await expect.poll(() => launchSession.getLaunchStartPayloads()).toEqual([
     {
-      launchInput: {
-        values: {}
-      },
-      launchTargetId: "dev",
+      outputTargetId: "dev",
       originId: expect.stringMatching(/^tab:/u)
     }
   ]);
@@ -1443,59 +1443,6 @@ test("embedded preview stays mounted when switching selected sessions", async ({
     const refs = window as unknown as { __vibe64AlphaPreviewFrame?: Element | null };
     return frame === refs.__vibe64AlphaPreviewFrame;
   })).toBe(true);
-});
-
-test("embedded preview options restart does not wait on the terminal stream", async ({ page }) => {
-  await mockLaunchTerminalSocket(page, {
-    terminalSocketNeverSettles: true
-  });
-  const launchSession = await mockLaunchSession(page, {
-    launchTargetPreviewOptions: [
-      {
-        defaultValue: [],
-        description: "Arguments passed to the app server command when previewing this app.",
-        id: "startupArgs",
-        label: "Startup arguments",
-        placeholder: "--flag\nvalue",
-        type: "string-list"
-      }
-    ]
-  });
-
-  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-
-  const previewOptionsButton = page.getByRole("button", {
-    name: "Preview options"
-  });
-  await expect(previewOptionsButton).toBeVisible();
-  await expect(previewOptionsButton).toBeEnabled();
-  await expect.poll(() => page.locator(".vibe64-launch-controls__toolbar button").last().getAttribute("title"))
-    .toBe("Preview options");
-  const startCountBeforeRestart = launchSession.getLaunchStartPayloads().length;
-
-  await previewOptionsButton.click();
-  await page.getByLabel("Startup arguments").fill(".\n--debug");
-  await page.getByRole("button", {
-    name: "Save and restart preview"
-  }).click();
-
-  await expect.poll(() => launchSession.getLaunchStartPayloads().slice(startCountBeforeRestart)).toEqual([
-    {
-      forceRestart: true,
-      launchInput: {
-        values: {
-          startupArgs: [
-            ".",
-            "--debug"
-          ]
-        }
-      },
-      launchTargetId: "dev",
-      originId: expect.stringMatching(/^tab:/u)
-    }
-  ]);
-  await expect(previewOptionsButton).toBeEnabled();
-  await expect(page.locator("button[title='Restart']")).toBeEnabled();
 });
 
 test("mobile project navigation uses action labels after showing the project pane", async ({ page }) => {
@@ -2504,7 +2451,6 @@ async function mockLaunchSession(page: Page, {
   attachmentUploadResponseDelayMs = 0,
   conversationLog = [],
   initialLaunchStatus = null,
-  launchTargetPreviewOptions = [],
   launchStatusSequence = null,
   launchTerminalDelayMs = 0,
   previewBootstrapToken = "",
@@ -2529,7 +2475,6 @@ async function mockLaunchSession(page: Page, {
   attachmentUploadResponseDelayMs?: number;
   conversationLog?: unknown[];
   initialLaunchStatus?: ReturnType<typeof launchStatusPayload> | null;
-  launchTargetPreviewOptions?: unknown[];
   launchStatusSequence?: unknown[] | null;
   launchTerminalDelayMs?: number;
   previewBootstrapToken?: string;
@@ -2595,10 +2540,9 @@ async function mockLaunchSession(page: Page, {
       return initialLaunchStatus;
     }
     return launchStatusPayload(launchStarted
-      ? { launchTargetPreviewOptions, previewHref, previewIdentity }
+      ? { previewHref, previewIdentity }
       : {
           activeTerminal: null,
-          launchTargetPreviewOptions,
           previewHref,
           previewIdentity
         });
@@ -2701,12 +2645,12 @@ async function mockLaunchSession(page: Page, {
       });
       return;
     }
-    if (method === "GET" && url.pathname.endsWith("/launch-targets")) {
+    if (method === "GET" && url.pathname.endsWith("/outputs")) {
       launchStatusReadCount += 1;
       await fulfillJson(route, currentLaunchStatus());
       return;
     }
-    if (method === "POST" && url.pathname.endsWith("/launch-terminal")) {
+    if (method === "POST" && url.pathname.endsWith("/output-runs")) {
       launchStartPayloads.push(request.postDataJSON());
       if (launchTerminalDelayMs > 0) {
         await new Promise((resolve) => {
@@ -2717,11 +2661,7 @@ async function mockLaunchSession(page: Page, {
       launchStarted = true;
       await fulfillJson(route, {
         ok: true,
-        ...launchStatusPayload({
-          launchTargetPreviewOptions,
-          previewHref,
-          previewIdentity
-        }).activeTerminal
+        ...launchStatusPayload({ previewHref, previewIdentity }).activeTerminal
       });
       return;
     }
@@ -2740,7 +2680,7 @@ async function mockLaunchSession(page: Page, {
       });
       return;
     }
-    if (method === "POST" && /\/launch-terminal\/[^/]+\/stop$/u.test(url.pathname)) {
+    if (method === "POST" && /\/output-runs\/[^/]+\/stop$/u.test(url.pathname)) {
       initialLaunchStatusActive = false;
       launchStarted = false;
       await fulfillJson(route, {
@@ -3753,7 +3693,7 @@ async function mockLaunchTerminalSocket(page: Page, {
         this.url = String(url || "");
         const pathname = new URL(this.url, window.location.href).pathname;
         const agentTerminal = pathname.includes("/agent-terminal/");
-        const launchTerminal = pathname.includes("/launch-terminal/");
+        const launchTerminal = pathname.includes("/output-runs/");
         if (!agentTerminal && !launchTerminal) {
           return new OriginalWebSocket(url);
         }
@@ -3778,8 +3718,8 @@ async function mockLaunchTerminalSocket(page: Page, {
                     }
                   ],
                   launchReady: true,
-                  launchTargetId: "dev",
-                  launchTargetLabel: "Run app"
+                  outputTargetId: "dev",
+                  outputTargetLabel: "Run app"
                 },
                 ok: true,
                 output: agentTerminal ? "Codex ready" : `action:url:${targetAppUrl}\nready`,
@@ -3841,11 +3781,9 @@ async function mockLaunchTerminalSocket(page: Page, {
 
 function launchStatusPayload(options: {
   activeTerminal?: unknown;
-  launchTargetPreviewOptions?: unknown[];
   previewHref?: string;
   previewIdentity?: Record<string, unknown> | null;
 } = {}) {
-  const launchTargetPreviewOptions = options.launchTargetPreviewOptions || [];
   const previewHref = options.previewHref || PROXY_APP_URL;
   const terminal = Object.hasOwn(options, "activeTerminal")
     ? options.activeTerminal
@@ -3862,23 +3800,29 @@ function launchStatusPayload(options: {
             }
           ],
           launchReady: true,
-          launchTargetId: "dev",
-          launchTargetLabel: "Run app"
+          outputTargetId: "dev",
+          outputTargetLabel: "Run app"
         },
         output: `action:url:${TARGET_APP_URL}\nready`,
         running: true,
         status: "running"
       };
-  const devLaunchTarget = {
+  const devOutputTarget = {
     available: true,
+    default: true,
+    downloads: [],
     id: "dev",
     label: "Run app",
-    ...(launchTargetPreviewOptions.length > 0 ? { previewOptions: launchTargetPreviewOptions } : {})
+    mode: "interactive",
+    presentation: {
+      kind: "web"
+    }
   };
   return {
     activeTerminal: terminal,
-    launchTargets: [
-      devLaunchTarget
+    outputRuns: [],
+    outputTargets: [
+      devOutputTarget
     ],
     ok: true,
     ...(options.previewIdentity ? { previewIdentity: options.previewIdentity } : {}),
@@ -3900,14 +3844,15 @@ function launchStatusPayload(options: {
   };
 }
 
-function idleLaunchStatusPayload(launchTargets: unknown[] = []) {
+function idleLaunchStatusPayload(outputTargets: unknown[] = []) {
   return {
     activeTerminal: null,
-    launchTargets,
+    outputRuns: [],
+    outputTargets,
     ok: true,
     openTarget: {
       available: false,
-      disabledReason: "Run a launch target first.",
+      disabledReason: "Run an output target first.",
       href: "",
       kind: "url",
       label: "Open browser",
@@ -3915,7 +3860,7 @@ function idleLaunchStatusPayload(launchTargets: unknown[] = []) {
     },
     previewTarget: {
       available: false,
-      disabledReason: "Run a launch target first.",
+      disabledReason: "Run an output target first.",
       href: "",
       kind: "url",
       label: "Preview",
@@ -3926,9 +3871,12 @@ function idleLaunchStatusPayload(launchTargets: unknown[] = []) {
 
 function previewAvailabilitySequence() {
   const previewTarget = {
-    defaultPreview: true,
+    default: true,
+    downloads: [],
     id: "dev",
-    label: "Run app"
+    label: "Run app",
+    mode: "interactive",
+    presentation: { kind: "web" }
   };
   return [
     idleLaunchStatusPayload([

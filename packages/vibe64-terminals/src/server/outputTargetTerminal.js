@@ -71,7 +71,7 @@ import {
   commandInvocation,
   ensureTerminalSessionSourceGitSelfContained,
   vibe64Result,
-  launchTargetTerminalNamespace,
+  outputTargetTerminalNamespace,
   sessionTerminalCwd,
   terminalProjectScopeKey,
   stableHash
@@ -89,26 +89,32 @@ import {
   createPreviewIdentityCommandRunner
 } from "./previewIdentityCommand.js";
 import {
-  createVibe64LaunchTargetTerminalSpec,
+  createVibe64OutputTargetTerminalSpec,
   inspectVibe64WorkspaceSetupForContext,
-  listVibe64LaunchTargets
-} from "./vibe64LaunchTargets.js";
+  listVibe64OutputTargets,
+  outputResultsMarkerLineSeen
+} from "./vibe64OutputTargets.js";
+import {
+  listOutputResults,
+  readOutputResult,
+  removeOutputResults,
+  snapshotDeclaredOutputResults
+} from "./outputResults.js";
 
-const LAUNCH_METADATA = Object.freeze({
-  agentHref: "launch_target_agent_href",
-  href: "launch_target_open_href",
-  id: "launch_target_id",
-  input: "launch_target_input",
-  kind: "launch_target_open_kind",
-  label: "launch_target_label",
-  openLabel: "launch_target_open_label",
-  previewAuth: "launch_target_preview_auth",
-  restartBaseline: "launch_target_restart_baseline",
-  sessionRoot: "launch_target_session_root",
-  startedAt: "launch_target_started_at",
-  terminalId: "launch_target_terminal_id"
+const OUTPUT_METADATA = Object.freeze({
+  agentHref: "output_target_agent_href",
+  href: "output_target_open_href",
+  id: "output_target_id",
+  kind: "output_target_open_kind",
+  label: "output_target_label",
+  openLabel: "output_target_open_label",
+  previewAuth: "output_target_preview_auth",
+  restartBaseline: "output_target_restart_baseline",
+  sessionRoot: "output_target_session_root",
+  startedAt: "output_target_started_at",
+  terminalId: "output_target_terminal_id"
 });
-const LAUNCH_METADATA_NAMES = Object.freeze(Object.values(LAUNCH_METADATA));
+const OUTPUT_METADATA_NAMES = Object.freeze(Object.values(OUTPUT_METADATA));
 const MAX_LAUNCH_ACTION_SCAN_LINES = 10;
 const PREVIEW_PUBLIC_HOST_PREFIX = "v64preview";
 const LAUNCH_RESTART_REASON_SOURCE_CHANGED = "server_source_changed";
@@ -136,7 +142,7 @@ function previewRuntimesForSpec(spec = {}) {
   ]);
 }
 
-function normalizeLaunchTargetId(value = "") {
+function normalizeOutputTargetId(value = "") {
   return String(value || "").trim();
 }
 
@@ -192,7 +198,7 @@ async function writePreviewDiagnostic(session = {}, record = {}, {
     status: String(record.status || "failed").trim() || "failed",
     sessionSourceRoot: String(record.sessionSourceRoot || sessionTerminalCwd(session) || "").trim(),
     ...(record.reason ? { reason: String(record.reason) } : {}),
-    ...(record.launchTargetId ? { launchTargetId: normalizeLaunchTargetId(record.launchTargetId) } : {}),
+    ...(record.outputTargetId ? { outputTargetId: normalizeOutputTargetId(record.outputTargetId) } : {}),
     ...(record.cwd ? { cwd: String(record.cwd) } : {}),
     ...(record.commandPreview ? { commandPreview: String(record.commandPreview) } : {}),
     ...(record.terminalSessionId ? { terminalSessionId: String(record.terminalSessionId) } : {}),
@@ -211,7 +217,7 @@ async function writePreviewDiagnostic(session = {}, record = {}, {
       await appendFile(previewLogPath(session), `${JSON.stringify(normalizedRecord)}\n`, "utf8");
     }
   } catch (error) {
-    vibe64SessionDebugLog("server.launchTargetTerminal.previewDiagnostics.error", {
+    vibe64SessionDebugLog("server.outputTargetTerminal.previewDiagnostics.error", {
       error: vibe64SessionDebugError(error),
       sessionId: record.sessionId || session.sessionId || session.id || "",
       sessionRoot
@@ -227,19 +233,6 @@ function normalizeOpenTarget(value = {}) {
     kind: String(value.kind || "url").trim() || "url",
     label: String(value.label || "Open").trim() || "Open"
   };
-}
-
-function parseLaunchInputMetadata(value = "") {
-  try {
-    const parsed = JSON.parse(String(value || "{}"));
-    return normalizeLaunchInput(parsed);
-  } catch {
-    return {};
-  }
-}
-
-function serializeLaunchInputMetadata(input = {}) {
-  return JSON.stringify(normalizeLaunchInput(input));
 }
 
 function normalizeLaunchRestartBaseline(input = null) {
@@ -478,29 +471,28 @@ function launchIsReady(metadata = {}) {
 }
 
 function openTargetFromMetadata(metadata = {}) {
-  const href = String(metadata[LAUNCH_METADATA.href] || "").trim();
+  const href = String(metadata[OUTPUT_METADATA.href] || "").trim();
   if (!href) {
     return null;
   }
   return normalizeOpenTarget({
     href,
-    kind: metadata[LAUNCH_METADATA.kind],
-    label: metadata[LAUNCH_METADATA.openLabel]
+    kind: metadata[OUTPUT_METADATA.kind],
+    label: metadata[OUTPUT_METADATA.openLabel]
   });
 }
 
-function launchTargetFromMetadata(metadata = {}) {
-  const id = String(metadata[LAUNCH_METADATA.id] || "").trim();
+function outputTargetFromMetadata(metadata = {}) {
+  const id = String(metadata[OUTPUT_METADATA.id] || "").trim();
   if (!id) {
     return null;
   }
   return {
     id,
-    agentHref: String(metadata[LAUNCH_METADATA.agentHref] || "").trim(),
-    label: String(metadata[LAUNCH_METADATA.label] || id).trim() || id,
-    launchInput: parseLaunchInputMetadata(metadata[LAUNCH_METADATA.input]),
+    agentHref: String(metadata[OUTPUT_METADATA.agentHref] || "").trim(),
+    label: String(metadata[OUTPUT_METADATA.label] || id).trim() || id,
     openTarget: openTargetFromMetadata(metadata),
-    startedAt: String(metadata[LAUNCH_METADATA.startedAt] || "").trim()
+    startedAt: String(metadata[OUTPUT_METADATA.startedAt] || "").trim()
   };
 }
 
@@ -510,7 +502,7 @@ function sessionWithoutLaunchMetadata(session = {}) {
     : {};
   return {
     ...session,
-    metadata: Object.fromEntries(Object.entries(metadata).filter(([name]) => !LAUNCH_METADATA_NAMES.includes(name)))
+    metadata: Object.fromEntries(Object.entries(metadata).filter(([name]) => !OUTPUT_METADATA_NAMES.includes(name)))
   };
 }
 
@@ -521,12 +513,12 @@ async function clearLaunchMetadata(store, sessionId = "") {
   }
   if (typeof store.mutateSession === "function" && typeof store.deleteMetadataValue === "function") {
     await store.mutateSession(normalizedSessionId, async () => {
-      await Promise.all(LAUNCH_METADATA_NAMES.map((name) => store.deleteMetadataValue(normalizedSessionId, name)));
+      await Promise.all(OUTPUT_METADATA_NAMES.map((name) => store.deleteMetadataValue(normalizedSessionId, name)));
     });
     return true;
   }
   if (typeof store.deleteMetadataValues === "function") {
-    await store.deleteMetadataValues(normalizedSessionId, LAUNCH_METADATA_NAMES);
+    await store.deleteMetadataValues(normalizedSessionId, OUTPUT_METADATA_NAMES);
     return true;
   }
   return false;
@@ -542,7 +534,7 @@ async function clearLaunchMetadataForTerminal(store, sessionId = "", terminalSes
     return false;
   }
   const currentTerminalId = String(
-    await store.readMetadataValue(sessionId, LAUNCH_METADATA.terminalId) || ""
+    await store.readMetadataValue(sessionId, OUTPUT_METADATA.terminalId) || ""
   ).trim();
   if (currentTerminalId !== normalizedTerminalSessionId) {
     return false;
@@ -553,7 +545,7 @@ async function clearLaunchMetadataForTerminal(store, sessionId = "", terminalSes
 async function writeLaunchMetadata(store, sessionId, terminalSession = {}) {
   const metadata = terminalSession.metadata || {};
   const openTarget = normalizeOpenTarget(metadata.openTarget || {});
-  if (!metadata.launchTargetId || !openTarget.href) {
+  if (!metadata.outputTargetId || !openTarget.href) {
     return;
   }
   const agentHref = String(
@@ -564,22 +556,21 @@ async function writeLaunchMetadata(store, sessionId, terminalSession = {}) {
   ).trim();
   await store.mutateSession(sessionId, async () => {
     await Promise.all([
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.agentHref, agentHref),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.id, metadata.launchTargetId),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.input, serializeLaunchInputMetadata(metadata.launchInput)),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.label, metadata.launchTargetLabel || metadata.launchTargetId),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.kind, openTarget.kind),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.openLabel, openTarget.label),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.href, openTarget.href),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.previewAuth, metadata.previewAuth || ""),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.agentHref, agentHref),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.id, metadata.outputTargetId),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.label, metadata.outputTargetLabel || metadata.outputTargetId),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.kind, openTarget.kind),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.openLabel, openTarget.label),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.href, openTarget.href),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.previewAuth, metadata.previewAuth || ""),
       store.writeMetadataValue(
         sessionId,
-        LAUNCH_METADATA.restartBaseline,
+        OUTPUT_METADATA.restartBaseline,
         serializeLaunchRestartBaseline(metadata.launchRestartBaseline)
       ),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.sessionRoot, metadata.sessionRoot || ""),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.startedAt, new Date().toISOString()),
-      store.writeMetadataValue(sessionId, LAUNCH_METADATA.terminalId, terminalSession.id || "")
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.sessionRoot, metadata.sessionRoot || ""),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.startedAt, new Date().toISOString()),
+      store.writeMetadataValue(sessionId, OUTPUT_METADATA.terminalId, terminalSession.id || "")
     ]);
   });
 }
@@ -605,7 +596,7 @@ async function createLaunchContext(projectService, sessionId, {
   const projectEnvironment = await loadProjectExecutionEnv({
     projectService,
     session,
-    target: "launch"
+    target: "output-target"
   });
   const projectContextRoot = typeof projectService?.currentTargetRoot === "function"
     ? String(projectService.currentTargetRoot() || "").trim()
@@ -644,12 +635,12 @@ async function createLaunchContext(projectService, sessionId, {
   };
 }
 
-async function listLaunchTargets(context, {
-  inspectLaunch,
+async function listOutputTargets(context, {
+  inspectOutputs,
   inspectWorkspaceSetup
 } = {}) {
   const [targets, setup] = await Promise.all([
-    listVibe64LaunchTargets(context, inspectLaunch ? { inspect: inspectLaunch } : {}),
+    listVibe64OutputTargets(context, inspectOutputs ? { inspect: inspectOutputs } : {}),
     inspectVibe64WorkspaceSetupForContext(
       context,
       inspectWorkspaceSetup ? { inspect: inspectWorkspaceSetup } : {}
@@ -703,37 +694,37 @@ function workspaceSetupLaunchDisabledReason(session = {}, inspection = null) {
       stored.diagnostic || "Workspace preparation must be fixed before managed preview can start."
     ).trim();
   }
-  // Starting a launch target owns running and awaiting the current recipe.
+  // Starting an output target owns running and awaiting the current recipe.
   // A new or changed recipe is therefore pending work, not a disabled target.
   return "";
 }
 
-async function createLaunchTargetSpec(input = {}) {
-  return createVibe64LaunchTargetTerminalSpec(input);
+async function createOutputTargetSpec(input = {}) {
+  return createVibe64OutputTargetTerminalSpec(input);
 }
 
-function findLaunchTarget(targets = [], launchTargetId = "") {
-  const normalizedLaunchTargetId = normalizeLaunchTargetId(launchTargetId);
-  return targets.find((target) => target.id === normalizedLaunchTargetId) || null;
+function findOutputTarget(targets = [], outputTargetId = "") {
+  const normalizedOutputTargetId = normalizeOutputTargetId(outputTargetId);
+  return targets.find((target) => target.id === normalizedOutputTargetId) || null;
 }
 
-function managedPreviewUnavailableMessage(launchTargets = []) {
-  const reasons = [...new Set(launchTargets
+function managedPreviewUnavailableMessage(outputTargets = []) {
+  const reasons = [...new Set(outputTargets
     .map((target) => String(target?.disabledReason || "").trim())
     .filter(Boolean))];
   if (reasons.length > 0) {
     return reasons.join(" ");
   }
-  return launchTargets.length > 0
+  return outputTargets.length > 0
     ? "The managed preview is not currently available."
     : "This project does not currently provide a managed preview.";
 }
 
 function managedPreviewLaunchPlan({
-  launchTargets = [],
+  outputTargets = [],
   previewStatus = {},
   restart = false,
-  savedLaunchTarget = null
+  savedOutputTarget = null
 } = {}) {
   const activeTerminal = previewStatus.activeTerminal || null;
   const previewState = String(previewStatus.preview?.state || "").trim();
@@ -750,9 +741,9 @@ function managedPreviewLaunchPlan({
   }
 
   const activeMetadata = activeTerminal?.metadata || {};
-  const lastLaunchTarget = previewStatus.lastLaunchTarget || savedLaunchTarget || {};
-  const previousTargetId = normalizeLaunchTargetId(
-    lastLaunchTarget.id || activeMetadata.launchTargetId
+  const lastOutputTarget = previewStatus.lastOutputTarget || savedOutputTarget || {};
+  const previousTargetId = normalizeOutputTargetId(
+    lastOutputTarget.id || activeMetadata.outputTargetId
   );
   if (restart && !previousTargetId) {
     return {
@@ -761,32 +752,28 @@ function managedPreviewLaunchPlan({
       ready: false
     };
   }
-  const previousTarget = findLaunchTarget(launchTargets, previousTargetId);
+  const previousTarget = findOutputTarget(outputTargets, previousTargetId);
   if (restart && (!previousTarget || previousTarget.available === false)) {
     return {
-      error: previousTarget?.disabledReason || "The previous managed preview launch target is no longer available.",
+      error: previousTarget?.disabledReason || "The previous managed preview output target is no longer available.",
       ready: false
     };
   }
-  const launchTarget = (
+  const outputTarget = (
     previousTarget && previousTarget.available !== false
       ? previousTarget
       : null
-  ) || (restart ? null : managedPreviewTarget(launchTargets));
-  if (!launchTarget) {
+  ) || (restart ? null : managedPreviewTarget(outputTargets));
+  if (!outputTarget) {
     return {
-      error: managedPreviewUnavailableMessage(launchTargets),
+      error: managedPreviewUnavailableMessage(outputTargets),
       ready: false
     };
   }
 
-  const reusingPreviousTarget = launchTarget.id === previousTargetId;
   return {
     forceRestart: restart || launchTerminalIsRunning(activeTerminal || {}),
-    launchInput: reusingPreviousTarget
-      ? normalizeLaunchInput(lastLaunchTarget.launchInput || activeMetadata.launchInput)
-      : {},
-    launchTargetId: launchTarget.id,
+    outputTargetId: outputTarget.id,
     ready: false
   };
 }
@@ -795,14 +782,14 @@ function normalizePreviewRecovery(recovery = null) {
   return recovery && typeof recovery === "object" && !Array.isArray(recovery) ? recovery : null;
 }
 
-function launchTargetFromTerminalMetadata(terminal = {}) {
+function outputTargetFromTerminalMetadata(terminal = {}) {
   const source = terminal && typeof terminal === "object" && !Array.isArray(terminal)
     ? terminal
     : {};
   const metadata = source.metadata && typeof source.metadata === "object" && !Array.isArray(source.metadata)
     ? source.metadata
     : {};
-  const id = String(metadata.launchTargetId || "").trim();
+  const id = String(metadata.outputTargetId || "").trim();
   if (!id) {
     return null;
   }
@@ -810,43 +797,42 @@ function launchTargetFromTerminalMetadata(terminal = {}) {
   return {
     id,
     agentHref: String(metadata.agentTargetHref || metadata.previewProxyTargetHref || metadata.targetUrl || openTarget.href || "").trim(),
-    label: String(metadata.launchTargetLabel || id).trim() || id,
-    launchInput: normalizeLaunchInput(metadata.launchInput),
+    label: String(metadata.outputTargetLabel || id).trim() || id,
     openTarget: openTarget.href ? openTarget : null,
     startedAt: String(source.createdAt || "").trim()
   };
 }
 
-function launchTargetForPreviewStatus({
+function outputTargetForPreviewStatus({
   session = {},
   terminal = null
 } = {}) {
-  const terminalLaunchTarget = terminal ? launchTargetFromTerminalMetadata(terminal) : null;
-  const sessionLaunchTarget = launchTargetFromMetadata(session.metadata || {});
-  if (terminalLaunchTarget && !terminalLaunchTarget.openTarget && sessionLaunchTarget?.openTarget) {
+  const terminalOutputTarget = terminal ? outputTargetFromTerminalMetadata(terminal) : null;
+  const sessionOutputTarget = outputTargetFromMetadata(session.metadata || {});
+  if (terminalOutputTarget && !terminalOutputTarget.openTarget && sessionOutputTarget?.openTarget) {
     return {
-      ...terminalLaunchTarget,
-      agentHref: terminalLaunchTarget.agentHref || sessionLaunchTarget.agentHref,
-      openTarget: sessionLaunchTarget.openTarget,
-      startedAt: terminalLaunchTarget.startedAt || sessionLaunchTarget.startedAt
+      ...terminalOutputTarget,
+      agentHref: terminalOutputTarget.agentHref || sessionOutputTarget.agentHref,
+      openTarget: sessionOutputTarget.openTarget,
+      startedAt: terminalOutputTarget.startedAt || sessionOutputTarget.startedAt
     };
   }
-  return terminalLaunchTarget || sessionLaunchTarget;
+  return terminalOutputTarget || sessionOutputTarget;
 }
 
 function openTargetForPreviewStatus({
-  lastLaunchTarget = null,
+  lastOutputTarget = null,
   terminal = null
 } = {}) {
-  if (lastLaunchTarget?.openTarget?.href) {
-    return lastLaunchTarget.openTarget;
+  if (lastOutputTarget?.openTarget?.href) {
+    return lastOutputTarget.openTarget;
   }
-  const terminalOpenTarget = launchTargetFromTerminalMetadata(terminal)?.openTarget || null;
+  const terminalOpenTarget = outputTargetFromTerminalMetadata(terminal)?.openTarget || null;
   return terminalOpenTarget?.href ? terminalOpenTarget : null;
 }
 
-function launchTargetCanStart(launchTargets = []) {
-  return Array.isArray(launchTargets) && launchTargets.some((target) => target?.available !== false);
+function outputTargetCanStart(outputTargets = []) {
+  return Array.isArray(outputTargets) && outputTargets.some((target) => target?.available !== false);
 }
 
 function normalizeLaunchPreview({
@@ -871,7 +857,7 @@ function normalizeLaunchPreview({
     "project_closed"
   ].includes(state) ? state : "idle";
   const fallbackMessage = normalizedState === "idle"
-    ? "Run a launch target first."
+    ? "Run an output target first."
     : normalizedState === "ready"
       ? "Preview is ready."
       : normalizedState === "stale"
@@ -925,7 +911,7 @@ function openTargetFromLaunchPreview(preview = {}, openTarget = null) {
   if (!openTarget?.href) {
     return {
       available: false,
-      disabledReason: "Run a launch target first.",
+      disabledReason: "Run an output target first.",
       href: "",
       kind: "url",
       label: "Open browser"
@@ -939,8 +925,39 @@ function openTargetFromLaunchPreview(preview = {}, openTarget = null) {
   };
 }
 
-function launchStatusResponseFromPreviewStatus({
-  launchTargets = [],
+function outputExecutionStatus(terminal = null) {
+  if (!terminal) {
+    return {
+      error: null,
+      mode: "",
+      presentationKind: "",
+      state: "idle",
+      targetId: ""
+    };
+  }
+  const metadata = terminal.metadata && typeof terminal.metadata === "object" && !Array.isArray(terminal.metadata)
+    ? terminal.metadata
+    : {};
+  const outputError = metadata.outputResultError && typeof metadata.outputResultError === "object"
+    ? metadata.outputResultError
+    : null;
+  const running = launchTerminalIsRunning(terminal);
+  let state = "stopped";
+  if (outputError) state = "failed";
+  else if (running) state = launchIsReady(metadata) ? "ready" : "preparing";
+  else if (terminal.status === "exited") state = terminal.exitCode === 0 ? "succeeded" : "failed";
+  return {
+    error: outputError,
+    mode: String(metadata.outputMode || ""),
+    presentationKind: String(metadata.outputPresentationKind || ""),
+    state,
+    targetId: String(metadata.outputTargetId || "")
+  };
+}
+
+function outputStatusResponseFromPreviewStatus({
+  outputRuns = [],
+  outputTargets = [],
   previewStatus = {},
   previewApplicationIdentities = []
 } = {}) {
@@ -952,7 +969,9 @@ function launchStatusResponseFromPreviewStatus({
     activeTerminal: previewStatus.activeTerminal ? launchTerminalStatus(previewStatus.activeTerminal, {
       previewTarget: normalizedPreviewTarget
     }) : null,
-    launchTargets,
+    output: outputExecutionStatus(previewStatus.activeTerminal || null),
+    outputRuns,
+    outputTargets,
     preview,
     previewIdentity: previewIdentityCapability({
       previewApplicationIdentities,
@@ -960,7 +979,7 @@ function launchStatusResponseFromPreviewStatus({
       terminal: previewStatus.activeTerminal
     }),
     previewTarget,
-    lastLaunchTarget: previewStatus.lastLaunchTarget || null,
+    lastOutputTarget: previewStatus.lastOutputTarget || null,
     openTarget: openTargetFromLaunchPreview(preview, previewStatus.openTarget || null)
   };
 }
@@ -1013,7 +1032,7 @@ function previewAuthForLaunchTerminal(terminal = {}, {
         }))
       : "";
   } catch (error) {
-    vibe64SessionDebugLog("server.launchTargetTerminal.previewIdentity.secretReadError", {
+    vibe64SessionDebugLog("server.outputTargetTerminal.previewIdentity.secretReadError", {
       error: vibe64SessionDebugError(error),
       sessionId,
       terminalSessionId: String(terminal.id || "")
@@ -1201,7 +1220,7 @@ async function launchRestartRecoveryForTerminal({
       reason: restartState.reason || LAUNCH_RESTART_REASON_SOURCE_CHANGED
     };
   } catch (error) {
-    vibe64SessionDebugLog("server.launchTargetTerminal.restartState.error", {
+    vibe64SessionDebugLog("server.outputTargetTerminal.restartState.error", {
       error: vibe64SessionDebugError(error),
       sessionId: context.session?.sessionId || "",
       sessionSourceRoot: context.sessionSourceRoot || "",
@@ -1215,7 +1234,7 @@ async function launchRestartRecoveryForTerminal({
 
 function latestLaunchTerminal(sessionId = "") {
   const terminals = listTerminalSessions({
-    namespace: launchTargetTerminalNamespace(sessionId)
+    namespace: outputTargetTerminalNamespace(sessionId)
   });
   return terminals.sort((left, right) => {
     return String(left.createdAt || "").localeCompare(String(right.createdAt || ""));
@@ -1286,7 +1305,7 @@ function launchReadinessMarkerLineSeen(output = "", readinessMarker = "") {
 }
 
 async function closeStoppedLaunchTerminals(sessionId = "") {
-  const namespace = launchTargetTerminalNamespace(sessionId);
+  const namespace = outputTargetTerminalNamespace(sessionId);
   await Promise.all(listTerminalSessions({
     namespace
   }).filter((terminal) => !launchTerminalIsRunning(terminal)).map((terminal) => {
@@ -1311,14 +1330,6 @@ function releaseLaunchSpecReservation(spec = {}) {
   }
 }
 
-function normalizeLaunchInput(input = {}) {
-  return input && typeof input === "object" && !Array.isArray(input) ? input : {};
-}
-
-function launchInputFingerprint(input = {}) {
-  return stableHash(JSON.stringify(normalizeLaunchInput(input)));
-}
-
 function launchTerminalIsReady(terminalSession = {}, readinessMarker = "") {
   if (!readinessMarker) {
     return true;
@@ -1328,21 +1339,18 @@ function launchTerminalIsReady(terminalSession = {}, readinessMarker = "") {
 
 function launchTerminalCanBeReused(runningSession = {}, {
   launchEnvHash = "",
-  launchInputHash = "",
-  launchTargetId = "",
+  outputTargetId = "",
   spec = {}
 } = {}) {
   return spec.reuseRunning !== false &&
     runningSession.metadata?.envHash === launchEnvHash &&
-    runningSession.metadata?.launchInputHash === launchInputHash &&
-    runningSession.metadata?.launchTargetId === launchTargetId;
+    runningSession.metadata?.outputTargetId === outputTargetId;
 }
 
 function reusableLaunchTerminal(sessionId = "", {
   launchEnvHash = "",
-  launchInputHash = "",
-  launchTargetId = "",
-  namespace = launchTargetTerminalNamespace(sessionId),
+  outputTargetId = "",
+  namespace = outputTargetTerminalNamespace(sessionId),
   spec = {}
 } = {}) {
   return listTerminalSessions({
@@ -1350,8 +1358,7 @@ function reusableLaunchTerminal(sessionId = "", {
     runningOnly: true
   }).find((terminal) => launchTerminalCanBeReused(terminal, {
     launchEnvHash,
-    launchInputHash,
-    launchTargetId,
+    outputTargetId,
     spec
   })) || null;
 }
@@ -1450,7 +1457,7 @@ async function markLaunchTerminalReady({
     namespace
   });
   if (!launchTerminalIsRunning(currentTerminal)) {
-    vibe64SessionDebugLog("server.launchTargetTerminal.readyMarker.processExited", {
+    vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.processExited", {
       exitCode: currentTerminal?.exitCode ?? null,
       sessionId,
       status: String(currentTerminal?.status || "missing"),
@@ -1501,9 +1508,9 @@ async function markLaunchTerminalReady({
     namespace
   }) || updatedSession || readyTerminal;
   await publishSessionChanged(sessionId, {
-    reason: "launch-target-ready"
+    reason: "output-target-ready"
   });
-  vibe64SessionDebugLog("server.launchTargetTerminal.readyMarker.ready", {
+  vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.ready", {
     source: readyMetadata.launchReadySource,
     sessionId,
     terminalSessionId
@@ -1536,19 +1543,19 @@ async function repairLaunchReadinessFromOutput({
   const startedAtMs = Date.now();
   try {
     const result = await markReady({
-      namespace: launchTargetTerminalNamespace(sessionId),
+      namespace: outputTargetTerminalNamespace(sessionId),
       publishSessionChanged,
       source: "marker-repair",
       store: context.store,
       sessionId,
       terminalSession: terminal,
       updateMetadata: (metadata) => updateTerminalSessionMetadata(terminalSessionId, metadata, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       })
     });
     return result?.ready ? result.terminal || terminal : null;
   } catch (error) {
-    vibe64SessionDebugLog("server.launchTargetTerminal.readyMarker.repairError", {
+    vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.repairError", {
       durationMs: vibe64SessionDebugDurationMs(startedAtMs),
       error: vibe64SessionDebugError(error),
       readinessMarker,
@@ -1566,8 +1573,8 @@ async function readyLaunchPreview({
   canShowLog = false,
   context = {},
   launchPreviewProxies = null,
-  launchTargets = [],
-  lastLaunchTarget = null,
+  outputTargets = [],
+  lastOutputTarget = null,
   openTarget = null,
   options = {},
   sessionId = "",
@@ -1578,13 +1585,13 @@ async function readyLaunchPreview({
   if (!targetHref) {
     return {
       activeTerminal,
-      lastLaunchTarget,
+      lastOutputTarget,
       openTarget,
       preview: normalizeLaunchPreview({
-        canRestart: Boolean(lastLaunchTarget?.id),
+        canRestart: Boolean(lastOutputTarget?.id),
         canShowLog,
-        canStart: launchTargetCanStart(launchTargets),
-        message: "Launch target URL is missing.",
+        canStart: outputTargetCanStart(outputTargets),
+        message: "Output target URL is missing.",
         reason: "missing_target_href",
         state: "failed",
         terminalId: terminalSessionId
@@ -1633,10 +1640,10 @@ async function readyLaunchPreview({
     const stale = Boolean(restartRecovery);
     return {
       activeTerminal,
-      lastLaunchTarget,
+      lastOutputTarget,
       openTarget,
       preview: normalizeLaunchPreview({
-        canRestart: Boolean(lastLaunchTarget?.id || terminal?.metadata?.launchTargetId),
+        canRestart: Boolean(lastOutputTarget?.id || terminal?.metadata?.outputTargetId),
         canShowLog,
         canStart: false,
         href: previewTarget.href,
@@ -1653,12 +1660,12 @@ async function readyLaunchPreview({
   } catch (error) {
     return {
       activeTerminal,
-      lastLaunchTarget,
+      lastOutputTarget,
       openTarget,
       preview: normalizeLaunchPreview({
-        canRestart: Boolean(lastLaunchTarget?.id || terminal?.metadata?.launchTargetId),
+        canRestart: Boolean(lastOutputTarget?.id || terminal?.metadata?.outputTargetId),
         canShowLog,
-        canStart: launchTargetCanStart(launchTargets),
+        canStart: outputTargetCanStart(outputTargets),
         message: String(error?.message || error || "Launch preview proxy could not start."),
         reason: "preview_proxy_unavailable",
         state: "failed",
@@ -1726,8 +1733,8 @@ function previewIdentityCommandRunnerForLaunchTerminal({
 
 function stoppedLaunchPreviewStatus({
   activeTerminal = null,
-  launchTargets = [],
-  lastLaunchTarget = null,
+  outputTargets = [],
+  lastOutputTarget = null,
   openTarget = null
 } = {}) {
   const exitCode = activeTerminal?.exitCode ?? null;
@@ -1735,12 +1742,12 @@ function stoppedLaunchPreviewStatus({
   const targetHref = String(openTarget?.href || "").trim();
   return {
     activeTerminal,
-    lastLaunchTarget,
+    lastOutputTarget,
     openTarget,
     preview: normalizeLaunchPreview({
-      canRestart: Boolean(lastLaunchTarget?.id || activeTerminal?.metadata?.launchTargetId),
+      canRestart: Boolean(lastOutputTarget?.id || activeTerminal?.metadata?.outputTargetId),
       canShowLog: Boolean(activeTerminal?.id),
-      canStart: launchTargetCanStart(launchTargets),
+      canStart: outputTargetCanStart(outputTargets),
       message: failed
         ? `The preview process exited with code ${exitCode ?? "unknown"}.`
         : "The preview process exited.",
@@ -1754,21 +1761,21 @@ function stoppedLaunchPreviewStatus({
 
 async function missingLaunchPreviewStatus({
   context = {},
-  launchTargets = [],
+  outputTargets = [],
   openTarget = null,
   publishSessionChanged = async () => null,
   sessionId = ""
 } = {}) {
-  const lastLaunchTarget = launchTargetFromMetadata(context.session?.metadata || {});
+  const lastOutputTarget = outputTargetFromMetadata(context.session?.metadata || {});
   const recovery = staleLaunchRecovery({
-    canRestart: Boolean(lastLaunchTarget?.id),
+    canRestart: Boolean(lastOutputTarget?.id),
     canStopStale: false
   });
   let metadataCleared = false;
   try {
     metadataCleared = await clearLaunchMetadata(context.store, sessionId);
   } catch (error) {
-    vibe64SessionDebugLog("server.launchTargetTerminal.restartReconcile.clearMetadata.error", {
+    vibe64SessionDebugLog("server.outputTargetTerminal.restartReconcile.clearMetadata.error", {
       error: vibe64SessionDebugError(error),
       sessionId,
       sessionSourceRoot: context.sessionSourceRoot
@@ -1778,33 +1785,33 @@ async function missingLaunchPreviewStatus({
   }
   if (metadataCleared) {
     await publishSessionChanged(sessionId, {
-      reason: "launch-target-stale-cleared"
+      reason: "output-target-stale-cleared"
     });
   }
-  vibe64SessionDebugLog("server.launchTargetTerminal.restartReconcile.missingProcess", {
+  vibe64SessionDebugLog("server.outputTargetTerminal.restartReconcile.missingProcess", {
     canRestart: recovery.canRestart,
-    launchTargetId: lastLaunchTarget?.id || "",
+    outputTargetId: lastOutputTarget?.id || "",
     metadataCleared,
     reason: recovery.reason,
     sessionId,
-    targetHref: String(openTarget?.href || lastLaunchTarget?.openTarget?.href || "").trim(),
+    targetHref: String(openTarget?.href || lastOutputTarget?.openTarget?.href || "").trim(),
     sessionSourceRoot: context.sessionSourceRoot
   }, {
     level: "warn"
   });
   return {
     activeTerminal: null,
-    lastLaunchTarget: null,
+    lastOutputTarget: null,
     openTarget: null,
     preview: normalizeLaunchPreview({
       canRestart: recovery.canRestart,
       canShowLog: false,
-      canStart: launchTargetCanStart(launchTargets),
+      canStart: outputTargetCanStart(outputTargets),
       message: "Preview state was lost after a server restart. Restart preview to recover.",
       reason: recovery.reason,
       recovery,
       state: "failed",
-      targetHref: String(openTarget?.href || lastLaunchTarget?.openTarget?.href || "").trim(),
+      targetHref: String(openTarget?.href || lastOutputTarget?.openTarget?.href || "").trim(),
       terminalId: ""
     }),
     session: sessionWithoutLaunchMetadata(context.session)
@@ -1814,21 +1821,39 @@ async function missingLaunchPreviewStatus({
 async function resolveLaunchPreviewStatus({
   context = {},
   launchPreviewProxies = null,
-  launchTargets = [],
+  outputTargets = [],
   markReady = markLaunchTerminalReady,
   options = {},
   publishSessionChanged = async () => null,
   sessionId = ""
 } = {}) {
   const activeTerminal = latestLaunchTerminal(sessionId);
-  const initialLastLaunchTarget = launchTargetForPreviewStatus({
+  const initialLastOutputTarget = outputTargetForPreviewStatus({
     session: context.session,
     terminal: activeTerminal
   });
   const initialOpenTarget = openTargetForPreviewStatus({
-    lastLaunchTarget: initialLastLaunchTarget,
+    lastOutputTarget: initialLastOutputTarget,
     terminal: activeTerminal
   });
+  const presentationKind = String(activeTerminal?.metadata?.outputPresentationKind || "").trim();
+  if (activeTerminal && presentationKind && presentationKind !== "web") {
+    return {
+      activeTerminal,
+      lastOutputTarget: initialLastOutputTarget,
+      openTarget: null,
+      preview: normalizeLaunchPreview({
+        canRestart: false,
+        canShowLog: false,
+        canStart: outputTargetCanStart(outputTargets),
+        message: presentationKind === "terminal"
+          ? "This output runs in the terminal."
+          : "This finite output has no web preview.",
+        state: "idle",
+        terminalId: activeTerminal.id
+      })
+    };
+  }
   if (activeTerminal && launchTerminalIsRunning(activeTerminal)) {
     let terminalForPreview = activeTerminal;
     const targetHref = String(initialOpenTarget?.href || "").trim();
@@ -1844,7 +1869,7 @@ async function resolveLaunchPreviewStatus({
     if (!launchIsReady(terminalForPreview.metadata || {})) {
       return {
         activeTerminal: terminalForPreview,
-        lastLaunchTarget: initialLastLaunchTarget,
+        lastOutputTarget: initialLastOutputTarget,
         openTarget: initialOpenTarget,
         preview: normalizeLaunchPreview({
           canRestart: false,
@@ -1863,13 +1888,13 @@ async function resolveLaunchPreviewStatus({
       canShowLog: true,
       context,
       launchPreviewProxies,
-      launchTargets,
-      lastLaunchTarget: launchTargetForPreviewStatus({
+      outputTargets,
+      lastOutputTarget: outputTargetForPreviewStatus({
         session: context.session,
         terminal: terminalForPreview
       }),
       openTarget: openTargetForPreviewStatus({
-        lastLaunchTarget: launchTargetForPreviewStatus({
+        lastOutputTarget: outputTargetForPreviewStatus({
           session: context.session,
           terminal: terminalForPreview
         }),
@@ -1883,16 +1908,16 @@ async function resolveLaunchPreviewStatus({
   if (activeTerminal?.status === "exited") {
     return stoppedLaunchPreviewStatus({
       activeTerminal,
-      launchTargets,
-      lastLaunchTarget: initialLastLaunchTarget,
+      outputTargets,
+      lastOutputTarget: initialLastOutputTarget,
       openTarget: initialOpenTarget
     });
   }
 
-  if (initialLastLaunchTarget?.id) {
+  if (initialLastOutputTarget?.id) {
     return missingLaunchPreviewStatus({
       context,
-      launchTargets,
+      outputTargets,
       openTarget: initialOpenTarget,
       publishSessionChanged,
       sessionId
@@ -1901,19 +1926,19 @@ async function resolveLaunchPreviewStatus({
 
   return {
     activeTerminal: null,
-    lastLaunchTarget: null,
+    lastOutputTarget: null,
     openTarget: null,
     preview: normalizeLaunchPreview({
       canRestart: false,
       canShowLog: false,
-      canStart: launchTargetCanStart(launchTargets),
-      message: "Run a launch target first.",
+      canStart: outputTargetCanStart(outputTargets),
+      message: "Run an output target first.",
       state: "idle"
     })
   };
 }
 
-function createLaunchTargetTerminalController({
+function createOutputTargetTerminalController({
   ensureWorkspacePrepared = null,
   env = process.env,
   projectService,
@@ -1926,6 +1951,83 @@ function createLaunchTargetTerminalController({
   });
   const launchReadyWrites = new Map();
   const launchStartLocks = new Map();
+  const outputResultWrites = new Map();
+
+  function captureOutputResults({
+    context = {},
+    outputTarget = {},
+    spec = {},
+    terminalSessionId = "",
+    updateMetadata = () => null
+  } = {}) {
+    const downloads = Array.isArray(spec.metadata?.outputDownloads)
+      ? spec.metadata.outputDownloads
+      : [];
+    if (downloads.length === 0 || !terminalSessionId) {
+      return Promise.resolve({
+        captured: false,
+        ok: true,
+        results: []
+      });
+    }
+    const key = `${String(context.session?.sessionRoot || "")}:${terminalSessionId}`;
+    const existing = outputResultWrites.get(key);
+    if (existing) {
+      return existing;
+    }
+    const write = snapshotDeclaredOutputResults({
+      downloads,
+      outputTargetId: outputTarget.id,
+      session: context.session,
+      terminalSessionId
+    }).then(async (snapshot) => {
+      updateMetadata({
+        outputResultError: null,
+        outputResults: snapshot.results,
+        outputResultsReady: true,
+        outputRun: snapshot.run
+      });
+      await publishSessionChanged(context.session?.sessionId || "", {
+        reason: "output-results-ready"
+      });
+      return {
+        ...snapshot,
+        ok: true
+      };
+    }).catch(async (error) => {
+      const outputResultFailure = {
+        code: String(error?.code || "vibe64_output_result_snapshot_failed"),
+        message: String(error?.message || error || "Declared downloads could not be snapshotted.")
+      };
+      updateMetadata({
+        outputResultError: outputResultFailure,
+        outputResultsReady: false
+      });
+      await publishSessionChanged(context.session?.sessionId || "", {
+        reason: "output-results-failed"
+      }).catch(() => null);
+      vibe64SessionDebugLog("server.outputTargetTerminal.results.error", {
+        error: vibe64SessionDebugError(error),
+        outputTargetId: outputTarget.id,
+        sessionId: context.session?.sessionId || "",
+        terminalSessionId
+      }, {
+        level: "warn"
+      });
+      return {
+        error: outputResultFailure,
+        ok: false,
+        results: []
+      };
+    });
+    const tracked = write.finally(() => {
+      if (outputResultWrites.get(key) === tracked) {
+        outputResultWrites.delete(key);
+      }
+    });
+    outputResultWrites.set(key, tracked);
+    return tracked;
+  }
 
   function markLaunchReady(input = {}) {
     const terminalSessionId = String(input.terminalSession?.id || "").trim();
@@ -1978,7 +2080,10 @@ function createLaunchTargetTerminalController({
 
   const controller = {
     async close() {
-      await Promise.allSettled([...launchReadyWrites.values()]);
+      await Promise.allSettled([
+        ...launchReadyWrites.values(),
+        ...outputResultWrites.values()
+      ]);
       await launchPreviewProxies.closeAll();
     },
 
@@ -1987,8 +2092,18 @@ function createLaunchTargetTerminalController({
         await launchPreviewProxies.close({
           sessionId
         });
-        return closeTerminalSessionsForNamespace(launchTargetTerminalNamespace(sessionId));
+        return closeTerminalSessionsForNamespace(outputTargetTerminalNamespace(sessionId));
       });
+    },
+
+    async removeResultsForSession(sessionId) {
+      const context = await createLaunchContext(projectService, sessionId);
+      await removeOutputResults(context.session);
+      return {
+        ok: true,
+        removed: true,
+        sessionId: String(sessionId || "")
+      };
     },
 
     async closeTerminal(sessionId, terminalSessionId) {
@@ -1997,14 +2112,14 @@ function createLaunchTargetTerminalController({
         terminalSessionId
       });
       return closeTerminalSession(terminalSessionId, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       });
     },
 
     async launchStatus(sessionId, options = {}) {
       return vibe64Result(async () => withLaunchStartLock(sessionId, async () => {
         const admission = beginTerminalNamespaceOperation(
-          launchTargetTerminalNamespace(sessionId)
+          outputTargetTerminalNamespace(sessionId)
         );
         if (admission.ok === false) {
           return launchAdmissionFailure(sessionId) || admission;
@@ -2019,11 +2134,12 @@ function createLaunchTargetTerminalController({
           if (unavailable) {
             return unavailable;
           }
-          const launchTargets = await listLaunchTargets(context);
-          const previewStatus = await resolveLaunchPreviewStatus({
+          const outputTargets = await listOutputTargets(context);
+          const [previewStatus, outputRuns] = await Promise.all([
+            resolveLaunchPreviewStatus({
             context,
             launchPreviewProxies,
-            launchTargets,
+            outputTargets,
             markReady: markLaunchReady,
             options: {
               ...options,
@@ -2033,9 +2149,12 @@ function createLaunchTargetTerminalController({
             },
             publishSessionChanged,
             sessionId
-          });
-          return launchStatusResponseFromPreviewStatus({
-            launchTargets,
+            }),
+            listOutputResults(context.session)
+          ]);
+          return outputStatusResponseFromPreviewStatus({
+            outputRuns,
+            outputTargets,
             previewStatus,
             previewApplicationIdentities: context.previewApplicationIdentities
           });
@@ -2094,7 +2213,7 @@ function createLaunchTargetTerminalController({
       });
     },
 
-    async openLaunchTarget(sessionId) {
+    async openOutputTarget(sessionId) {
       return vibe64Result(async () => {
         const status = await controller.launchStatus(sessionId);
         if (status?.ok === false) {
@@ -2117,9 +2236,14 @@ function createLaunchTargetTerminalController({
       });
     },
 
+    async readResult(sessionId, resultId) {
+      const context = await createLaunchContext(projectService, sessionId);
+      return readOutputResult(context.session, resultId);
+    },
+
     readTerminal(sessionId, terminalSessionId) {
       return readTerminalSession(terminalSessionId, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       });
     },
 
@@ -2131,18 +2255,17 @@ function createLaunchTargetTerminalController({
         });
         const cwd = sessionTerminalCwd(context.session, projectService);
         let forceRestart = input.forceRestart === true;
-        let launchInput = normalizeLaunchInput(input.launchInput);
-        let launchTargetId = normalizeLaunchTargetId(input.launchTargetId);
-        let launchTargets = null;
+        let outputTargetId = normalizeOutputTargetId(input.outputTargetId);
+        let outputTargets = null;
         const managedPreviewOperation = input.ensurePreview === true || input.restartPreview === true;
         if (managedPreviewOperation) {
           const restartPreview = input.restartPreview === true;
-          const savedLaunchTarget = launchTargetFromMetadata(context.session?.metadata || {});
-          launchTargets = await listLaunchTargets(context);
+          const savedOutputTarget = outputTargetFromMetadata(context.session?.metadata || {});
+          outputTargets = await listOutputTargets(context);
           const previewStatus = await resolveLaunchPreviewStatus({
             context,
             launchPreviewProxies,
-            launchTargets,
+            outputTargets,
             markReady: markLaunchReady,
             options: {
               env,
@@ -2153,10 +2276,10 @@ function createLaunchTargetTerminalController({
             sessionId
           });
           const launchPlan = managedPreviewLaunchPlan({
-            launchTargets,
+            outputTargets,
             previewStatus,
             restart: restartPreview,
-            savedLaunchTarget
+            savedOutputTarget
           });
           if (launchPlan.ready) {
             return launchPlan.terminal;
@@ -2169,15 +2292,13 @@ function createLaunchTargetTerminalController({
             };
           }
           forceRestart = launchPlan.forceRestart;
-          launchInput = launchPlan.launchInput;
-          launchTargetId = launchPlan.launchTargetId;
+          outputTargetId = launchPlan.outputTargetId;
         }
         const diagnosticBase = {
           cwd,
-          launchTargetId,
+          outputTargetId,
           sessionId
         };
-        const launchInputHash = launchInputFingerprint(launchInput);
         const closingReason = sessionClosingReason(context.session);
         if (closingReason) {
           await writePreviewDiagnostic(context.session, {
@@ -2194,13 +2315,13 @@ function createLaunchTargetTerminalController({
         if (!cwd) {
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
-            message: "Vibe64 launch target root is not available.",
+            message: "Vibe64 output target root is not available.",
             reason: "missing_target_root",
             status: "failed"
           });
           return {
             ok: false,
-            error: "Vibe64 launch target root is not available."
+            error: "Vibe64 output target root is not available."
           };
         }
         await ensureTerminalSessionSourceGitSelfContained({
@@ -2208,64 +2329,63 @@ function createLaunchTargetTerminalController({
           workdir: cwd
         });
 
-        launchTargets ||= await listLaunchTargets(context);
-        const launchTarget = findLaunchTarget(launchTargets, launchTargetId);
-        if (!launchTarget) {
+        outputTargets ||= await listOutputTargets(context);
+        const outputTarget = findOutputTarget(outputTargets, outputTargetId);
+        if (!outputTarget) {
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
             details: {
-              availableLaunchTargetIds: launchTargets.map((target) => String(target?.id || "")).filter(Boolean)
+              availableOutputTargetIds: outputTargets.map((target) => String(target?.id || "")).filter(Boolean)
             },
-            message: "Launch target is not available.",
-            reason: "launch_target_missing",
+            message: "Output target is not available.",
+            reason: "output_target_missing",
             status: "failed"
           });
           return {
             ok: false,
-            error: "Launch target is not available."
+            error: "Output target is not available."
           };
         }
-        if (launchTarget.available === false) {
+        if (outputTarget.available === false) {
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
-            launchTargetId: launchTarget.id,
-            message: launchTarget.disabledReason || "Launch target is disabled.",
-            reason: "launch_target_disabled",
+            outputTargetId: outputTarget.id,
+            message: outputTarget.disabledReason || "Output target is disabled.",
+            reason: "output_target_disabled",
             status: "failed"
           });
           return {
             ok: false,
-            error: launchTarget.disabledReason || "Launch target is disabled."
+            error: outputTarget.disabledReason || "Output target is disabled."
           };
         }
 
-        const spec = await createLaunchTargetSpec({
+        const spec = await createOutputTargetSpec({
           context: {
             ...context,
-            launchInput,
-            launchTarget,
+            outputTarget,
             vibe64User: input.vibe64User || null
           },
-          launchInput,
-          launchTargetId: launchTarget.id
+          outputTargetId: outputTarget.id
         });
         if (spec?.ok === false) {
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
-            launchTargetId: launchTarget.id,
-            message: spec.message || "Launch target terminal cannot start.",
-            reason: "launch_target_spec_failed",
+            outputTargetId: outputTarget.id,
+            message: spec.message || "Output target terminal cannot start.",
+            reason: "output_target_spec_failed",
             status: "failed"
           });
           return {
             ok: false,
-            error: spec.message || "Launch target terminal cannot start."
+            error: spec.message || "Output target terminal cannot start."
           };
         }
         const commandPreview = commandInvocation(spec);
 
-        const namespace = launchTargetTerminalNamespace(sessionId);
+        const namespace = outputTargetTerminalNamespace(sessionId);
         let terminalSession;
+        let outputResultsMarker = "";
         let readinessMarker = "";
         try {
           const terminalEnvRecords = await loadProjectExecutionEnvRecords({
@@ -2273,7 +2393,7 @@ function createLaunchTargetTerminalController({
             runCommand,
             runtime: context.runtime,
             session: context.session,
-            target: "launch-target"
+            target: "output-target"
           });
           const terminalEnv = projectExecutionEnvFromRecords(terminalEnvRecords);
           const launchEnvironment = composeLaunchTerminalEnvironment({
@@ -2295,14 +2415,15 @@ function createLaunchTargetTerminalController({
             worktreePath: spec.metadata?.runRoot || spec.cwd || cwd
           });
           readinessMarker = readinessMarkerFromSpec(spec);
+          outputResultsMarker = String(spec.metadata?.outputResultsMarker || "").trim();
+          const webOutput = String(spec.metadata?.outputPresentationKind || "").trim() === "web";
           let launchReadyConfirmed = false;
           await closeStoppedLaunchTerminals(sessionId);
           const existingReusableTerminal = forceRestart
             ? null
             : reusableLaunchTerminal(sessionId, {
                 launchEnvHash,
-                launchInputHash,
-                launchTargetId: launchTarget.id,
+                outputTargetId: outputTarget.id,
                 namespace,
                 spec
               });
@@ -2319,11 +2440,11 @@ function createLaunchTargetTerminalController({
             command: spec.command,
             cwd: spec.cwd || cwd,
             env: launchEnvironment.env,
-            envPolicy: "preview",
+            envPolicy: webOutput ? "preview" : "project",
             mode: "pty",
             project: commandProject,
-            purpose: "preview",
-            runtimes: previewRuntimesForSpec(spec),
+            purpose: webOutput ? "preview" : "output",
+            runtimes: webOutput ? previewRuntimesForSpec(spec) : normalizeRuntimeList(spec.runtimes),
             session: context.session || {},
             terminal: {
               commandPreview: spec.commandPreview,
@@ -2332,26 +2453,35 @@ function createLaunchTargetTerminalController({
                 ...(spec.metadata || {}),
                 attemptedCommand: commandPreview,
                 envHash: launchEnvHash,
-                launchInput,
-                launchInputHash,
                 ...(launchRestartBaseline ? { launchRestartBaseline } : {}),
-                launchTargetId: launchTarget.id,
-                launchTargetLabel: launchTarget.label,
+                outputTargetId: outputTarget.id,
+                outputTargetLabel: outputTarget.label,
                 sessionId,
                 ...terminalNoGithubActorMetadata({
-                  ownerUserKey: "launch-target",
-                  reason: "launch-target"
+                  ownerUserKey: "output-target",
+                  reason: "output-target"
                 })
               },
               namespace,
               namespaceLimitPrefix: namespace,
               onClose: async (event) => {
+                if (event.reason === "exit" && event.exitCode === 0) {
+                  await captureOutputResults({
+                    context,
+                    outputTarget,
+                    spec,
+                    terminalSessionId: event.id,
+                    updateMetadata: (metadata) => updateTerminalSessionMetadata(event.id, metadata, {
+                      namespace
+                    })
+                  });
+                }
                 if (event.reason === "exit") {
                   await writePreviewDiagnostic(context.session, {
                     ...diagnosticBase,
                     commandPreview,
                     exitCode: event.exitCode ?? null,
-                    launchTargetId: launchTarget.id,
+                    outputTargetId: outputTarget.id,
                     outputTail: event.output,
                     reason: event.exitCode === 0 ? "process_exited" : "process_exited_nonzero",
                     status: event.exitCode === 0 ? "exited" : "failed",
@@ -2365,7 +2495,7 @@ function createLaunchTargetTerminalController({
                 const metadataCleared = await clearLaunchMetadataForTerminal(context.store, sessionId, event.id);
                 if (metadataCleared) {
                   await publishSessionChanged(sessionId, {
-                    reason: "launch-target-stale-cleared"
+                    reason: "output-target-stale-cleared"
                   });
                 }
                 if (typeof spec.onClose === "function") {
@@ -2377,7 +2507,7 @@ function createLaunchTargetTerminalController({
                   ...diagnosticBase,
                   commandPreview,
                   exitCode: event.exitCode ?? null,
-                  launchTargetId: launchTarget.id,
+                  outputTargetId: outputTarget.id,
                   outputTail: event.output,
                   reason: "process_stopped",
                   status: "stopped",
@@ -2390,7 +2520,7 @@ function createLaunchTargetTerminalController({
                 const metadataCleared = await clearLaunchMetadataForTerminal(context.store, sessionId, event.id);
                 if (metadataCleared) {
                   await publishSessionChanged(sessionId, {
-                    reason: "launch-target-stale-cleared"
+                    reason: "output-target-stale-cleared"
                   });
                 }
                 if (typeof spec.onStop === "function") {
@@ -2407,7 +2537,7 @@ function createLaunchTargetTerminalController({
                 void writePreviewDiagnostic(context.session, {
                   ...diagnosticBase,
                   commandPreview,
-                  launchTargetId: launchTarget.id,
+                  outputTargetId: outputTarget.id,
                   outputTail: output,
                   reason: "process_output",
                   status: "running",
@@ -2415,6 +2545,15 @@ function createLaunchTargetTerminalController({
                 }, {
                   append: false
                 });
+                if (outputResultsMarkerLineSeen(output, outputResultsMarker)) {
+                  void captureOutputResults({
+                    context,
+                    outputTarget,
+                    spec,
+                    terminalSessionId: runningTerminalSession.id,
+                    updateMetadata
+                  });
+                }
                 if (!readinessMarker || launchReadyConfirmed || !launchReadinessMarkerLineSeen(output, readinessMarker)) {
                   return;
                 }
@@ -2429,7 +2568,7 @@ function createLaunchTargetTerminalController({
                 }).then((result) => {
                   launchReadyConfirmed = result?.ready === true;
                 }).catch((error) => {
-                  vibe64SessionDebugLog("server.launchTargetTerminal.readyMarker.error", {
+                  vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.error", {
                     error: vibe64SessionDebugError(error),
                     sessionId,
                     terminalSessionId: runningTerminalSession.id
@@ -2443,8 +2582,7 @@ function createLaunchTargetTerminalController({
                 : (runningSession) => {
                     return launchTerminalCanBeReused(runningSession, {
                       launchEnvHash,
-                      launchInputHash,
-                      launchTargetId: launchTarget.id,
+                      outputTargetId: outputTarget.id,
                       spec
                     });
                   }
@@ -2456,7 +2594,7 @@ function createLaunchTargetTerminalController({
             ...diagnosticBase,
             commandPreview,
             error,
-            launchTargetId: launchTarget.id,
+            outputTargetId: outputTarget.id,
             reason: "terminal_start_failed",
             status: "failed"
           });
@@ -2472,8 +2610,8 @@ function createLaunchTargetTerminalController({
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
             commandPreview,
-            error: terminalSession.error || "Launch target terminal could not start.",
-            launchTargetId: launchTarget.id,
+            error: terminalSession.error || "Output target terminal could not start.",
+            outputTargetId: outputTarget.id,
             reason: "terminal_start_rejected",
             status: "failed"
           });
@@ -2481,7 +2619,7 @@ function createLaunchTargetTerminalController({
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
             commandPreview,
-            launchTargetId: launchTarget.id,
+            outputTargetId: outputTarget.id,
             reason: "terminal_started",
             status: "running",
             terminalSessionId: terminalSession.id
@@ -2492,7 +2630,7 @@ function createLaunchTargetTerminalController({
           await writePreviewDiagnostic(context.session, {
             ...diagnosticBase,
             commandPreview,
-            launchTargetId: launchTarget.id,
+            outputTargetId: outputTarget.id,
             reason: "launch_ready",
             status: "ready",
             terminalSessionId: terminalSession.id
@@ -2508,7 +2646,7 @@ function createLaunchTargetTerminalController({
         terminalSessionId
       });
       const result = stopTerminalSession(terminalSessionId, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       });
       if (result?.ok === false && /terminal session not found/iu.test(String(result.error || ""))) {
         return {
@@ -2524,19 +2662,19 @@ function createLaunchTargetTerminalController({
 
     subscribeTerminal(sessionId, terminalSessionId, subscriber) {
       return subscribeTerminalSession(terminalSessionId, subscriber, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       });
     },
 
     writeTerminal(sessionId, terminalSessionId, data) {
       return writeTerminalSession(terminalSessionId, data, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       });
     },
 
     resizeTerminal(sessionId, terminalSessionId, size) {
       return resizeTerminalSession(terminalSessionId, size, {
-        namespace: launchTargetTerminalNamespace(sessionId)
+        namespace: outputTargetTerminalNamespace(sessionId)
       });
     }
   };
@@ -2673,16 +2811,16 @@ function previewPublicBaseDomain(studioBaseDomain = "") {
 }
 
 export {
-  LAUNCH_METADATA,
+  OUTPUT_METADATA,
   cleanupSupersededLaunchTerminals,
   createLaunchRestartBaseline,
-  createLaunchTargetSpec,
+  createOutputTargetSpec,
   launchActionsFromOutput,
   launchReadinessMarkerLineSeen,
   launchRestartState,
-  listLaunchTargets,
+  listOutputTargets,
   previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch,
   workspaceSetupLaunchDisabledReason,
-  createLaunchTargetTerminalController
+  createOutputTargetTerminalController
 };

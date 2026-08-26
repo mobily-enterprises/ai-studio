@@ -1,0 +1,404 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  createVibe64OutputTargetTerminalSpec,
+  inspectVibe64OutputsForContext,
+  inspectVibe64WorkspaceSetupForContext,
+  listVibe64OutputTargets,
+  vibe64OutputCommand,
+  vibe64RuntimePacks,
+  vibe64WebOutputDescriptor
+} from "../../packages/vibe64-terminals/src/server/vibe64OutputTargets.js";
+import {
+  SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+} from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
+import {
+  listOutputTargets,
+  workspaceSetupLaunchDisabledReason
+} from "../../packages/vibe64-terminals/src/server/outputTargetTerminal.js";
+
+function outputsInspection(targets = []) {
+  return {
+    components: ["unit"],
+    diagnostics: [],
+    resources: [],
+    runtimeRequirements: [...new Set(targets.flatMap((target) => target.runtimeRequirements || []))],
+    stackHash: "sha256:unit",
+    status: targets.length ? "ready" : "unconfigured",
+    targets
+  };
+}
+
+function webOutputTarget(overrides = {}) {
+  return {
+    available: true,
+    default: true,
+    disabledReason: null,
+    downloads: [],
+    id: "app",
+    label: "Run app",
+    mode: "interactive",
+    presentation: {
+      kind: "web",
+      preferredPort: 49_000 + crypto.randomInt(500),
+      readiness: {
+        kind: "http",
+        method: "GET",
+        path: "/api/health",
+        status: 200
+      },
+      urlPath: "/catalogue"
+    },
+    runtimeRequirements: ["nodejs"],
+    source: "project",
+    steps: [{
+      argv: ["npm", "run", "dev", "--", "--host={host}", "--port={port}"],
+      label: "Start app",
+      role: "run"
+    }],
+    workdir: ".",
+    ...overrides
+  };
+}
+
+function outputTargetView(overrides = {}) {
+  return {
+    available: true,
+    default: true,
+    disabledReason: "",
+    downloads: [],
+    id: "app",
+    label: "Run app",
+    mode: "interactive",
+    presentation: { kind: "web" },
+    ...overrides
+  };
+}
+
+async function outputContext(t) {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-genesis-output-"));
+  t.after(() => rm(temporaryRoot, {
+    force: true,
+    recursive: true
+  }));
+  const projectContextRoot = path.join(temporaryRoot, "namespace");
+  const sourceRoot = path.join(
+    projectContextRoot,
+    "sessions",
+    "active",
+    "session-unit",
+    "source"
+  );
+  await mkdir(sourceRoot, { recursive: true });
+  return {
+    projectEnvironment: {
+      DB_PASSWORD: "managed-project-value"
+    },
+    runtime: {
+      adapter: null,
+      promptEnvironment: {
+        DB_PASSWORD: "do-not-return-this"
+      }
+    },
+    session: {
+      metadata: {
+        repository_mode: "local_source",
+        source_kind: "session_clone",
+        source_path: sourceRoot,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
+      projectContextRoot,
+      sessionId: "session-unit",
+      sessionRoot: path.join(temporaryRoot, "state", "session-unit")
+    },
+    targetRoot: projectContextRoot
+  };
+}
+
+test("Vibe64 abstract runtimes map only through Vibe64-owned pinned packs", () => {
+  assert.deepEqual(vibe64RuntimePacks(["nodejs", "php", "composer", "cpp"]), {
+    available: true,
+    disabledReason: "",
+    runtimes: ["node26", "php", "composer", "cpp"],
+    unsupported: []
+  });
+  assert.deepEqual(vibe64RuntimePacks(["future-runtime"]), {
+    available: false,
+    disabledReason: "Vibe64 does not provide a pinned runtime for: future-runtime.",
+    runtimes: [],
+    unsupported: ["future-runtime"]
+  });
+});
+
+test("Vibe64 output argv substitution remains shell-safe", () => {
+  assert.equal(
+    vibe64OutputCommand([
+      "tool",
+      "--host={host}",
+      "--port",
+      "{port}",
+      "$(touch /tmp/not-run)",
+      "it's-safe"
+    ], {
+      host: "127.0.0.1",
+      port: 4123
+    }),
+    "tool --host=127.0.0.1 --port 4123 '$(touch /tmp/not-run)' 'it'\\''s-safe'"
+  );
+});
+
+test("web output descriptors retain web-only identity and readiness details", () => {
+  const previewIdentity = {
+    command: [".vibe64/preview-identity"],
+    identityTypes: ["user"],
+    runtimes: ["nodejs"]
+  };
+  const descriptor = vibe64WebOutputDescriptor(webOutputTarget({ previewIdentity }), {
+    port: 4123,
+    worktreePath: "/tmp/vibe64-genesis-output"
+  });
+
+  assert.deepEqual(descriptor.previewIdentity, {
+    ...previewIdentity,
+    runtimes: ["node26"]
+  });
+  assert.deepEqual(descriptor.readiness, {
+    kind: "http",
+    method: "GET",
+    path: "/api/health",
+    status: 200
+  });
+});
+
+test("neutral sessions list output targets without exposing resource values or source paths", async (t) => {
+  const context = await outputContext(t);
+  let received = null;
+  const targets = await listVibe64OutputTargets(context, {
+    inspect(input) {
+      received = input;
+      return outputsInspection([
+        webOutputTarget({
+          downloads: [{
+            id: "bundle",
+            mediaType: "application/zip",
+            name: "bundle.zip",
+            path: "dist/bundle.zip"
+          }]
+        }),
+        webOutputTarget({
+          available: false,
+          default: false,
+          disabledReason: "MySQL needs one of: DB_PASSWORD.",
+          id: "blocked",
+          label: "Blocked app"
+        })
+      ]);
+    }
+  });
+
+  assert.equal(received.projectRoot, context.session.metadata.source_path);
+  assert.equal(received.environment.DB_PASSWORD, "managed-project-value");
+  assert.deepEqual(targets, [outputTargetView({
+    downloads: [{
+      id: "bundle",
+      mediaType: "application/zip",
+      name: "bundle.zip"
+    }]
+  }), {
+    available: false,
+    disabledReason: "MySQL needs one of: DB_PASSWORD.",
+    downloads: [],
+    id: "blocked",
+    label: "Blocked app",
+    mode: "interactive",
+    presentation: { kind: "web" }
+  }]);
+  assert.doesNotMatch(JSON.stringify(targets), /dist\/bundle|do-not-return-this/u);
+});
+
+test("missing Genesis Stack leaves Outputs and workspace setup unconfigured", async (t) => {
+  const context = await outputContext(t);
+  const inspect = async () => {
+    const error = new Error("Run genesis init first.");
+    error.code = "STACK_REQUIRED";
+    throw error;
+  };
+
+  assert.deepEqual(await inspectVibe64OutputsForContext(context, { inspect }), {
+    status: "unconfigured",
+    targets: []
+  });
+  assert.deepEqual(await inspectVibe64WorkspaceSetupForContext(context, { inspect }), {
+    recipeHash: "",
+    status: "unconfigured",
+    steps: []
+  });
+});
+
+test("workspace setup disables outputs only for a failed current recipe", () => {
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      diagnostic: "npm install failed",
+      recipeHash: "sha256:recipe",
+      status: "failed"
+    }
+  }, {
+    recipeHash: "sha256:recipe",
+    status: "ready"
+  }), "npm install failed");
+  assert.equal(workspaceSetupLaunchDisabledReason({
+    workspaceSetup: {
+      diagnostic: "stale failure",
+      recipeHash: "sha256:old",
+      status: "failed"
+    }
+  }, {
+    recipeHash: "sha256:new",
+    status: "ready"
+  }), "");
+});
+
+test("a pending workspace recipe remains runnable so the request can prepare it", async (t) => {
+  const context = await outputContext(t);
+  context.session.workspaceSetup = { status: "unconfigured" };
+
+  assert.deepEqual(await listOutputTargets(context, {
+    inspectOutputs: () => outputsInspection([webOutputTarget()]),
+    inspectWorkspaceSetup: () => ({
+      recipeHash: "sha256:install",
+      status: "ready",
+      steps: [{
+        argv: ["npm", "install"],
+        label: "Install dependencies",
+        runtimeRequirements: ["nodejs"],
+        workdir: "."
+      }]
+    })
+  }), [outputTargetView()]);
+});
+
+test("web outputs translate through the existing private web-preview terminal seam", async (t) => {
+  const context = await outputContext(t);
+  const sourceSubdirectory = path.join(context.session.metadata.source_path, "web");
+  await mkdir(sourceSubdirectory);
+  const target = webOutputTarget({
+    steps: [{
+      argv: ["npm", "run", "prepare"],
+      label: "Prepare app",
+      role: "prepare"
+    }, {
+      argv: ["npm", "run", "dev", "--", "--host={host}", "--port={port}"],
+      label: "Start app",
+      role: "run"
+    }],
+    workdir: "web"
+  });
+  const spec = await createVibe64OutputTargetTerminalSpec({
+    context,
+    outputTargetId: target.id
+  }, {
+    inspect: () => outputsInspection([target])
+  });
+  t.after(() => spec.releasePortReservation?.());
+
+  assert.equal(spec.ok, true);
+  assert.equal(spec.cwd, sourceSubdirectory);
+  assert.deepEqual(spec.runtimes, ["node26"]);
+  assert.equal(spec.metadata.vibe64OutputsSource, "project");
+  assert.equal(spec.metadata.outputPresentationKind, "web");
+  assert.equal(spec.metadata.urlPath, "/catalogue");
+  assert.match(spec.commandPreview, /npm run prepare/u);
+  assert.match(spec.commandPreview, /--host=127\.0\.0\.1/u);
+  assert.match(spec.commandPreview, new RegExp(`--port=${spec.metadata.port}`, "u"));
+  assert.match(spec.args().join(" "), /VIBE64_LAUNCH_READY_V1/u);
+  assert.match(spec.args().join(" "), /VIBE64_OUTPUT_RESULTS_READY_V1/u);
+  assert.deepEqual(spec.metadata.readiness, target.presentation.readiness);
+});
+
+test("terminal outputs use a generic PTY spec and exact declared runtimes", async (t) => {
+  const context = await outputContext(t);
+  const target = webOutputTarget({
+    id: "cli",
+    label: "Run CLI",
+    presentation: { kind: "terminal" },
+    runtimeRequirements: ["cpp"],
+    steps: [{
+      argv: ["./build/example"],
+      label: "Run example",
+      role: "run"
+    }]
+  });
+  const spec = await createVibe64OutputTargetTerminalSpec({
+    context,
+    outputTargetId: target.id
+  }, {
+    inspect: () => outputsInspection([target])
+  });
+
+  assert.equal(spec.ok, true);
+  assert.equal(spec.command, "bash");
+  assert.deepEqual(spec.runtimes, ["cpp"]);
+  assert.equal(spec.metadata.outputPresentationKind, "terminal");
+  assert.equal(spec.reuseRunning, true);
+  assert.match(spec.args[1], /exec \.\/build\/example/u);
+});
+
+test("finite outputs build once and declare immutable result inputs", async (t) => {
+  const context = await outputContext(t);
+  const target = webOutputTarget({
+    downloads: [{
+      id: "binary",
+      mediaType: "application/octet-stream",
+      name: "hello",
+      path: "build/hello"
+    }],
+    id: "build",
+    label: "Build binary",
+    mode: "finite",
+    presentation: null,
+    runtimeRequirements: ["cpp"],
+    steps: [{
+      argv: ["cmake", "--build", "build"],
+      label: "Build binary",
+      role: "build"
+    }]
+  });
+  const spec = await createVibe64OutputTargetTerminalSpec({
+    context,
+    outputTargetId: target.id
+  }, {
+    inspect: () => outputsInspection([target])
+  });
+
+  assert.equal(spec.ok, true);
+  assert.equal(spec.reuseRunning, false);
+  assert.deepEqual(spec.metadata.outputDownloads, target.downloads);
+  assert.match(spec.args[1], /cmake --build build/u);
+  assert.match(spec.args[1], /VIBE64_OUTPUT_RESULTS_READY_V1/u);
+});
+
+test("unsupported runtimes disable a target before terminal creation", async (t) => {
+  const context = await outputContext(t);
+  const target = webOutputTarget({ runtimeRequirements: ["future-runtime"] });
+
+  assert.deepEqual(await listVibe64OutputTargets(context, {
+    inspect: () => outputsInspection([target])
+  }), [outputTargetView({
+    available: false,
+    disabledReason: "Vibe64 does not provide a pinned runtime for: future-runtime."
+  })]);
+  assert.deepEqual(await createVibe64OutputTargetTerminalSpec({
+    context,
+    outputTargetId: target.id
+  }, {
+    inspect: () => outputsInspection([target])
+  }), {
+    ok: false,
+    message: "Vibe64 does not provide a pinned runtime for: future-runtime."
+  });
+});

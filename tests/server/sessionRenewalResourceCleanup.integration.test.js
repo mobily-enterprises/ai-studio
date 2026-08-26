@@ -38,7 +38,7 @@ import {
 } from "../../packages/vibe64-terminals/src/server/service.js";
 import {
   codexTerminalNamespace,
-  launchTargetTerminalNamespace
+  outputTargetTerminalNamespace
 } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
 import {
   createService as createProjectService
@@ -222,7 +222,7 @@ async function createLiveResourceSet({
   assert.equal(preparedPreview.ok, true);
   assert.equal(await pathExists(preparedPreview.hostSocketPath), true);
   const assistantNamespace = codexTerminalNamespace(sessionId);
-  const launchNamespace = launchTargetTerminalNamespace(sessionId);
+  const launchNamespace = outputTargetTerminalNamespace(sessionId);
   const assistant = startTerminalSession({
     args: ["-e", "process.stdin.resume(); setInterval(() => {}, 1000);"],
     command: process.execPath,

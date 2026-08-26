@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AUTO_START_ATTEMPT_COOLDOWN_MS,
   AUTO_START_STABILITY_DELAY_MS,
-  autoStartLaunchTargetsLoading,
+  autoStartOutputsLoading,
   browserCanOpenTarget,
   launchAutoStartAttemptStorageKey,
   launchBrowserTargetHref,
@@ -11,17 +11,16 @@ import {
   launchControlsCanLoadTargets,
   launchPreviewFromStatus,
   launchPreviewLocationStorageKey,
-  launchPreviewOptionsStorageKey,
   launchPreviewRequiresProxy,
   launchPreviewToolbarStorageKey,
   LAUNCH_STATUS_RETRY_LIMIT,
-  launchTargetsRealtimeShouldRefresh,
+  outputTargetsRealtimeShouldRefresh,
   launchControlScopeKey,
   launchStatusAgentWriteBusy,
   launchStatusErrorText,
   launchStatusRetryDelay,
   launchStatusShouldRetry,
-  launchTargetWorktreePath,
+  outputTargetWorktreePath,
   launchControlsSessionCanRun,
   nextLaunchPreviewToolbarPosition,
   normalizeLaunchPreview,
@@ -33,7 +32,7 @@ import {
   resolveLaunchPreviewDestination,
   sameSiteLoopbackPreviewUrl,
   shouldScheduleLaunchAutoStart
-} from "../../src/composables/useVibe64LaunchControls.js";
+} from "../../src/composables/useVibe64OutputControls.js";
 import {
   vibe64BrowserTabOriginId
 } from "../../src/lib/vibe64BrowserTabOrigin.js";
@@ -151,26 +150,26 @@ describe("Vibe64 launch controls", () => {
   });
 
   it("detects when a session has the worktree needed to load launch targets", () => {
-    expect(launchTargetWorktreePath({
+    expect(outputTargetWorktreePath({
       currentStep: "source_created",
       sessionId: "session-1",
       status: "active"
     })).toBe("");
 
-    expect(launchTargetWorktreePath({
+    expect(outputTargetWorktreePath({
       completedSteps: ["source_created"],
       sessionId: "session-1",
       sessionRoot: "/workspace/vibe64-local-editor/state/projects/project-test/sessions/active/session-1",
       status: "active"
     })).toBe("");
 
-    expect(launchTargetWorktreePath({
+    expect(outputTargetWorktreePath({
       metadata: managedSourceMetadata,
       sessionId: "session-1",
       sourceReady: true
     })).toBe(managedSourceMetadata.source_path);
 
-    expect(launchTargetWorktreePath({
+    expect(outputTargetWorktreePath({
       completedSteps: ["source_created"],
       metadata: {
         source_path: "/old-workspace/vibe64-local-editor/state/projects/project-test/sessions/active/session-1/source"
@@ -501,24 +500,6 @@ describe("Vibe64 launch controls", () => {
       .not.toBe(launchPreviewLocationStorageKey(firstSession, "beta_2"));
   });
 
-  it("stores preview options by project slug and launch target", () => {
-    const firstSession = {
-      sessionId: "session-1"
-    };
-    const secondSessionForSameProject = {
-      sessionId: "session-2"
-    };
-
-    expect(launchPreviewOptionsStorageKey(firstSession, "customer-app", "dev"))
-      .toBe(launchPreviewOptionsStorageKey(secondSessionForSameProject, "customer-app", "dev"));
-    expect(launchPreviewOptionsStorageKey(firstSession, "customer-app", "dev"))
-      .not.toBe(launchPreviewOptionsStorageKey(firstSession, "admin-app", "dev"));
-    expect(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "dev"))
-      .not.toBe(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "built"));
-    expect(launchPreviewOptionsStorageKey(firstSession, "alpha_1", "dev"))
-      .not.toBe(launchPreviewOptionsStorageKey(firstSession, "beta_2", "dev"));
-  });
-
   it("requires a stable visible idle scope before scheduling embedded preview auto-start", () => {
     const readyState = {
       autoStartKey: "",
@@ -535,17 +516,17 @@ describe("Vibe64 launch controls", () => {
     };
 
     expect(AUTO_START_STABILITY_DELAY_MS).toBeGreaterThan(0);
-    expect(autoStartLaunchTargetsLoading({
-      launchTargetsLoading: false,
-      launchTargetsSettled: true
+    expect(autoStartOutputsLoading({
+      outputTargetsLoading: false,
+      outputTargetsSettled: true
     })).toBe(false);
-    expect(autoStartLaunchTargetsLoading({
-      launchTargetsLoading: false,
-      launchTargetsSettled: false
+    expect(autoStartOutputsLoading({
+      outputTargetsLoading: false,
+      outputTargetsSettled: false
     })).toBe(true);
-    expect(autoStartLaunchTargetsLoading({
-      launchTargetsLoading: true,
-      launchTargetsSettled: true
+    expect(autoStartOutputsLoading({
+      outputTargetsLoading: true,
+      outputTargetsSettled: true
     })).toBe(true);
     expect(shouldScheduleLaunchAutoStart(readyState)).toBe(true);
     expect(shouldScheduleLaunchAutoStart({
@@ -635,119 +616,121 @@ describe("Vibe64 launch controls", () => {
       error: Object.assign(new Error("Request failed."), {
         status: 502
       }),
-      path: "/api/vibe64/sessions/session-1/launch-targets"
-    })).toBe("Request failed. (HTTP 502, /api/vibe64/sessions/session-1/launch-targets)");
+      path: "/api/vibe64/sessions/session-1/outputs"
+    })).toBe("Request failed. (HTTP 502, /api/vibe64/sessions/session-1/outputs)");
 
     expect(launchStatusErrorText({
       error: Object.assign(new Error("Network request failed."), {
         status: 0
       }),
-      path: "/api/vibe64/sessions/session-1/launch-targets"
-    })).toBe("Network request failed. (network, /api/vibe64/sessions/session-1/launch-targets)");
+      path: "/api/vibe64/sessions/session-1/outputs"
+    })).toBe("Network request failed. (network, /api/vibe64/sessions/session-1/outputs)");
 
     expect(launchStatusErrorText({
       error: Object.assign(new Error("Assistant owns the source."), {
         code: "vibe64_agent_write_mode_busy",
         status: 400
       }),
-      path: "/api/vibe64/sessions/session-1/launch-targets"
+      path: "/api/vibe64/sessions/session-1/outputs"
     })).toBe("");
   });
 
   it("refreshes launch targets for lifecycle events and explicit refresh hints", () => {
     const ownOriginId = vibe64BrowserTabOriginId();
 
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
-        reason: "launch-target-started",
+        reason: "output-target-started",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       localLaunchStarting: true,
       payload: {
-        reason: "launch-target-started",
+        reason: "output-target-started",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(false);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
         originId: ownOriginId,
-        reason: "launch-target-started",
+        reason: "output-target-started",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(false);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
         originId: "other-tab",
-        reason: "launch-target-started",
+        reason: "output-target-started",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
-        reason: "launch-target-ready",
+        reason: "output-target-ready",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
-        reason: "launch-target-stale-cleared",
+        reason: "output-target-stale-cleared",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
         reason: "codex-terminal-started",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(false);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
         clientRefresh: {
-          includeLaunchTargets: true
+          includeOutputs: true
         },
-        reason: "launch-target-closed",
+        reason: "output-target-closed",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
         clientRefresh: {
-          includeLaunchTargets: true
+          includeOutputs: true
         },
         reason: "codex-app-server-turn-idle",
         sessionId: "session-1"
       }
     }, "session-1")).toBe(true);
-    expect(launchTargetsRealtimeShouldRefresh({
+    expect(outputTargetsRealtimeShouldRefresh({
       payload: {
         clientRefresh: {
-          includeLaunchTargets: true
+          includeOutputs: true
         },
-        reason: "launch-target-ready",
+        reason: "output-target-ready",
         sessionId: "session-2"
       }
     }, "session-1")).toBe(false);
   });
 
   it("uses adapter preview preference while respecting availability", () => {
-    const launchTargets = [
+    const outputTargets = [
       {
         available: true,
-        id: "built"
+        id: "built",
+        presentation: { kind: "web" }
       },
       {
         available: false,
-        defaultPreview: true,
+        default: true,
         disabledReason: "Install dependencies before running the app.",
-        id: "dev"
+        id: "dev",
+        presentation: { kind: "web" }
       }
     ];
 
-    expect(preferredPreviewTarget(launchTargets)?.id).toBe("dev");
-    expect(managedPreviewTarget(launchTargets)?.id).toBe("built");
-    expect(managedPreviewTarget(launchTargets.map((target) => ({
+    expect(preferredPreviewTarget(outputTargets)?.id).toBe("dev");
+    expect(managedPreviewTarget(outputTargets)?.id).toBe("built");
+    expect(managedPreviewTarget(outputTargets.map((target) => ({
       ...target,
       available: true
     })))?.id).toBe("dev");

@@ -106,11 +106,11 @@ convergence, exhaustive Program ownership, or whole-application correctness.
 <p class="vibe-step"><strong>04</strong> / 04 <span>Host policy stays local</span></p>
 <h2>Declarations do not become process authority.</h2>
 <p>
-Genesis transports the opaque Launch section. Vibe64 validates its own
+Genesis transports the opaque Outputs section. Vibe64 validates its own
 contract, maps only supported requirements to pinned runtime packs, and retains
-ports, readiness, proxies, process lifetime, environment policy, and the exact
-Playwright and Chromium release. Generated projects never provision their own
-browser.
+terminal and web process lifetime, finite builds, immutable downloads, ports,
+readiness, proxies, environment policy, and the exact Playwright and Chromium
+release. Generated projects never provision their own browser.
 </p>
 <a class="vibe-button vibe-button--primary" href="/dev/technical-reference">Read the contracts</a>
 </div>
@@ -154,7 +154,7 @@ browser.
 
 <details class="vibe-faq-item">
 <summary>Who decides how an app runs?</summary>
-<p>The project Stack may carry an exact Vibe64 Launch contract. Genesis composes it opaquely; Vibe64 validates the schema, decides whether it can satisfy the runtime requirements, and owns the resulting process and preview.</p>
+<p>The project Stack may carry an exact Vibe64 Outputs contract. Genesis composes it opaquely; Vibe64 validates the schema, decides whether it can satisfy the runtime requirements, and owns the resulting process, presentation, and immutable downloads.</p>
 </details>
 </div>
 </div>

@@ -580,7 +580,7 @@
         class="studio-autopilot__right-pane-page"
         role="tabpanel"
       >
-        <Vibe64LaunchControls
+        <Vibe64OutputControls
           :ask-codex-to-fix-preview-identity="askCodexToFixPreviewIdentity"
           :attach-preview-file="attachPreviewFile"
           :prepare-preview-file="attachPreviewFileProducer"
@@ -711,7 +711,7 @@ const composerAttachmentState = ref({
 });
 
 const {
-  Vibe64LaunchControls,
+  Vibe64OutputControls,
   agentActive,
   agentStopEnabled,
   agentStopVisible,

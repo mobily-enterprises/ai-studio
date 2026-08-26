@@ -37,17 +37,12 @@ const agentAttachmentFields = {
   }
 };
 
-const launchTargetFields = {
+const outputTargetFields = {
   forceRestart: {
     type: "boolean",
     required: false
   },
-  launchInput: {
-    type: "object",
-    additionalProperties: true,
-    required: false
-  },
-  launchTargetId: requiredText,
+  outputTargetId: requiredText,
   originId: optionalText,
   vibe64User: {
     type: "object",
@@ -122,12 +117,12 @@ const sessionPromptHintsActionInputValidator = validator({
   sessionId: sessionIdField,
   vibe64User: vibe64UserField
 });
-const launchTargetInputValidator = validator(launchTargetFields);
-const launchTargetActionInputValidator = validator({
-  ...launchTargetFields,
+const outputTargetInputValidator = validator(outputTargetFields);
+const outputTargetActionInputValidator = validator({
+  ...outputTargetFields,
   sessionId: sessionIdField
 });
-const openLaunchTargetActionInputValidator = validator({
+const openOutputTargetActionInputValidator = validator({
   sessionId: sessionIdField
 });
 const previewIdentityInputValidator = validator({
@@ -174,9 +169,9 @@ const terminalControlKeyInputValidator = validator({
 export {
   agentAttachmentActionInputValidator,
   agentAttachmentDeleteActionInputValidator,
-  launchTargetActionInputValidator,
-  launchTargetInputValidator,
-  openLaunchTargetActionInputValidator,
+  openOutputTargetActionInputValidator,
+  outputTargetActionInputValidator,
+  outputTargetInputValidator,
   previewIdentityActionInputValidator,
   previewIdentityInputValidator,
   sessionPromptHintsActionInputValidator,

@@ -9,16 +9,22 @@
 - `vue`
 - `shell`
 
-## Launch
+## Outputs
 
 ### Target `app`: Run Vibe64
 
 - Default.
+- Mode: `interactive`
+- Workdir: `.`
+- Runtimes: `nodejs`
+- Run `Develop`: `npm` `run` `dev` `--` `--host` `{host}` `--port` `{port}`
+
+#### Presentation
+
+- Kind: `web`
 - Preferred port: `3000`
 - URL path: `/`
 - Ready when: `GET` `/api/health` returns `200`
-- Runtimes: `nodejs`
-- Serve `Develop`: `npm` `run` `dev` `--` `--host` `{host}` `--port` `{port}`
 
 ## Deployment
 

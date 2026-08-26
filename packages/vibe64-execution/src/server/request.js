@@ -30,6 +30,7 @@ const VIBE64_COMMAND_PURPOSES = Object.freeze([
   "github-api",
   "source-editor",
   "preview",
+  "output",
   "deployment",
   "health",
   "source"
@@ -81,6 +82,7 @@ const VIBE64_COMMAND_RUNTIMES = Object.freeze([
   "bun",
   "php",
   "composer",
+  "cpp",
   "playwright",
   "operator-clis"
 ]);
@@ -89,6 +91,7 @@ const DEFAULT_INTERACTIVE_RUNTIME_PURPOSES = new Set([
   "assistant",
   "codex",
   "deployment",
+  "output",
   "preview",
   "source",
   "terminal"

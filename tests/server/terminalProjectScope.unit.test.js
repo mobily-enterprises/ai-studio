@@ -10,7 +10,7 @@ import {
 import {
   codexTerminalNamespace,
   globalCodexTerminalNamespace,
-  launchTargetTerminalNamespace,
+  outputTargetTerminalNamespace,
   sessionTerminalCwd,
   terminalSessionSourceRoot
 } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
@@ -24,7 +24,7 @@ test("Vibe64 terminal namespaces include the active project scope", async () => 
   }, () => ({
     codex: codexTerminalNamespace("session-1"),
     globalCodex: globalCodexTerminalNamespace(),
-    launch: launchTargetTerminalNamespace("session-1")
+    output: outputTargetTerminalNamespace("session-1")
   }));
 
   const beta = await runWithProjectRequestContext({
@@ -33,16 +33,16 @@ test("Vibe64 terminal namespaces include the active project scope", async () => 
   }, () => ({
     codex: codexTerminalNamespace("session-1"),
     globalCodex: globalCodexTerminalNamespace(),
-    launch: launchTargetTerminalNamespace("session-1")
+    output: outputTargetTerminalNamespace("session-1")
   }));
 
   assert.equal(globalNamespace, "vibe64-codex:global:session-1");
   assert.equal(alpha.codex, "vibe64-codex:project:alpha_1:session-1");
   assert.equal(alpha.globalCodex, "vibe64-global-codex:project:alpha_1");
-  assert.equal(alpha.launch, "vibe64-launch-target:project:alpha_1:session-1");
+  assert.equal(alpha.output, "vibe64-output-target:project:alpha_1:session-1");
   assert.notEqual(alpha.codex, beta.codex);
   assert.notEqual(alpha.globalCodex, beta.globalCodex);
-  assert.notEqual(alpha.launch, beta.launch);
+  assert.notEqual(alpha.output, beta.output);
 });
 
 test("Vibe64 terminal roots prefer the selected session source path", () => {

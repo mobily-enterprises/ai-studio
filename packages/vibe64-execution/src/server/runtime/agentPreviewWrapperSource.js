@@ -196,7 +196,7 @@ async function previewSession() {
     throw new Error("Managed preview inspection URL is unavailable.");
   }
   return {
-    previewInstance: [status.launchTargetId, status.terminal?.id].filter(Boolean).join(":"),
+    previewInstance: [status.outputTargetId, status.terminal?.id].filter(Boolean).join(":"),
     previewUrl
   };
 }

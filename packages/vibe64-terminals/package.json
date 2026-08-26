@@ -1,13 +1,13 @@
 {
   "name": "@local/vibe64-terminals",
   "version": "0.1.0",
-  "description": "Owns Vibe64 Codex and managed preview terminal lifecycle.",
+  "description": "Owns Vibe64 Codex and declared output lifecycle.",
   "private": true,
   "type": "module",
   "exports": {
     "./server/actions": "./src/server/actions.js",
     "./server/codexGitCommand": "./src/server/codexGitCommand.js",
-    "./server/vibe64LaunchTargets": "./src/server/vibe64LaunchTargets.js",
+    "./server/vibe64OutputTargets": "./src/server/vibe64OutputTargets.js",
     "./server/launchPreviewProxy": "./src/server/launchPreviewProxy.js",
     "./server/projectExecutionEnv": "./src/server/projectExecutionEnv.js",
     "./shared/launchPreviewProtocol": "./src/shared/launchPreviewProtocol.js"
@@ -47,19 +47,19 @@
         "surfaces": [
           {
             "subpath": "./server/registerRoutes",
-            "summary": "Registers Vibe64 terminal, attachment, and managed preview routes."
+            "summary": "Registers Vibe64 terminal, attachment, output, and managed preview routes."
           },
           {
             "subpath": "./server/service",
-            "summary": "Owns Codex conversation, Vibe64-declared workspace preparation, and managed terminal lifecycle."
+            "summary": "Owns Codex conversation, Vibe64-declared workspace preparation, and output lifecycle."
           },
           {
             "subpath": "./server/projectExecutionEnv",
             "summary": "Resolves Vibe64-owned project Env for terminal processes."
           },
           {
-            "subpath": "./server/vibe64LaunchTargets",
-            "summary": "Translates explicit Vibe64 launch declarations into Vibe64-owned managed preview terminals."
+            "subpath": "./server/vibe64OutputTargets",
+            "summary": "Translates explicit Vibe64 Outputs declarations into Vibe64-owned output runs."
           }
         ],
         "capabilities": [

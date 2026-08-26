@@ -5,8 +5,8 @@ import {
   nextLaunchPreviewToolbarPosition,
   normalizeLaunchPreviewToolbarPosition,
   resolveLaunchPreviewDestination,
-  useVibe64LaunchControls
-} from "@/composables/useVibe64LaunchControls.js";
+  useVibe64OutputControls
+} from "@/composables/useVibe64OutputControls.js";
 import {
   PREVIEW_BRIDGE_READY_MESSAGE_TYPE,
   PREVIEW_BRIDGE_VERSION,
@@ -33,11 +33,6 @@ import {
 import {
   useVibe64ProjectSlug
 } from "@/composables/useVibe64ProjectScope.js";
-import {
-  previewInputFromFormValues,
-  previewOptionFormValue,
-  previewOptionsForTarget
-} from "@/lib/vibe64PreviewOptions.js";
 import {
   previewRouteHasParams,
   previewRouteInitialFormValues,
@@ -207,20 +202,20 @@ function launchPreviewFrameUrl({
 }
 
 function previewFrameLifecycleIdentity({
-  launchTargetId = "",
+  outputTargetId = "",
   sessionId = "",
   src = "",
   terminalSessionId = ""
 } = {}) {
   return previewLifecycleIdentity([
     String(sessionId || "").trim(),
-    String(launchTargetId || "").trim(),
+    String(outputTargetId || "").trim(),
     String(terminalSessionId || "").trim()
   ], src);
 }
 
 function previewIdentityLifecycleIdentity({
-  launchTargetId = "",
+  outputTargetId = "",
   previewBaseUrl = "",
   projectSlug = "",
   sessionId = "",
@@ -229,7 +224,7 @@ function previewIdentityLifecycleIdentity({
   return previewLifecycleIdentity([
     String(projectSlug || "").trim(),
     String(sessionId || "").trim(),
-    String(launchTargetId || "").trim(),
+    String(outputTargetId || "").trim(),
     String(terminalSessionId || "").trim()
   ], previewBaseUrl);
 }
@@ -598,17 +593,19 @@ function launchPreviewAddressNavigationUrl({
   }
 }
 
-function useVibe64LaunchControlsSurface(props) {
+function useVibe64OutputControlsSurface(props) {
   const {
-    activeLaunchTarget,
+    activeOutputTarget,
     expandTerminal,
     launchActions,
     launchButtonsDisabled,
     launchError,
-    launchInputForTarget,
     launchStatusAttempt,
     launchStarting,
-    launchTargets,
+    outputExecution,
+    outputResults,
+    outputRuns,
+    outputTargets,
     loading,
     loadError,
     minimizeTerminal,
@@ -622,11 +619,10 @@ function useVibe64LaunchControlsSurface(props) {
     previewState,
     publishPreviewState,
     requestPreviewIdentityGrant,
-    refresh: refreshLaunchTargets,
+    refresh: refreshOutputs,
     restartTerminal,
     retryTerminal,
     run,
-    savePreviewInput,
     startNewlyConfiguredWorkspaceSetup,
     terminal,
     terminalCanRestart,
@@ -647,9 +643,8 @@ function useVibe64LaunchControlsSurface(props) {
     terminalVisible,
     terminalWindowVisible,
     terminalWindowStorageKey,
-    previewInputIsRemembered,
     visible
-  } = useVibe64LaunchControls({
+  } = useVibe64OutputControls({
     autoStartManagedPreview: () => props.autoStartManagedPreview,
     autoStartTargetId: () => props.autoStartTargetId,
     previewDisplayed: () => props.previewDisplayed,
@@ -662,7 +657,7 @@ function useVibe64LaunchControlsSurface(props) {
   const runMenuDisabled = computed(() => Boolean(
     launchButtonsDisabled.value ||
     loading.value ||
-    launchTargets.value.length < 1
+    outputTargets.value.length < 1
   ));
   const previewFrame = ref(null);
   const previewBridgeVersion = ref(0);
@@ -690,9 +685,6 @@ function useVibe64LaunchControlsSurface(props) {
   const previewAddressError = ref("");
   const previewAddressFocused = ref(false);
   const previewHistory = ref([]);
-  const previewOptionsDialogVisible = ref(false);
-  const previewOptionsFormValues = ref({});
-  const previewOptionsRemember = ref(false);
   const previewRouteDialogVisible = ref(false);
   const previewRouteDialogError = ref("");
   const previewRouteFormValues = ref({});
@@ -719,15 +711,17 @@ function useVibe64LaunchControlsSurface(props) {
     if (!props.embeddedPreview || !requestedAutoStartTargetId.value) {
       return null;
     }
-    return launchTargets.value.find((target) => target.id === requestedAutoStartTargetId.value) || null;
+    return outputTargets.value.find((target) => (
+      target.id === requestedAutoStartTargetId.value && target.presentation?.kind === "web"
+    )) || null;
   });
   const embeddedStartTarget = computed(() => {
     if (!props.embeddedPreview) {
       return null;
     }
     return embeddedAutoStartTarget.value ||
-      managedPreviewTarget(launchTargets.value) ||
-      preferredPreviewTarget(launchTargets.value);
+      managedPreviewTarget(outputTargets.value) ||
+      preferredPreviewTarget(outputTargets.value);
   });
   const embeddedStartTargetUnavailableReason = computed(() => {
     const target = embeddedStartTarget.value;
@@ -748,9 +742,10 @@ function useVibe64LaunchControlsSurface(props) {
   ));
   const manualLaunchMenuVisible = computed(() => Boolean(
     !terminalVisible.value &&
-    launchTargets.value.length > 0 &&
+    outputTargets.value.length > 0 &&
     !(
       props.embeddedPreview &&
+      embeddedStartTarget.value &&
       (requestedAutoStartTargetId.value || props.autoStartManagedPreview)
     )
   ));
@@ -760,21 +755,10 @@ function useVibe64LaunchControlsSurface(props) {
   const previewLocationStorageKey = computed(() => props.embeddedPreview && props.session
     ? launchPreviewLocationStorageKey(props.session, projectSlug.value)
     : "");
-  const previewOptionsTarget = computed(() => (
-    embeddedAutoStartTarget.value || activeLaunchTarget.value || embeddedStartTarget.value || null
+  const previewContextTarget = computed(() => (
+    embeddedAutoStartTarget.value || activeOutputTarget.value || embeddedStartTarget.value || null
   ));
-  const previewOptions = computed(() => previewOptionsForTarget(previewOptionsTarget.value));
-  const previewOptionsAvailable = computed(() => previewOptions.value.length > 0);
-  const previewOptionsAttentionVisible = computed(() => Boolean(
-    props.embeddedPreview && launchError.value && previewOptionsAvailable.value
-  ));
-  const previewOptionsPrimaryLabel = computed(() => {
-    if (terminalIsRunning.value) {
-      return "Save and restart preview";
-    }
-    return launchError.value ? "Save and start preview" : "Save";
-  });
-  const previewRoutes = computed(() => previewRoutesForTarget(previewOptionsTarget.value));
+  const previewRoutes = computed(() => previewRoutesForTarget(previewContextTarget.value));
   const previewRoutesAvailable = computed(() => previewRoutes.value.length > 0);
   const previewRouteDialogPath = computed(() => {
     const route = previewRouteSelection.value;
@@ -815,7 +799,7 @@ function useVibe64LaunchControlsSurface(props) {
     previewIdentityCapability.value?.identities
   ));
   const previewIdentityLifecycleKey = computed(() => previewIdentityLifecycleIdentity({
-    launchTargetId: activeLaunchTarget.value?.id || terminal.value?.metadata?.launchTargetId,
+    outputTargetId: activeOutputTarget.value?.id || terminal.value?.metadata?.outputTargetId,
     previewBaseUrl: previewBaseUrl.value,
     projectSlug: projectSlug.value,
     sessionId: props.session?.sessionId,
@@ -892,7 +876,7 @@ function useVibe64LaunchControlsSurface(props) {
         : `Opening preview as ${requested?.name || requested?.identityName || "the selected app identity"}…`;
     }
     return launchPreviewInFlightText({
-      activeLaunchTarget: activeLaunchTarget.value,
+      activeOutputTarget: activeOutputTarget.value,
       embeddedStartTarget: embeddedStartTarget.value,
       launchStarting: launchStarting.value,
       launchStatusText: launchStatusText.value,
@@ -1141,7 +1125,7 @@ function useVibe64LaunchControlsSurface(props) {
       visitedUrl: visitedUrl || previewDisplayBaseUrl.value || previewBaseUrl.value
     });
     const nextIdentity = previewFrameLifecycleIdentity({
-      launchTargetId: activeLaunchTarget.value?.id,
+      outputTargetId: activeOutputTarget.value?.id,
       sessionId: props.session?.sessionId,
       src: nextSrc,
       terminalSessionId: terminalSessionId.value
@@ -1169,7 +1153,7 @@ function useVibe64LaunchControlsSurface(props) {
   async function reloadPreview() {
     resetPreviewResourceRecovery(previewIdentityLifecycleKey.value);
     const requestIdBeforeRefresh = previewFrameRequestId.value;
-    await refreshLaunchTargets();
+    await refreshOutputs();
     await nextTick();
     if (previewFrameRequestId.value !== requestIdBeforeRefresh) {
       return true;
@@ -1182,7 +1166,7 @@ function useVibe64LaunchControlsSurface(props) {
 
   async function retryLaunchStatus() {
     await startNewlyConfiguredWorkspaceSetup?.();
-    await refreshLaunchTargets();
+    await refreshOutputs();
   }
   
   function movePreviewToolbar(direction = 0) {
@@ -1621,49 +1605,6 @@ function useVibe64LaunchControlsSurface(props) {
     return false;
   }
 
-  function openPreviewOptions() {
-    const target = previewOptionsTarget.value;
-    if (!target || !previewOptionsAvailable.value) {
-      return false;
-    }
-    const input = launchInputForTarget(target);
-    previewOptionsFormValues.value = Object.fromEntries(previewOptions.value.map((option) => [
-      option.id,
-      previewOptionFormValue(option, input)
-    ]));
-    previewOptionsRemember.value = previewInputIsRemembered(target);
-    previewOptionsDialogVisible.value = true;
-    return true;
-  }
-
-  async function savePreviewOptions({
-    restart = false
-  } = {}) {
-    const target = previewOptionsTarget.value;
-    if (!target) {
-      previewOptionsDialogVisible.value = false;
-      return false;
-    }
-    savePreviewInput(
-      target,
-      previewInputFromFormValues(target, previewOptionsFormValues.value),
-      {
-        remember: previewOptionsRemember.value
-      }
-    );
-    previewOptionsDialogVisible.value = false;
-    if (restart && terminalIsRunning.value) {
-      return restartTerminal();
-    }
-    if (restart && launchError.value && props.embeddedPreview) {
-      return run(target, {
-        applyDefaultDisplay: false,
-        forceRestart: true
-      });
-    }
-    return true;
-  }
-  
   function setTerminalExpanded(expanded) {
     previewLogVisible.value = Boolean(expanded);
     if (expanded) {
@@ -1966,7 +1907,10 @@ function useVibe64LaunchControlsSurface(props) {
     launchStatusDetailText,
     launchStatusRetryVisible,
     launchStatusText,
-    launchTargets,
+    outputExecution,
+    outputResults,
+    outputRuns,
+    outputTargets,
     launchToolbarDockVisible,
     loading,
     loadError,
@@ -2008,13 +1952,6 @@ function useVibe64LaunchControlsSurface(props) {
     previewInFlightText,
     previewLoadingOverlayVisible,
     previewMessage,
-    previewOptions,
-    previewOptionsAttentionVisible,
-    previewOptionsAvailable,
-    previewOptionsDialogVisible,
-    previewOptionsFormValues,
-    previewOptionsPrimaryLabel,
-    previewOptionsRemember,
     previewRouteDialogError,
     previewRouteDialogParams,
     previewRouteDialogPath,
@@ -2038,13 +1975,11 @@ function useVibe64LaunchControlsSurface(props) {
     previewUrl,
     copyPreviewUrl,
     openPreviewRoute,
-    openPreviewOptions,
     recoverEmbeddedPreview,
     reloadPreview,
     retryLaunchStatus,
     requestPreviewDiagnostics,
     resetPreviewAddressDraft,
-    savePreviewOptions,
     selectPreviewConfiguredIdentity,
     selectPreviewGuest,
     submitPreviewRouteDialog,
@@ -2117,13 +2052,13 @@ function launchPreviewEmptyText({
   return "Preview will appear here when it is ready.";
 }
 
-function launchTargetLabel(launchTarget = null) {
-  const label = String(launchTarget?.label || launchTarget?.id || "").trim();
-  return label || "selected launch target";
+function outputTargetLabel(outputTarget = null) {
+  const label = String(outputTarget?.label || outputTarget?.id || "").trim();
+  return label || "selected output target";
 }
 
 function launchPreviewInFlightText({
-  activeLaunchTarget = null,
+  activeOutputTarget = null,
   embeddedStartTarget = null,
   launchStarting = false,
   launchStatusText = "",
@@ -2141,22 +2076,22 @@ function launchPreviewInFlightText({
   if (embedUnavailableReason) {
     return embedUnavailableReason;
   }
-  const target = activeLaunchTarget || embeddedStartTarget;
+  const target = activeOutputTarget || embeddedStartTarget;
   const launchStatus = String(launchStatusText || "").trim();
   if (launchStarting) {
-    return `Starting preview: ${launchTargetLabel(embeddedStartTarget || activeLaunchTarget)}.`;
+    return `Starting preview: ${outputTargetLabel(embeddedStartTarget || activeOutputTarget)}.`;
   }
   if (operationBusy && terminalCanRestart) {
-    return `Restarting preview: ${launchTargetLabel(target)}.`;
+    return `Restarting preview: ${outputTargetLabel(target)}.`;
   }
   if (operationBusy && terminalCanRetry) {
-    return `Retrying preview: ${launchTargetLabel(target)}.`;
+    return `Retrying preview: ${outputTargetLabel(target)}.`;
   }
   if (operationBusy) {
-    return `Trying preview: ${launchTargetLabel(embeddedStartTarget || activeLaunchTarget)}.`;
+    return `Trying preview: ${outputTargetLabel(embeddedStartTarget || activeOutputTarget)}.`;
   }
   if (terminalIsRunning && !previewUrl) {
-    return `Waiting for preview URL from ${launchTargetLabel(target)}.`;
+    return `Waiting for preview URL from ${outputTargetLabel(target)}.`;
   }
   if (previewLoadingOverlayVisible && previewUrl) {
     const address = String(previewDisplayedAddress || "").trim();
@@ -2299,5 +2234,5 @@ export {
   previewRouteFromUrl,
   previewUrlForRoute,
   redactPreviewDebugDetails,
-  useVibe64LaunchControlsSurface
+  useVibe64OutputControlsSurface
 };

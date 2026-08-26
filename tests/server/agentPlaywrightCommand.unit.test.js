@@ -168,7 +168,7 @@ async function prepareFixture(root, projectVersion, runtimeVersion = projectVers
             running: true,
             status: "running"
           },
-          lastLaunchTarget: {
+          lastOutputTarget: {
             agentHref: previewUrl,
             id: "dev"
           },

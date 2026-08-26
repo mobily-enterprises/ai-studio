@@ -229,28 +229,42 @@ function vibe64SessionPreviewStatePath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/preview-state");
 }
 
-function vibe64LaunchTargetOpenPath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/launch-target/open");
+function vibe64OutputOpenPath(sessionsApiPath = "", sessionId = "") {
+  return vibe64SessionPath(sessionsApiPath, sessionId, "/output-runs/open");
 }
 
-function vibe64LaunchTargetsPath(sessionsApiPath = "", sessionId = "") {
-  return vibe64SessionPath(sessionsApiPath, sessionId, "/launch-targets");
+function vibe64OutputsPath(sessionsApiPath = "", sessionId = "") {
+  return vibe64SessionPath(sessionsApiPath, sessionId, "/outputs");
 }
 
 function vibe64PreviewIdentityPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/preview-identity");
 }
 
-function vibe64LaunchTerminalPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
+function vibe64OutputRunPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
   return vibe64SessionPath(
     sessionsApiPath,
     sessionId,
-    terminalSessionId ? `/launch-terminal/${encodePathSegment(terminalSessionId)}` : "/launch-terminal"
+    terminalSessionId
+      ? `/output-runs/${encodePathSegment(terminalSessionId)}/terminal`
+      : "/output-runs"
   );
 }
 
-function vibe64LaunchTerminalStopPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
-  return `${vibe64LaunchTerminalPath(sessionsApiPath, sessionId, terminalSessionId)}/stop`;
+function vibe64OutputRunStopPath(sessionsApiPath = "", sessionId = "", terminalSessionId = "") {
+  return vibe64SessionPath(
+    sessionsApiPath,
+    sessionId,
+    `/output-runs/${encodePathSegment(terminalSessionId)}/stop`
+  );
+}
+
+function vibe64OutputResultPath(sessionsApiPath = "", sessionId = "", resultId = "") {
+  return vibe64SessionPath(
+    sessionsApiPath,
+    sessionId,
+    `/output-results/${encodePathSegment(resultId)}`
+  );
 }
 
 function vibe64SourceEditorTreePath(sessionsApiPath = "", sessionId = "", options = {}) {
@@ -345,13 +359,13 @@ function vibe64ConversationLogQueryKey(surfaceId, ownershipFilter, sessionId = "
   ];
 }
 
-function vibe64LaunchTargetsQueryKey(surfaceId, ownershipFilter, sessionId = "", projectSlug) {
+function vibe64OutputsQueryKey(surfaceId, ownershipFilter, sessionId = "", projectSlug) {
   return [
     "vibe64",
     ...vibe64ProjectQueryScope(projectSlug),
     surfaceId,
     ownershipFilter,
-    "launch-targets",
+    "outputs",
     encodePathSegment(sessionId)
   ];
 }
@@ -389,9 +403,12 @@ export {
   vibe64SessionPromptHintsPath,
   vibe64SessionPreviewStatePath,
   vibe64GlobalCodexTerminalPath,
-  vibe64LaunchTargetOpenPath,
-  vibe64LaunchTargetsPath,
-  vibe64LaunchTargetsQueryKey,
+  vibe64OutputOpenPath,
+  vibe64OutputResultPath,
+  vibe64OutputRunPath,
+  vibe64OutputRunStopPath,
+  vibe64OutputsPath,
+  vibe64OutputsQueryKey,
   vibe64PreviewIdentityPath,
   vibe64RepositoryApiPath,
   vibe64RepositoryHistoryPath,
@@ -400,8 +417,6 @@ export {
   vibe64SessionChangeDiffPath,
   vibe64SessionCheckUpdatesPath,
   vibe64SessionChangesPath,
-  vibe64LaunchTerminalPath,
-  vibe64LaunchTerminalStopPath,
   vibe64SessionPath,
   vibe64SessionQueryKey,
   selectedSessionStorageKey,

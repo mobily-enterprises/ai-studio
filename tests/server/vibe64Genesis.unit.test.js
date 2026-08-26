@@ -19,11 +19,11 @@ import {
   initializeGenesisProject,
   inspectGenesisDerivedArtifacts,
   inspectGenesisEnvironment,
-  inspectVibe64Launch,
+  inspectVibe64Outputs,
   inspectVibe64WorkspaceSetup,
   inspectVibe64Deployment,
   parseVibe64DeploymentLines,
-  parseVibe64LaunchLines,
+  parseVibe64OutputsLines,
   parseVibe64WorkspaceSetupLines,
   renderGenesisPrompt,
   withVibe64ConversationContract,
@@ -97,7 +97,7 @@ test("Genesis initialization creates its complete technology-neutral project", a
   });
 });
 
-test("Vibe64 interprets its setup and launch contracts from the pinned Stack package", async () => {
+test("Vibe64 interprets setup from the pinned Stack package and owns the opaque Outputs contract", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await initializeGenesisProject({ projectRoot });
@@ -118,11 +118,16 @@ test("Vibe64 interprets its setup and launch contracts from the pinned Stack pac
     assert.equal(waitingSetup.diagnostics[0].code, "VIBE64_WORKSPACE_SETUP_WAITING");
 
     await writeFile(path.join(projectRoot, "package.json"), "{}\n", "utf8");
+    await writeFile(
+      path.join(projectRoot, "genesis", "stack.md"),
+      `${await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8")}\n## Outputs\n\n### Target \`app\`: Run app\n\n- Default.\n- Mode: \`interactive\`\n- Runtimes: \`nodejs\`\n- Run \`Develop\`: \`npm\` \`run\` \`develop\`\n\n#### Presentation\n\n- Kind: \`web\`\n- Ready when: \`GET\` \`/api/health\` returns \`200\`\n`,
+      "utf8"
+    );
     const setup = await inspectVibe64WorkspaceSetup({
       environment: {},
       projectRoot
     });
-    const launch = await inspectVibe64Launch({
+    const outputs = await inspectVibe64Outputs({
       environment: {},
       projectRoot
     });
@@ -130,11 +135,11 @@ test("Vibe64 interprets its setup and launch contracts from the pinned Stack pac
     assert.equal(setup.status, "ready");
     assert.equal(setup.contract, "vibe64.workspace-setup.v1");
     assert.deepEqual(setup.steps.map((step) => step.argv), [["npm", "install"]]);
-    assert.equal(launch.status, "ready");
-    assert.equal(launch.contract, "vibe64.launch.v1");
-    assert.equal(launch.targets[0].id, "app");
-    assert.deepEqual(launch.targets[0].runtimeRequirements, ["nodejs"]);
-    assert.deepEqual(launch.targets[0].steps.map((step) => step.argv), [
+    assert.equal(outputs.status, "ready");
+    assert.equal(outputs.contract, "vibe64.outputs.v1");
+    assert.equal(outputs.targets[0].id, "app");
+    assert.deepEqual(outputs.targets[0].runtimeRequirements, ["nodejs"]);
+    assert.deepEqual(outputs.targets[0].steps.map((step) => step.argv), [
       ["npm", "run", "develop"]
     ]);
   });
@@ -190,7 +195,7 @@ test("Vibe64 rejects unsafe Deployment content that Genesis deliberately leaves 
   }
 });
 
-test("Vibe64 setup and launch parse only their canonical Markdown grammar", () => {
+test("Vibe64 setup and Outputs parse only their canonical Markdown grammar", () => {
   assert.deepEqual(parseVibe64WorkspaceSetupLines([
     "- Prepare `Install` with `nodejs`: `npm` `install`"
   ]), [{
@@ -200,13 +205,18 @@ test("Vibe64 setup and launch parse only their canonical Markdown grammar", () =
     workdir: "."
   }]);
 
-  const launch = parseVibe64LaunchLines([
+  const outputs = parseVibe64OutputsLines([
     "### Target `app`: Run app",
     "",
     "- Default.",
+    "- Mode: `interactive`",
     "- Runtimes: `nodejs`",
+    "- Run `Develop`: `npm` `run` `develop`",
+    "",
+    "#### Presentation",
+    "",
+    "- Kind: `web`",
     "- Ready when: `GET` `/health` returns `200`",
-    "- Serve `Develop`: `npm` `run` `develop`",
     "",
     "#### Preview identity",
     "",
@@ -215,8 +225,9 @@ test("Vibe64 setup and launch parse only their canonical Markdown grammar", () =
     "- Identity types: `email`",
     "- Runtimes: `nodejs`"
   ]);
-  assert.equal(launch.targets[0].steps[0].role, "server");
-  assert.equal(launch.targets[0].previewIdentity.protocol, "vibe64.preview-identity.command.v1");
+  assert.equal(outputs.targets[0].steps[0].role, "run");
+  assert.equal(outputs.targets[0].presentation.kind, "web");
+  assert.equal(outputs.targets[0].previewIdentity.protocol, "vibe64.preview-identity.command.v1");
 
   assert.throws(
     () => parseVibe64WorkspaceSetupLines([
@@ -227,12 +238,12 @@ test("Vibe64 setup and launch parse only their canonical Markdown grammar", () =
     (error) => error?.code === "VIBE64_WORKSPACE_SETUP_INVALID"
   );
   assert.throws(
-    () => parseVibe64LaunchLines([
-      "```json vibe64.launch.v1",
+    () => parseVibe64OutputsLines([
+      "```json vibe64.outputs.v1",
       "{\"version\":1}",
       "```"
     ]),
-    (error) => error?.code === "VIBE64_LAUNCH_INVALID"
+    (error) => error?.code === "VIBE64_OUTPUTS_INVALID"
   );
 });
 

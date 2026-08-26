@@ -506,14 +506,14 @@ Failure:
 ### Managed agent and application processes
 
 `packages/vibe64-terminals/src/server/codexTerminal.js` and
-`packages/vibe64-terminals/src/server/launchTargetTerminal.js`
+`packages/vibe64-terminals/src/server/outputTargetTerminal.js`
 
 Vibe64 owns the execution environment for direct agent turns and declared
-Vibe64 Launch targets. Launch declarations provide literal commands and
+Vibe64 Outputs targets. Outputs declarations provide literal commands and
 abstract runtime requirements; Vibe64 resolves those requirements to managed
-runtime packs, supplies project Env, allocates ports, and supervises the
-process. Project code does not assemble host `PATH`, browser paths, or account
-homes.
+runtime packs, supplies project Env, snapshots declared finite results,
+allocates ports for web presentations, and supervises the process. Project code
+does not assemble host `PATH`, browser paths, or account homes.
 
 ### Codex Git/GitHub Wrapper
 

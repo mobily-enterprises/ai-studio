@@ -159,7 +159,7 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain(":abandon=\"props.sessionAbandon\"");
     expect(component).toContain("<Vibe64SessionSourceEditor");
     expect(component).toContain("<Vibe64SystemWorldView");
-    expect(component).toContain("<Vibe64LaunchControls");
+    expect(component).toContain("<Vibe64OutputControls");
     expect(component).toContain("name=\"ai-terminal\"");
     expect(component).not.toContain("Session tools");
     expect(component).not.toContain("mdiDotsHorizontal");
@@ -270,7 +270,7 @@ describe("Vibe64 direct session view", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
     const launchControls = fs.readFileSync(
-      path.resolve("src/components/studio/Vibe64LaunchControls.vue"),
+      path.resolve("src/components/studio/Vibe64OutputControls.vue"),
       "utf8"
     );
 

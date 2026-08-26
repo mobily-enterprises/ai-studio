@@ -192,7 +192,7 @@ describe("mounted direct session state", () => {
       "codex-app-server-turn-active",
       "codex-app-server-turn-idle",
       "codex-app-server-commentary",
-      "launch-target-ready"
+      "output-target-ready"
     ]) {
       expect(mountedSessionRealtimeShouldRefresh({
         payload: { reason, sessionId: "session-1" }

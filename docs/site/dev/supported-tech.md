@@ -49,8 +49,8 @@ Genesis for the selected project Stack and uses the returned portable contracts.
 
 <article class="vibe-adapter-card">
 <div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">▶</div><span>OPTIONAL</span></div>
-<h3>Launch targets</h3>
-<p>Exact commands, relative working directory, abstract runtime requirements, and an application path. Genesis starts nothing; Vibe64 retains all process and preview policy.</p>
+<h3>Output targets</h3>
+<p>Exact commands, relative working directory, abstract runtime requirements, terminal or web presentation, and optional immutable downloads. Genesis starts nothing; Vibe64 retains all execution and presentation policy.</p>
 </article>
 
 <article class="vibe-adapter-card">

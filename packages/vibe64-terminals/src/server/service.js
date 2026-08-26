@@ -32,7 +32,7 @@ import {
   repositoryVersionFileDiff as inspectManagedRepositoryVersionFileDiff,
   repositoryVersionFiles as inspectManagedRepositoryVersionFiles
 } from "./repositoryHistory.js";
-import { createLaunchTargetTerminalController } from "./launchTargetTerminal.js";
+import { createOutputTargetTerminalController } from "./outputTargetTerminal.js";
 import {
   recordSessionGitCommandActor as writeSessionGitCommandActor
 } from "./sessionGitCommandActor.js";
@@ -47,7 +47,7 @@ import {
   codexTerminalNamespace,
   directoryExists,
   ensureTerminalSessionSourceGitSelfContained,
-  launchTargetTerminalNamespace,
+  outputTargetTerminalNamespace,
   terminalSessionSourceRoot,
   terminalWorktreePath,
   terminalProjectScopeKey
@@ -423,18 +423,18 @@ function createService({
     logger,
     projectService
   });
-  const launchTarget = createLaunchTargetTerminalController({
+  const outputTarget = createOutputTargetTerminalController({
     env,
     ensureWorkspacePrepared: (sessionId, context = {}) => prepareWorkspaceSetup(sessionId, {
       ...context,
       publish: true
     }),
     projectService,
-    publishSessionChanged: publishSessionChanged.launchTarget,
-    sessionAdmissionFailure: (sessionId) => sessionTerminalAdmissionFailure(sessionId, "launch")
+    publishSessionChanged: publishSessionChanged.outputTarget,
+    sessionAdmissionFailure: (sessionId) => sessionTerminalAdmissionFailure(sessionId, "output")
   });
   const agentPreviewCommand = createAgentPreviewCommandService({
-    launchTarget,
+    launchTarget: outputTarget,
     logger
   });
   const agentEnvCommand = createAgentEnvCommandService({
@@ -995,7 +995,7 @@ function createService({
       { controller: agentDatabaseCommand, label: "agentDatabase" },
       { controller: agentEnvCommand, label: "agentEnv" },
       { controller: agentPreviewCommand, label: "agentPreview" },
-      { controller: launchTarget, label: "launchTarget" },
+      { controller: outputTarget, label: "outputTarget" },
       {
         controller: {
           closeAllForSession: (id, options) => sessionAgent.closeSession(id, options)
@@ -1022,7 +1022,7 @@ function createService({
     }
     return [
       codexTerminalNamespace(normalizedSessionId),
-      launchTargetTerminalNamespace(normalizedSessionId)
+      outputTargetTerminalNamespace(normalizedSessionId)
     ];
   }
 
@@ -1081,7 +1081,7 @@ function createService({
   function sessionTerminalAdmissionFailure(sessionId = "", kind = "agent") {
     const namespaces = renewalTerminalAdmissionNamespaces(sessionId);
     return terminalNamespaceAdmissionFailure(
-      kind === "launch" ? namespaces[1] : namespaces[0]
+      kind === "output" ? namespaces[1] : namespaces[0]
     );
   }
 
@@ -1107,7 +1107,7 @@ function createService({
     };
   }
 
-  function closedProjectLaunchTargetStatus({
+  function closedProjectOutputTargetStatus({
     closeResult = null,
     reason = PROJECT_RUNTIME_MARKER_MISSING_REASON,
     runtime = null
@@ -1115,8 +1115,8 @@ function createService({
     return {
       activeTerminal: null,
       closeResult,
-      launchTargets: [],
-      lastLaunchTarget: null,
+      outputTargets: [],
+      lastOutputTarget: null,
       ok: closeResult?.ok !== false,
       openTarget: {
         available: false,
@@ -1340,11 +1340,11 @@ function createService({
     },
 
     async close() {
-      const [agentClose, launchTargetClose] = await Promise.allSettled([
+      const [agentClose, outputTargetClose] = await Promise.allSettled([
         Promise.resolve().then(() => sessionAgent.invalidateRuntimes({
           reason: "server-shutdown"
         })),
-        Promise.resolve().then(() => launchTarget.close())
+        Promise.resolve().then(() => outputTarget.close())
       ]);
       const failures = [];
       const agentResult = agentClose.status === "fulfilled"
@@ -1358,8 +1358,8 @@ function createService({
         error.details = agentResult;
         failures.push(error);
       }
-      if (launchTargetClose.status === "rejected") {
-        failures.push(launchTargetClose.reason);
+      if (outputTargetClose.status === "rejected") {
+        failures.push(outputTargetClose.reason);
       }
       if (failures.length > 0) {
         throw new AggregateError(failures, "Vibe64 terminal shutdown did not complete successfully.");
@@ -1504,7 +1504,7 @@ function createService({
 
     async closeSessionNonAgentTerminals(sessionId) {
       return closeTerminalControllersForSession(sessionId, [
-        { controller: launchTarget, label: "launchTarget" }
+        { controller: outputTarget, label: "outputTarget" }
       ], {
         eventPrefix: "server.terminals.closeSessionNonAgentTerminals"
       });
@@ -1939,9 +1939,9 @@ function createService({
       return codex.closeGlobalTerminal(terminalSessionId);
     },
 
-    async closeLaunchTargetTerminal(sessionId, terminalSessionId) {
-      const result = await launchTarget.closeTerminal(sessionId, terminalSessionId);
-      await publishTerminalSessionChanged("launchTargetClosed", sessionId, "launch-target-closed");
+    async closeOutputTargetTerminal(sessionId, terminalSessionId) {
+      const result = await outputTarget.closeTerminal(sessionId, terminalSessionId);
+      await publishTerminalSessionChanged("outputTargetClosed", sessionId, "output-target-closed");
       return result;
     },
 
@@ -2167,26 +2167,34 @@ function createService({
       return sessionAgent.readConversation(sessionId, input, options);
     },
 
-    readLaunchTargetTerminal(sessionId, terminalSessionId) {
-      return launchTarget.readTerminal(sessionId, terminalSessionId);
+    readOutputTargetTerminal(sessionId, terminalSessionId) {
+      return outputTarget.readTerminal(sessionId, terminalSessionId);
     },
 
-    async launchTargetStatus(sessionId, options = {}) {
+    async outputTargetStatus(sessionId, options = {}) {
       const closedRuntime = await closeProjectRuntimeIfOpenMarkerMissing(
-        "server.terminals.launchTargetStatus.closedProject"
+        "server.terminals.outputTargetStatus.closedProject"
       );
       if (closedRuntime) {
-        return closedProjectLaunchTargetStatus(closedRuntime);
+        return closedProjectOutputTargetStatus(closedRuntime);
       }
-      return launchTarget.launchStatus(sessionId, options);
+      return outputTarget.launchStatus(sessionId, options);
     },
 
-    openLaunchTarget(sessionId) {
-      return launchTarget.openLaunchTarget(sessionId);
+    openOutputTarget(sessionId) {
+      return outputTarget.openOutputTarget(sessionId);
+    },
+
+    readOutputResult(sessionId, resultId) {
+      return outputTarget.readResult(sessionId, resultId);
+    },
+
+    removeOutputResultsForSession(sessionId) {
+      return outputTarget.removeResultsForSession(sessionId);
     },
 
     selectPreviewIdentity(sessionId, input = {}, options = {}) {
-      return launchTarget.selectPreviewIdentity(sessionId, input, options);
+      return outputTarget.selectPreviewIdentity(sessionId, input, options);
     },
 
     startAgentTerminal(sessionId, input = {}, options = {}) {
@@ -2210,22 +2218,22 @@ function createService({
       return codex.startGlobalTerminal();
     },
 
-    async startLaunchTargetTerminal(sessionId, input = {}) {
+    async startOutputTargetTerminal(sessionId, input = {}) {
       const result = await runMainAgentWrite(sessionId, input, () => (
-        launchTarget.startTerminal(sessionId, input)
+        outputTarget.startTerminal(sessionId, input)
       ));
       await publishTerminalSessionChanged(
-        "launchTarget",
+        "outputTarget",
         sessionId,
-        "launch-target-started",
+        "output-target-started",
         { originId: input.originId }
       );
       return result;
     },
 
-    async stopLaunchTargetTerminal(sessionId, terminalSessionId) {
-      const result = await launchTarget.stopTerminal(sessionId, terminalSessionId);
-      await publishTerminalSessionChanged("launchTargetStopped", sessionId, "launch-target-stopped");
+    async stopOutputTargetTerminal(sessionId, terminalSessionId) {
+      const result = await outputTarget.stopTerminal(sessionId, terminalSessionId);
+      await publishTerminalSessionChanged("outputTargetStopped", sessionId, "output-target-stopped");
       return result;
     },
 
@@ -2237,8 +2245,8 @@ function createService({
       return codex.subscribeGlobalTerminal(terminalSessionId, subscriber);
     },
 
-    subscribeLaunchTargetTerminal(sessionId, terminalSessionId, subscriber) {
-      return launchTarget.subscribeTerminal(sessionId, terminalSessionId, subscriber);
+    subscribeOutputTargetTerminal(sessionId, terminalSessionId, subscriber) {
+      return outputTarget.subscribeTerminal(sessionId, terminalSessionId, subscriber);
     },
 
     uploadAgentAttachment(sessionId, input = {}, options = {}) {
@@ -2280,13 +2288,13 @@ function createService({
       return codex.resizeGlobalTerminal(terminalSessionId, size);
     },
 
-    writeLaunchTargetTerminal(sessionId, terminalSessionId, data) {
-      return sessionTerminalAdmissionFailure(sessionId, "launch") ||
-        launchTarget.writeTerminal(sessionId, terminalSessionId, data);
+    writeOutputTargetTerminal(sessionId, terminalSessionId, data) {
+      return sessionTerminalAdmissionFailure(sessionId, "output") ||
+        outputTarget.writeTerminal(sessionId, terminalSessionId, data);
     },
 
-    resizeLaunchTargetTerminal(sessionId, terminalSessionId, size) {
-      return launchTarget.resizeTerminal(sessionId, terminalSessionId, size);
+    resizeOutputTargetTerminal(sessionId, terminalSessionId, size) {
+      return outputTarget.resizeTerminal(sessionId, terminalSessionId, size);
     },
 
   };

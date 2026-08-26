@@ -1,8 +1,8 @@
 import {
   agentAttachmentActionInputValidator,
   agentAttachmentDeleteActionInputValidator,
-  launchTargetActionInputValidator,
-  openLaunchTargetActionInputValidator,
+  openOutputTargetActionInputValidator,
+  outputTargetActionInputValidator,
   previewIdentityActionInputValidator,
   sessionPromptHintsActionInputValidator,
   temporaryConversationCreateActionInputValidator,
@@ -11,8 +11,8 @@ import {
   temporaryConversationTurnActionInputValidator
 } from "./inputSchemas.js";
 
-const ACTION_START_LAUNCH_TARGET_TERMINAL = "vibe64.terminals.launch-target-terminal.start";
-const ACTION_OPEN_LAUNCH_TARGET = "vibe64.terminals.launch-target.open";
+const ACTION_START_OUTPUT_TARGET = "vibe64.terminals.output-target.start";
+const ACTION_OPEN_OUTPUT_TARGET = "vibe64.terminals.output-target.open";
 const ACTION_SELECT_PREVIEW_IDENTITY = "vibe64.terminals.preview-identity.select";
 const ACTION_UPLOAD_AGENT_ATTACHMENT = "vibe64.terminals.agent-attachment.upload";
 const ACTION_DELETE_AGENT_ATTACHMENT = "vibe64.terminals.agent-attachment.delete";
@@ -44,20 +44,19 @@ function createTerminalActions({ terminals } = {}) {
   }
   return Object.freeze([
     action({
-      id: ACTION_START_LAUNCH_TARGET_TERMINAL,
-      input: launchTargetActionInputValidator,
-      execute: (input) => terminals.startLaunchTargetTerminal(input.sessionId, {
+      id: ACTION_START_OUTPUT_TARGET,
+      input: outputTargetActionInputValidator,
+      execute: (input) => terminals.startOutputTargetTerminal(input.sessionId, {
         forceRestart: input.forceRestart === true,
-        launchInput: input.launchInput || {},
-        launchTargetId: input.launchTargetId,
+        outputTargetId: input.outputTargetId,
         originId: input.originId || "",
         vibe64User: input.vibe64User || null
       })
     }),
     action({
-      id: ACTION_OPEN_LAUNCH_TARGET,
-      input: openLaunchTargetActionInputValidator,
-      execute: (input) => terminals.openLaunchTarget(input.sessionId)
+      id: ACTION_OPEN_OUTPUT_TARGET,
+      input: openOutputTargetActionInputValidator,
+      execute: (input) => terminals.openOutputTarget(input.sessionId)
     }),
     action({
       id: ACTION_SELECT_PREVIEW_IDENTITY,
@@ -155,10 +154,10 @@ export {
   ACTION_DELETE_AGENT_ATTACHMENT,
   ACTION_DELETE_TEMPORARY_CONVERSATION,
   ACTION_GENERATE_SESSION_PROMPT_HINTS,
-  ACTION_OPEN_LAUNCH_TARGET,
+  ACTION_OPEN_OUTPUT_TARGET,
   ACTION_READ_TEMPORARY_CONVERSATION,
   ACTION_SELECT_PREVIEW_IDENTITY,
-  ACTION_START_LAUNCH_TARGET_TERMINAL,
+  ACTION_START_OUTPUT_TARGET,
   ACTION_START_TEMPORARY_CONVERSATION_TURN,
   ACTION_STOP_TEMPORARY_CONVERSATION,
   ACTION_UPLOAD_AGENT_ATTACHMENT,

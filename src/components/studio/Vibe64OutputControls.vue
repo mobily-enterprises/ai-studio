@@ -175,8 +175,8 @@
                   v-bind="menuProps"
                   :aria-label="previewIdentityTitle"
                   :color="previewIdentityError ? 'error' : undefined"
+                  :disabled="previewIdentityBusy"
                   :icon="mdiAccountSwitchOutline"
-                  :loading="previewIdentityBusy"
                   size="small"
                   :title="previewIdentityTitle"
                   variant="text"
@@ -303,7 +303,6 @@
                 class="vibe64-launch-controls__auto-start-button"
                 :disabled="embeddedManualStartButtonDisabled"
                 :icon="mdiPlayCircleOutline"
-                :loading="operationBusy"
                 size="small"
                 title="Start preview"
                 variant="text"
@@ -311,14 +310,60 @@
               />
             </div>
 
-            <v-menu v-else-if="manualLaunchMenuVisible" location="bottom end">
+            <v-menu
+              v-if="resultsButtonVisible"
+              :close-on-content-click="false"
+              location="bottom end"
+            >
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  :aria-label="outputResultsLabel"
+                  :disabled="outputResults.length < 1 && !outputExecution.error"
+                  :icon="mdiDownloadOutline"
+                  size="small"
+                  :title="outputResultsLabel"
+                  variant="text"
+                />
+              </template>
+
+              <v-card class="vibe64-launch-controls__results-card">
+                <v-card-item
+                  :prepend-icon="mdiDownloadOutline"
+                  subtitle="Immutable snapshots from this session"
+                  title="Build results"
+                />
+
+                <v-alert
+                  v-if="outputExecution.error"
+                  class="vibe64-launch-controls__results-error"
+                  density="compact"
+                  type="error"
+                  variant="tonal"
+                >
+                  {{ outputExecution.error.message }}
+                </v-alert>
+
+                <v-list v-if="outputResults.length" density="comfortable">
+                  <v-list-item
+                    v-for="result in outputResults"
+                    :key="result.id"
+                    :href="result.href"
+                    :prepend-icon="mdiDownloadOutline"
+                    :subtitle="outputResultSubtitle(result)"
+                    :title="result.name"
+                  />
+                </v-list>
+              </v-card>
+            </v-menu>
+
+            <v-menu v-if="manualLaunchMenuVisible" location="bottom end">
               <template #activator="{ props: menuProps }">
                 <v-btn
                   v-bind="menuProps"
                   class="vibe64-launch-controls__run-button"
                   color="primary"
                   :disabled="runMenuDisabled"
-                  :loading="loading"
                   :prepend-icon="mdiPlayCircleOutline"
                   :size="buttonSize"
                   title="Run target"
@@ -330,13 +375,13 @@
 
               <v-list class="vibe64-launch-controls__menu" density="compact">
                 <v-list-item
-                  v-for="launchTarget in launchTargets"
-                  :key="launchTarget.id"
-                  :disabled="launchButtonsDisabled || launchTarget.available === false"
+                  v-for="outputTarget in outputTargets"
+                  :key="outputTarget.id"
+                  :disabled="launchButtonsDisabled || outputTarget.available === false"
                   :prepend-icon="mdiPlayCircleOutline"
-                  :subtitle="launchTarget.disabledReason || ''"
-                  :title="launchTarget.label"
-                  @click="run(launchTarget)"
+                  :subtitle="outputTarget.disabledReason || ''"
+                  :title="outputTarget.label"
+                  @click="run(outputTarget)"
                 />
               </v-list>
             </v-menu>
@@ -404,15 +449,6 @@
 
                 <v-card-actions class="vibe64-launch-controls__attention-actions">
                   <v-btn
-                    v-if="previewOptionsAttentionVisible"
-                    :prepend-icon="mdiCogOutline"
-                    size="small"
-                    variant="tonal"
-                    @click="openPreviewOptions"
-                  >
-                    Preview options
-                  </v-btn>
-                  <v-btn
                     v-if="previewCanShowLog"
                     :prepend-icon="mdiConsoleLine"
                     size="small"
@@ -443,16 +479,6 @@
                 </v-card-actions>
               </v-card>
             </v-menu>
-
-            <v-btn
-              v-if="previewOptionsAvailable"
-              :disabled="operationBusy"
-              :icon="mdiCogOutline"
-              size="small"
-              title="Preview options"
-              variant="text"
-              @click="openPreviewOptions"
-            />
           </div>
         </div>
       </div>
@@ -495,15 +521,6 @@
         <span>{{ previewNotice.message }}</span>
         <div class="vibe64-launch-controls__preview-diagnostic-actions">
           <v-btn
-            v-if="previewOptionsAttentionVisible"
-            :prepend-icon="mdiCogOutline"
-            size="small"
-            variant="tonal"
-            @click="openPreviewOptions"
-          >
-            Preview options
-          </v-btn>
-          <v-btn
             v-if="previewRecoveryVisible"
             color="primary"
             :prepend-icon="mdiRefresh"
@@ -537,8 +554,7 @@
         <span>{{ previewEmptyText }}</span>
         <v-btn
           v-if="previewCheckAgainVisible"
-          :disabled="operationBusy"
-          :loading="loading"
+          :disabled="operationBusy || loading"
           :prepend-icon="mdiRefresh"
           size="small"
           title="Check preview availability again"
@@ -611,55 +627,6 @@
       :visible="true"
       @update:expanded="setTerminalExpanded"
     />
-
-    <v-dialog
-      v-model="previewOptionsDialogVisible"
-      max-width="520"
-    >
-      <v-card class="vibe64-launch-controls__options-card">
-        <v-card-title>Preview options</v-card-title>
-
-        <v-card-text>
-          <v-textarea
-            v-for="option in previewOptions"
-            :key="option.id"
-            v-model="previewOptionsFormValues[option.id]"
-            auto-grow
-            density="comfortable"
-            :hint="option.description || (option.type === 'string-list' ? 'One value per line.' : '')"
-            :label="option.label"
-            :placeholder="option.placeholder"
-            persistent-hint
-            rows="3"
-            variant="outlined"
-          />
-
-          <v-checkbox
-            v-model="previewOptionsRemember"
-            density="compact"
-            hide-details
-            label="Remember for this project"
-          />
-        </v-card-text>
-
-        <v-card-actions>
-          <v-spacer />
-          <v-btn
-            variant="text"
-            @click="previewOptionsDialogVisible = false"
-          >
-            Cancel
-          </v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            @click="savePreviewOptions({ restart: true })"
-          >
-            {{ previewOptionsPrimaryLabel }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
 
     <v-dialog
       v-model="previewRouteDialogVisible"
@@ -750,10 +717,10 @@ import {
   mdiChevronLeft,
   mdiChevronRight,
   mdiChevronUp,
-  mdiCogOutline,
   mdiConsoleLine,
   mdiContentCopy,
   mdiDotsHorizontal,
+  mdiDownloadOutline,
   mdiOpenInNew,
   mdiPlayCircleOutline,
   mdiPowerCycle,
@@ -763,8 +730,8 @@ import {
 } from "@mdi/js";
 import Vibe64Terminal from "@/components/studio/Vibe64Terminal.vue";
 import {
-  useVibe64LaunchControlsSurface
-} from "@/composables/useVibe64LaunchControlsSurface.js";
+  useVibe64OutputControlsSurface
+} from "@/composables/useVibe64OutputControlsSurface.js";
 import {
   useVibe64PreviewCapture
 } from "@/composables/useVibe64PreviewCapture.js";
@@ -861,7 +828,9 @@ const {
   launchStatusChipVisible,
   launchStatusDetailText,
   launchStatusRetryVisible,
-  launchTargets,
+  outputExecution,
+  outputResults,
+  outputTargets,
   launchToolbarDockVisible,
   loading,
   manualLaunchMenuVisible,
@@ -869,7 +838,6 @@ const {
   openAction,
   operationBusy,
   openPreviewRoute,
-  openPreviewOptions,
   previewBaseUrl,
   previewAddressBlur,
   previewAddressDraft,
@@ -900,13 +868,6 @@ const {
   previewIssueVisible,
   previewInFlightText,
   previewLoadingOverlayVisible,
-  previewOptions,
-  previewOptionsAttentionVisible,
-  previewOptionsAvailable,
-  previewOptionsDialogVisible,
-  previewOptionsFormValues,
-  previewOptionsPrimaryLabel,
-  previewOptionsRemember,
   previewRouteDialogError,
   previewRouteDialogParams,
   previewRouteDialogPath,
@@ -931,7 +892,6 @@ const {
   retryLaunchStatus,
   requestPreviewDiagnostics,
   resetPreviewAddressDraft,
-  savePreviewOptions,
   selectPreviewConfiguredIdentity,
   selectPreviewGuest,
   submitPreviewAddress,
@@ -958,7 +918,31 @@ const {
   terminalSurfaceVisible,
   toolbarTeleportTarget,
   visible
-} = useVibe64LaunchControlsSurface(props);
+} = useVibe64OutputControlsSurface(props);
+
+const resultsButtonVisible = computed(() => Boolean(
+  outputResults.value.length > 0 ||
+  outputExecution.value.error ||
+  outputTargets.value.some((target) => Array.isArray(target?.downloads) && target.downloads.length > 0)
+));
+const outputResultsLabel = computed(() => {
+  const count = outputResults.value.length;
+  if (count > 0) {
+    return `${count} downloadable ${count === 1 ? "result" : "results"}`;
+  }
+  return outputExecution.value.error ? "Build results need attention" : "No build results yet";
+});
+
+function outputResultSubtitle(result = {}) {
+  const bytes = Number(result.size || 0);
+  const size = bytes >= 1024 * 1024
+    ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    : bytes >= 1024
+      ? `${(bytes / 1024).toFixed(1)} KB`
+      : `${bytes} B`;
+  const digest = String(result.sha256 || "");
+  return `${size} · SHA-256 ${digest.slice(0, 12)}…`;
+}
 
 const embeddedTerminalStyle = computed(() => ({
   alignSelf: terminalExpanded.value ? "start" : "end",
@@ -1370,6 +1354,16 @@ onBeforeUnmount(() => {
 .vibe64-launch-controls__identity-menu {
   max-width: min(25rem, calc(100vw - 1.5rem));
   min-width: min(19rem, calc(100vw - 1.5rem));
+}
+
+.vibe64-launch-controls__results-card {
+  max-width: min(30rem, calc(100vw - 1.5rem));
+  min-width: min(22rem, calc(100vw - 1.5rem));
+}
+
+.vibe64-launch-controls__results-error {
+  margin: 0 0.75rem 0.5rem;
+  overflow-wrap: anywhere;
 }
 
 .vibe64-launch-controls__identity-error {

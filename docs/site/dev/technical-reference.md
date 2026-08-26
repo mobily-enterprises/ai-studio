@@ -156,26 +156,31 @@ Vibe64 owns:
 - Git repositories, branches, worktrees, credentials, commits, and pushes;
 - user Env storage and secret handling;
 - strict mechanical parsing of `vibe64.workspace-setup.v1`,
-  `vibe64.launch.v1`, `vibe64.preview-identity.command.v1`, and
+  `vibe64.outputs.v1`, `vibe64.preview-identity.command.v1`, and
   `vibe64.application-deployment.v1`;
 - mapping supported runtime requirements to pinned runtime packs;
-- process creation, interruption, logs, recovery, and cleanup;
+- terminal, web, and finite process creation, interruption, logs, recovery,
+  and cleanup;
+- immutable output-result snapshots and authenticated downloads;
 - port allocation, readiness, proxying, and preview URLs;
 - the exact Playwright and Chromium release available to generated projects.
 
-Vibe64 does not infer a framework launch command. If the Stack has no Vibe64
-Launch section, preview is unavailable with a clear diagnostic. An unknown
-runtime requirement is rejected rather than mapped to a similar host tool.
+Vibe64 does not infer a framework output command. If the Stack has no Vibe64
+Outputs section, output execution is unavailable with a clear diagnostic. An
+unknown runtime requirement is rejected rather than mapped to a similar host
+tool.
 
-Workspace setup and Launch are separate Vibe64 contracts carried in opaque
+Workspace setup and Outputs are separate Vibe64 contracts carried in opaque
 Stack sections. Vibe64 accepts only their strict Markdown v1 grammars: headings
 and list roles provide structure, descriptive labels remain readable, and each
-command and argument is a separate backticked value. Vibe64 runs setup's ordered
-argv through the managed execution gateway and records success against that
-exact recipe. Merely reading preview status never starts setup or a process.
-Launch remains pending until the current setup recipe has succeeded; a Stack
-with no setup recipe is simply unconfigured rather than failed. Component
-conflicts are reported instead of interleaving competing commands.
+command and argument is a separate backticked value. Outputs declares exact
+Prepare, Build, and Run argv for either an interactive terminal/web target or a
+finite target with literal downloadable files. Vibe64 runs setup and output
+argv through the managed execution gateway and records setup success against
+that exact recipe. Merely reading output status never starts setup or a
+process. Outputs remain pending until the current setup recipe has succeeded;
+a Stack with no setup recipe is simply unconfigured rather than failed.
+Component conflicts are reported instead of interleaving competing commands.
 
 ## Project environment projection
 
@@ -199,15 +204,16 @@ Chrome or Chromium itself.
 
 ## Application preview identity
 
-An optional `previewIdentity` declaration on a Vibe64 Launch target advertises
-application identity switching. It names a safe committed, application-owned
-project-relative executable such as `tools/preview-identity`, declares the
+An optional `previewIdentity` declaration beneath a web-presented Vibe64
+Outputs target advertises application identity switching. It names a safe
+committed, application-owned project-relative executable such as
+`tools/preview-identity`, declares the
 `vibe64.preview-identity.command.v1` protocol, and lists the application
 identifier types it accepts: email, login, or user ID. It may also declare
 app-specific enable and secret environment variable names, command runtime
 requirements, and a timeout.
 
-Genesis transports the Launch section without parsing it. Vibe64 validates the
+Genesis transports the Outputs section without parsing it. Vibe64 validates the
 declaration, maps its runtime requirements to pinned runtime packs, verifies the
 executable, and owns command execution, identity selections, secrets, and the
 preview browser lifecycle.
@@ -218,17 +224,17 @@ application selector such as email, login, or user ID; the first entry is the
 default. Managed Preview and Playwright select a configured entry by name or
 request guest mode. Callers cannot submit arbitrary application identities.
 
-For an enabled preview launch, Vibe64 supplies `true` and a fresh per-launch
+For an enabled web output run, Vibe64 supplies `true` and a fresh per-run
 secret only through the application-specific environment names declared by
-the Vibe64 Launch contract. These are system launch values, not user-managed project Env
-values. The executable reads one protocol request from standard
-input and writes one response to standard output. It remains responsible for
+the Vibe64 Outputs contract. These are system output-run values, not
+user-managed project Env values. The executable reads one protocol request
+from standard input and writes one response to standard output. It remains responsible for
 locating an existing user, rejecting missing or disabled users, and creating or
 clearing the application's normal browser session. Vibe64 never creates
 application users or changes their roles or data.
 
 Any internal endpoint used by that executable must remain disabled unless both
-the enable flag and per-launch secret are present. This is a development-preview
+the enable flag and per-run secret are present. This is a development-preview
 control, not a production sign-in API.
 
 ## Host runtime naming

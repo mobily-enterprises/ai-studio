@@ -315,7 +315,7 @@ function createReadyPreviewCommandService({
             running: true,
             status: "running"
           },
-          lastLaunchTarget: {
+          lastOutputTarget: {
             id: "dev"
           },
           previewTarget: {
@@ -424,7 +424,7 @@ test("agent preview command ensures the managed preview and waits for readiness"
         running: true,
         status: "running"
       },
-      lastLaunchTarget: {
+      lastOutputTarget: {
         agentHref: "http://vibe64-launch-agent:4100/",
         id: "dev"
       },
@@ -439,7 +439,7 @@ test("agent preview command ensures the managed preview and waits for readiness"
         running: true,
         status: "running"
       },
-      lastLaunchTarget: {
+      lastOutputTarget: {
         agentHref: "http://vibe64-launch-agent:4100/",
         id: "dev"
       },
@@ -518,7 +518,7 @@ test("agent preview command ensures the managed preview and waits for readiness"
     ],
     identityTypes: ["email"],
     ensured: true,
-    launchTargetId: "dev",
+    outputTargetId: "dev",
     ready: true,
     stale: false,
     terminal: {
@@ -541,12 +541,9 @@ test("agent preview command delegates restart to the managed launch controller",
         running: true,
         status: "running"
       },
-      lastLaunchTarget: {
+      lastOutputTarget: {
         agentHref: "http://vibe64-launch-agent:4100/app",
-        id: "jskit-dev",
-        launchInput: {
-          workspaceSlug: "demo"
-        }
+        id: "jskit-dev"
       },
       previewTarget: {
         available: false,
@@ -560,12 +557,9 @@ test("agent preview command delegates restart to the managed launch controller",
         running: true,
         status: "running"
       },
-      lastLaunchTarget: {
+      lastOutputTarget: {
         agentHref: "http://vibe64-launch-agent:4100/app",
-        id: "jskit-dev",
-        launchInput: {
-          workspaceSlug: "demo"
-        }
+        id: "jskit-dev"
       },
       previewTarget: {
         available: false,
@@ -578,12 +572,9 @@ test("agent preview command delegates restart to the managed launch controller",
         running: true,
         status: "running"
       },
-      lastLaunchTarget: {
+      lastOutputTarget: {
         agentHref: "http://vibe64-launch-agent:4100/app",
-        id: "jskit-dev",
-        launchInput: {
-          workspaceSlug: "demo"
-        }
+        id: "jskit-dev"
       },
       openTarget: {
         href: "http://127.0.0.1:4100/app"
@@ -645,7 +636,7 @@ test("agent preview command delegates restart to the managed launch controller",
     defaultIdentity: "",
     identities: [],
     identityTypes: [],
-    launchTargetId: "jskit-dev",
+    outputTargetId: "jskit-dev",
     ready: true,
     restarted: true,
     stale: false,
@@ -674,7 +665,7 @@ test("agent preview status exposes the managed endpoint, current page, and serve
       running: true,
       status: "running"
     },
-    lastLaunchTarget: {
+    lastOutputTarget: {
       agentHref: "http://vibe64-launch-agent:4103/",
       id: "jskit-dev"
     },
@@ -745,7 +736,7 @@ test("agent preview inspection URL falls back to the direct managed endpoint", a
     launchTarget: {
       async launchStatus() {
         return {
-          lastLaunchTarget: {
+          lastOutputTarget: {
             agentHref: "http://vibe64-launch-agent:4104/home",
             id: "dev"
           },

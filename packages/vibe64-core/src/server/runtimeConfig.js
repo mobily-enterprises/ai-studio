@@ -18,13 +18,14 @@ const RUNTIME_CONFIG_PHASES = Object.freeze({
   GENERATE: "generate",
   INSTALL: "install",
   MIGRATE: "migrate",
+  OUTPUT: "output",
   PREVIEW: "preview",
   SERVER: "server"
 });
 const RUNTIME_CONFIG_TARGETS = Object.freeze({
   CHECKS: "checks",
   COMMAND: "command",
-  LAUNCH_TARGET: "launch-target",
+  OUTPUT_TARGET: "output-target",
   SERVER: "server"
 });
 const RUNTIME_CONFIG_OWNER_VALUES = new Set(Object.values(RUNTIME_CONFIG_OWNERS));

@@ -84,7 +84,7 @@ import {
   markCodexReconnectRequired
 } from "@local/vibe64-core/server/codexAuthState";
 import {
-  VIBE64_LAUNCH_TARGETS_CLIENT_REFRESH_PAYLOAD
+  VIBE64_OUTPUTS_CLIENT_REFRESH_PAYLOAD
 } from "@local/vibe64-core/server/sessionRealtimeEvents";
 import {
   createPersonalAiProfileStore
@@ -5834,7 +5834,7 @@ function createCodexTerminalController({
     const status = normalizeText(input.status) || "completed";
     const result = await writeCodexAppServerAgentRun(sessionId, {
       error: normalizeText(input.error),
-      publishPayload: VIBE64_LAUNCH_TARGETS_CLIENT_REFRESH_PAYLOAD,
+      publishPayload: VIBE64_OUTPUTS_CLIENT_REFRESH_PAYLOAD,
       publishReason: "codex-app-server-turn-idle",
       runState: terminalCodexAppServerAgentRunState(status),
       status,

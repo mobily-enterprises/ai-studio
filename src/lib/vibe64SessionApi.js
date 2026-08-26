@@ -8,7 +8,7 @@ import {
 import {
   vibe64AgentTerminalPath,
   vibe64GlobalCodexTerminalPath,
-  vibe64LaunchTerminalPath
+  vibe64OutputRunPath
 } from "@/lib/vibe64SessionRequestConfig.js";
 
 const VIBE64_ENDPOINT = studioApiPath("vibe64");
@@ -36,14 +36,14 @@ function vibe64GlobalCodexTerminalWebSocketUrl(_scopeId, terminalSessionId) {
   return resolveWebSocketUrl(`${vibe64GlobalCodexTerminalPath(VIBE64_ENDPOINT, terminalSessionId)}/ws`);
 }
 
-function vibe64LaunchTerminalWebSocketUrl(sessionId, terminalSessionId) {
+function vibe64OutputTerminalWebSocketUrl(sessionId, terminalSessionId) {
   return resolveWebSocketUrl(
-    `${vibe64LaunchTerminalPath(VIBE64_SESSIONS_ENDPOINT, sessionId, terminalSessionId)}/ws`
+    `${vibe64OutputRunPath(VIBE64_SESSIONS_ENDPOINT, sessionId, terminalSessionId)}/ws`
   );
 }
 
 export {
   vibe64AgentTerminalWebSocketUrl,
   vibe64GlobalCodexTerminalWebSocketUrl,
-  vibe64LaunchTerminalWebSocketUrl
+  vibe64OutputTerminalWebSocketUrl
 };

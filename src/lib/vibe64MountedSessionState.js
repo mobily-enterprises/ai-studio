@@ -22,10 +22,10 @@ const MOUNTED_SESSION_IGNORED_REALTIME_REASONS = new Set([
   "codex-app-server-message-delivered",
   "codex-context-replaced",
   "codex-prompt-injected",
-  "launch-target-started",
-  "launch-target-ready",
-  "launch-target-closed",
-  "launch-target-stopped"
+  "output-target-started",
+  "output-target-ready",
+  "output-target-closed",
+  "output-target-stopped"
 ]);
 
 function sessionRecordHasDetailProjection(session = null) {

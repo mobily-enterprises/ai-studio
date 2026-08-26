@@ -26,7 +26,7 @@ import {
   previewRouteFromUrl,
   previewUrlForRoute,
   redactPreviewDebugDetails
-} from "../../src/composables/useVibe64LaunchControlsSurface.js";
+} from "../../src/composables/useVibe64OutputControlsSurface.js";
 
 describe("Vibe64 launch controls surface", () => {
   it("keeps launch lifecycle text stable during background polling", () => {
@@ -163,7 +163,7 @@ describe("Vibe64 launch controls surface", () => {
     })).toBe("Starting preview: Run app.");
 
     expect(launchPreviewInFlightText({
-      activeLaunchTarget: {
+      activeOutputTarget: {
         id: "dev",
         label: "Run app"
       },
@@ -307,7 +307,7 @@ describe("Vibe64 launch controls surface", () => {
 
   it("keeps preview lifecycle identity stable across output-only proxy token changes", () => {
     const lifecycle = {
-      launchTargetId: "dev",
+      outputTargetId: "dev",
       sessionId: "session-1",
       terminalSessionId: "terminal-1"
     };
@@ -340,7 +340,7 @@ describe("Vibe64 launch controls surface", () => {
 
   it("resets preview identity state only when its project, session, terminal, or app route changes", () => {
     const lifecycle = {
-      launchTargetId: "dev",
+      outputTargetId: "dev",
       previewBaseUrl: "https://preview.example.test/settings?vibe64_preview_token=first",
       projectSlug: "catalog",
       sessionId: "session-1",

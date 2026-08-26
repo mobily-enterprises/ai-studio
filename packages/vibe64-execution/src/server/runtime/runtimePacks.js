@@ -21,6 +21,26 @@ const RUNTIME_PACKS = Object.freeze({
     binDirs: ["composer/bin"],
     managedCommands: ["composer"]
   },
+  "cpp": {
+    binDirs: ["cpp/bin"],
+    managedCommands: [
+      "ar",
+      "c++",
+      "cc",
+      "clang",
+      "clang++",
+      "cmake",
+      "g++",
+      "gcc",
+      "gdb",
+      "ld",
+      "lld",
+      "lldb",
+      "make",
+      "ninja",
+      "pkg-config"
+    ]
+  },
   "gh": {
     binDirs: ["gh/bin"],
     managedCommands: ["gh"]

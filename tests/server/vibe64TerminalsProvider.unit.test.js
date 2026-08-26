@@ -264,7 +264,7 @@ test("terminal events publish direct session and project events without service 
     }
   };
   await createTerminalSessionChangedPublisher(events)("session-1", {
-    reason: "launch-target-started"
+    reason: "output-target-started"
   });
   await createProjectRuntimeChangedPublisher(events)({
     ok: true,
@@ -276,7 +276,7 @@ test("terminal events publish direct session and project events without service 
   });
 
   assert.equal(published[0].realtime.event, "vibe64.session.changed");
-  assert.equal(published[0].realtime.payload.reason, "launch-target-started");
+  assert.equal(published[0].realtime.payload.reason, "output-target-started");
   assert.equal(published[1].realtime.event, "vibe64.project.changed");
   assert.equal(published[1].action, "runtime-opened");
   assert.equal(Object.hasOwn(published[0], "meta"), false);

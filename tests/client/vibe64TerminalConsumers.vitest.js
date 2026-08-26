@@ -3,8 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const codexTerminalConsumerPath = path.resolve("src/components/studio/Vibe64CodexSession.vue");
-const launchTerminalConsumerPath = path.resolve("src/components/studio/Vibe64LaunchControls.vue");
-const launchTerminalStatePath = path.resolve("src/composables/useVibe64LaunchControls.js");
+const launchTerminalConsumerPath = path.resolve("src/components/studio/Vibe64OutputControls.vue");
+const launchTerminalStatePath = path.resolve("src/composables/useVibe64OutputControls.js");
 const providerTerminalConsumerPath = path.resolve(
   "packages/vibe64-accounts/src/client/studio/ProviderAccountsSetup.vue"
 );

@@ -575,6 +575,9 @@ function createService({
           });
           try {
             await terminals.closeSessionTerminals(sessionId);
+            if (typeof terminals.removeOutputResultsForSession === "function") {
+              await terminals.removeOutputResultsForSession(sessionId);
+            }
             if (!sourceCreationFailed && typeof project.releaseSessionResources === "function") {
               await project.releaseSessionResources({
                 sessionId

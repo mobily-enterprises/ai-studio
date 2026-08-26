@@ -42,14 +42,14 @@ function projectService(root, {
   };
 }
 
-test("current app returns the explicit Vibe64 launch contract", async () => {
+test("current app returns the explicit Vibe64 Outputs contract", async () => {
   await withTemporaryRoot(async (root) => {
     const calls = [];
     const service = createService({
       env: {
         PLATFORM_VALUE: "platform"
       },
-      inspectLaunch(input) {
+      inspectOutputs(input) {
         calls.push(input);
         return {
           components: ["nodejs"],
@@ -84,10 +84,10 @@ test("current app returns the explicit Vibe64 launch contract", async () => {
   });
 });
 
-test("missing Vibe64 launch declarations are unconfigured, not guessed", async () => {
+test("missing Vibe64 Outputs declarations are unconfigured, not guessed", async () => {
   await withTemporaryRoot(async (root) => {
     const service = createService({
-      inspectLaunch() {
+      inspectOutputs() {
         const error = new Error("Genesis requires genesis/stack.md. Run genesis init first.");
         error.code = "STACK_REQUIRED";
         throw error;
@@ -108,7 +108,7 @@ test("missing Vibe64 launch declarations are unconfigured, not guessed", async (
 test("a project without a baseline source is unconfigured until a session exists", async () => {
   let inspected = false;
   const service = createService({
-    inspectLaunch() {
+    inspectOutputs() {
       inspected = true;
       return {};
     },
@@ -127,7 +127,7 @@ test("current app never inspects a hosted namespace as source", async () => {
   let inspected = false;
   const hostedNamespace = "/var/lib/vibe64/merc/projects/demo";
   const service = createService({
-    inspectLaunch() {
+    inspectOutputs() {
       inspected = true;
       return {};
     },
@@ -159,7 +159,7 @@ test("session inspection uses that session's source directory", async () => {
     );
     let inspectedRoot = "";
     const service = createService({
-      inspectLaunch({ projectRoot }) {
+      inspectOutputs({ projectRoot }) {
         inspectedRoot = projectRoot;
         return {
           status: "unconfigured",
@@ -184,7 +184,7 @@ test("session inspection uses that session's source directory", async () => {
 test("unexpected Genesis inspection errors remain visible", async () => {
   await withTemporaryRoot(async (root) => {
     const service = createService({
-      inspectLaunch() {
+      inspectOutputs() {
         const error = new Error("Cannot read Stack file.");
         error.code = "EACCES";
         throw error;

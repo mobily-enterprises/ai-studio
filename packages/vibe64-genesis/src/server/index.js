@@ -11,12 +11,12 @@ import {
   vibe64DeploymentInspection
 } from "./applicationDeployment.js";
 import {
-  VIBE64_LAUNCH_CONTRACT,
-  VIBE64_LAUNCH_SECTION,
+  VIBE64_OUTPUTS_CONTRACT,
+  VIBE64_OUTPUTS_SECTION,
   VIBE64_PREVIEW_IDENTITY_COMMAND_PROTOCOL,
-  parseVibe64LaunchLines,
-  vibe64LaunchInspection
-} from "./launch.js";
+  parseVibe64OutputsLines,
+  vibe64OutputsInspection
+} from "./outputs.js";
 import {
   VIBE64_WORKSPACE_SETUP_CONTRACT,
   VIBE64_WORKSPACE_SETUP_SECTION,
@@ -199,12 +199,12 @@ function inspectGenesisEnvironment(options = {}) {
   return exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options);
 }
 
-async function inspectVibe64Launch(options = {}) {
+async function inspectVibe64Outputs(options = {}) {
   const [section, environment] = await Promise.all([
-    inspectGenesisStackSection(VIBE64_LAUNCH_SECTION, options),
+    inspectGenesisStackSection(VIBE64_OUTPUTS_SECTION, options),
     exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options)
   ]);
-  return vibe64LaunchInspection({ environment, section });
+  return vibe64OutputsInspection({ environment, section });
 }
 
 async function inspectVibe64WorkspaceSetup(options = {}) {
@@ -307,8 +307,8 @@ export {
   VIBE64_APPLICATION_DEPLOYMENT_CONTRACT,
   VIBE64_APPLICATION_DEPLOYMENT_SECTION,
   VIBE64_AUTOMATIC_HOOK_NO_OUTPUT,
-  VIBE64_LAUNCH_CONTRACT,
-  VIBE64_LAUNCH_SECTION,
+  VIBE64_OUTPUTS_CONTRACT,
+  VIBE64_OUTPUTS_SECTION,
   VIBE64_PREVIEW_IDENTITY_COMMAND_PROTOCOL,
   VIBE64_WORKSPACE_SETUP_CONTRACT,
   VIBE64_WORKSPACE_SETUP_SECTION,
@@ -323,9 +323,9 @@ export {
   inspectGenesisStackSection,
   inspectVibe64Deployment,
   inspectGenesisEnvironment,
-  inspectVibe64Launch,
+  inspectVibe64Outputs,
   inspectVibe64WorkspaceSetup,
-  parseVibe64LaunchLines,
+  parseVibe64OutputsLines,
   parseVibe64DeploymentLines,
   parseVibe64WorkspaceSetupLines,
   refreshGenesisCities,

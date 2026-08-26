@@ -1,12 +1,13 @@
-function preferredPreviewTarget(launchTargets = []) {
-  const targets = Array.isArray(launchTargets) ? launchTargets : [];
-  return targets.find((target) => target?.defaultPreview === true) ||
+function preferredPreviewTarget(outputTargets = []) {
+  const targets = (Array.isArray(outputTargets) ? outputTargets : [])
+    .filter((target) => target?.presentation?.kind === "web");
+  return targets.find((target) => target?.default === true) ||
     targets[0] ||
     null;
 }
 
-function managedPreviewTarget(launchTargets = []) {
-  const availableTargets = (Array.isArray(launchTargets) ? launchTargets : [])
+function managedPreviewTarget(outputTargets = []) {
+  const availableTargets = (Array.isArray(outputTargets) ? outputTargets : [])
     .filter((target) => target?.available !== false);
   return preferredPreviewTarget(availableTargets);
 }

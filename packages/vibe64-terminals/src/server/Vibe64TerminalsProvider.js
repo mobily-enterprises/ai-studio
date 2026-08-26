@@ -77,9 +77,9 @@ function createVibe64TerminalsFeature({
         publishSessionChanged: {
           agentTerminal: sessionChanged,
           agentTerminalClosed: sessionChanged,
-          launchTarget: sessionChanged,
-          launchTargetClosed: sessionChanged,
-          launchTargetStopped: sessionChanged
+          outputTarget: sessionChanged,
+          outputTargetClosed: sessionChanged,
+          outputTargetStopped: sessionChanged
         }
       });
       registerRoutes(http, {

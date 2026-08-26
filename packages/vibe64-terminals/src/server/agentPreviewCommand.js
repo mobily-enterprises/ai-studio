@@ -340,11 +340,11 @@ function previewDiagnostics(status = {}) {
 function previewStatusSummary(status = {}, {
   previewState = null
 } = {}) {
-  const lastLaunchTarget = isRecord(status.lastLaunchTarget) ? status.lastLaunchTarget : {};
+  const lastOutputTarget = isRecord(status.lastOutputTarget) ? status.lastOutputTarget : {};
   const activeMetadata = isRecord(status.activeTerminal?.metadata) ? status.activeTerminal.metadata : {};
   const openTarget = isRecord(status.openTarget) ? status.openTarget : {};
   const previewTarget = isRecord(status.previewTarget) ? status.previewTarget : {};
-  const agentUrl = normalizeText(lastLaunchTarget.agentHref || activeMetadata.previewProxyTargetHref || activeMetadata.targetUrl || openTarget.href);
+  const agentUrl = normalizeText(lastOutputTarget.agentHref || activeMetadata.previewProxyTargetHref || activeMetadata.targetUrl || openTarget.href);
   const browserUrl = normalizeText(openTarget.href || previewTarget.targetHref);
   const agentEndpoint = previewEndpoint(agentUrl);
   const browserEndpoint = previewEndpoint(browserUrl);
@@ -373,7 +373,7 @@ function previewStatusSummary(status = {}, {
     defaultIdentity: normalizeText(status.previewIdentity?.defaultIdentityName),
     identities,
     identityTypes,
-    launchTargetId: normalizeText(lastLaunchTarget.id || activeMetadata.launchTargetId),
+    outputTargetId: normalizeText(lastOutputTarget.id || activeMetadata.outputTargetId),
     ready: previewReady(status),
     stale: previewTarget.stale === true || normalizeText(previewTarget.recovery?.reason) === "server_source_changed",
     terminal: previewTerminal(status)
@@ -384,7 +384,7 @@ function previewSummaryLines(summary = {}) {
   return [
     `Preview ready: ${summary.ready ? "yes" : "no"}`,
     `Preview running: ${summary.terminal?.running ? "yes" : "no"}`,
-    summary.launchTargetId ? `Launch target: ${summary.launchTargetId}` : "",
+    summary.outputTargetId ? `Output target: ${summary.outputTargetId}` : "",
     summary.endpoints?.agent?.url ? `Agent URL: ${summary.endpoints.agent.url}` : "",
     summary.endpoints?.agent?.hostname ? `Agent host: ${summary.endpoints.agent.hostname}` : "",
     summary.endpoints?.agent?.port ? `Agent port: ${summary.endpoints.agent.port}` : "",
@@ -425,7 +425,7 @@ function logsStdout(status = {}, {
   const output = previewLogTail(status?.activeTerminal?.output, lines);
   const payload = {
     diagnostics: previewDiagnostics(status),
-    launchTargetId: launchTargetIdFromStatus(status),
+    outputTargetId: outputTargetIdFromStatus(status),
     lineLimit: normalizeLogLines(lines),
     output,
     terminal: previewTerminal(status)
@@ -465,10 +465,10 @@ function previewStartStdout(summary = {}, {
   ].join("\n") + "\n";
 }
 
-function launchTargetIdFromStatus(status = {}) {
-  const lastLaunchTarget = isRecord(status.lastLaunchTarget) ? status.lastLaunchTarget : {};
+function outputTargetIdFromStatus(status = {}) {
+  const lastOutputTarget = isRecord(status.lastOutputTarget) ? status.lastOutputTarget : {};
   const activeMetadata = isRecord(status.activeTerminal?.metadata) ? status.activeTerminal.metadata : {};
-  return normalizeText(lastLaunchTarget.id || activeMetadata.launchTargetId);
+  return normalizeText(lastOutputTarget.id || activeMetadata.outputTargetId);
 }
 
 async function waitForPreviewReady(launchTarget, sessionId = "", {

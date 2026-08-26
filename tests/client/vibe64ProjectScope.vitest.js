@@ -110,8 +110,8 @@ describe("Vibe64 project client scope", () => {
       }
     });
 
-    expect(scopedDevelopmentApiUrl("/api/vibe64/sessions/session-1/launch-terminal"))
-      .toBe("/api/app/beepollen/vibe64/sessions/session-1/launch-terminal");
+    expect(scopedDevelopmentApiUrl("/api/vibe64/sessions/session-1/output-runs"))
+      .toBe("/api/app/beepollen/vibe64/sessions/session-1/output-runs");
   });
 
   it("keeps JSKIT HTTP client project catalog requests global on project pages", async () => {

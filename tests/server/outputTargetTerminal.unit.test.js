@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,11 +17,11 @@ import {
 } from "@local/studio-terminal-core/server/studioRuntimeIdentity";
 import {
   createLaunchRestartBaseline,
-  createLaunchTargetTerminalController,
+  createOutputTargetTerminalController,
   launchRestartState,
   previewIdentityCommandRunnerForLaunchTerminal,
   previewPublicOriginForLaunch
-} from "../../packages/vibe64-terminals/src/server/launchTargetTerminal.js";
+} from "../../packages/vibe64-terminals/src/server/outputTargetTerminal.js";
 import {
   addGenesisStack,
   initializeGenesisProject,
@@ -35,7 +35,7 @@ import {
   thawTerminalNamespaceAdmission
 } from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
 import {
-  launchTargetTerminalNamespace
+  outputTargetTerminalNamespace
 } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
@@ -58,7 +58,7 @@ test("preview status, open, and identity selection reject frozen sessions before
     error: "Session renewal has frozen preview access.",
     ok: false
   };
-  const controller = createLaunchTargetTerminalController({
+  const controller = createOutputTargetTerminalController({
     projectService: {
       async createRuntime() {
         projectReads += 1;
@@ -72,7 +72,7 @@ test("preview status, open, and identity selection reject frozen sessions before
   t.after(() => controller.close());
 
   const status = await controller.launchStatus("session-frozen");
-  const opened = await controller.openLaunchTarget("session-frozen");
+  const opened = await controller.openOutputTarget("session-frozen");
   const identity = await controller.selectPreviewIdentity("session-frozen", {
     identity: "guest"
   });
@@ -181,6 +181,11 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       pieces: ["jskit"],
       projectRoot: sourceRoot
     });
+    await writeFile(
+      path.join(sourceRoot, "genesis", "stack.md"),
+      `${await readFile(path.join(sourceRoot, "genesis", "stack.md"), "utf8")}\n## Outputs\n\n### Target \`app\`: Run app\n\n- Default.\n- Mode: \`interactive\`\n- Runtimes: \`nodejs\`\n- Run \`Develop\`: \`npm\` \`run\` \`develop\`\n\n#### Presentation\n\n- Kind: \`web\`\n- Preferred port: \`3000\`\n- URL path: \`/\`\n- Ready when: \`GET\` \`/api/health\` returns \`200\`\n`,
+      "utf8"
+    );
     const currentSetup = await inspectVibe64WorkspaceSetup({
       environment: {},
       projectRoot: sourceRoot
@@ -232,7 +237,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
           return operation();
         },
         async readMetadataValue(_sessionId, name) {
-          return name === "launch_target_terminal_id" ? cleanupTerminalId : "";
+          return name === "output_target_terminal_id" ? cleanupTerminalId : "";
         }
       }
     };
@@ -265,7 +270,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       selectedProject: {},
       targetRoot: projectContextRoot
     };
-    controller = createLaunchTargetTerminalController({
+    controller = createOutputTargetTerminalController({
       async ensureWorkspacePrepared() {
         events.push("prepare-started");
         preparationStarted();
@@ -282,7 +287,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       },
       projectService,
       async publishSessionChanged(_sessionId, event = {}) {
-        if (holdLaunchCleanupPublication && event.reason === "launch-target-stale-cleared") {
+        if (holdLaunchCleanupPublication && event.reason === "output-target-stale-cleared") {
           await launchCleanupPublication;
         }
       },
@@ -307,7 +312,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       slug: "launch-project",
       targetRoot: projectContextRoot
     }, () => controller.startTerminal(sessionId, {
-      launchTargetId: "app"
+      outputTargetId: "app"
     }));
     await preparationStartedPromise;
     let closeFinished = false;
@@ -339,7 +344,7 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
     blockProjectEnvironment = true;
     const status = controller.launchStatus(sessionId);
     await environmentStarted;
-    const namespace = launchTargetTerminalNamespace(sessionId);
+    const namespace = outputTargetTerminalNamespace(sessionId);
     const owner = "session-renewal:preview-status";
     assert.deepEqual(freezeTerminalNamespaceAdmission(namespace, {
       code: "vibe64_session_renewal_quiesced",

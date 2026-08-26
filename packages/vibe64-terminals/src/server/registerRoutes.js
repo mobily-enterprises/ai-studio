@@ -1,19 +1,19 @@
 import {
-  launchTargetInputValidator,
+  outputTargetInputValidator,
   previewIdentityInputValidator,
   terminalControlKeyInputValidator,
   terminalControlTextInputValidator
 } from "./inputSchemas.js";
 import {
   ACTION_CANCEL_SESSION_PROMPT_HINTS,
-  ACTION_OPEN_LAUNCH_TARGET,
+  ACTION_OPEN_OUTPUT_TARGET,
   ACTION_CREATE_TEMPORARY_CONVERSATION,
   ACTION_DELETE_AGENT_ATTACHMENT,
   ACTION_DELETE_TEMPORARY_CONVERSATION,
   ACTION_GENERATE_SESSION_PROMPT_HINTS,
   ACTION_READ_TEMPORARY_CONVERSATION,
   ACTION_SELECT_PREVIEW_IDENTITY,
-  ACTION_START_LAUNCH_TARGET_TERMINAL,
+  ACTION_START_OUTPUT_TARGET,
   ACTION_START_TEMPORARY_CONVERSATION_TURN,
   ACTION_STOP_TEMPORARY_CONVERSATION,
   ACTION_UPLOAD_AGENT_ATTACHMENT
@@ -34,6 +34,18 @@ import {
 } from "@local/vibe64-execution/server/terminalSessions";
 
 const VIBE64_TERMINALS_UNAVAILABLE = "Vibe64 terminal service is unavailable.";
+
+function outputResultContentDisposition(name = "download") {
+  const normalizedName = String(name || "download").trim() || "download";
+  const fallbackName = normalizedName
+    .replace(/[^\x20-\x7e]/gu, "_")
+    .replace(/["\\]/gu, "_")
+    .slice(0, 180) || "download";
+  const encodedName = encodeURIComponent(normalizedName).replace(/[!'()*]/gu, (character) => (
+    `%${character.codePointAt(0).toString(16).toUpperCase()}`
+  ));
+  return `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`;
+}
 
 function isMultipartError(error, code) {
   return String(error?.code || "").trim().toUpperCase() === String(code || "").trim().toUpperCase();
@@ -230,25 +242,51 @@ function registerRoutes(
     return terminalService().closeProjectRuntime(routes.requestBody(request));
   });
 
-  routes.serviceRoute("GET", "/sessions/:sessionId/launch-targets", {
-    summary: "Read Vibe64 launch target status."
+  routes.serviceRoute("GET", "/sessions/:sessionId/outputs", {
+    summary: "Read Vibe64 output target and run status."
   }, (request) => {
-    return terminalService().launchTargetStatus(request.params.sessionId, {
+    return terminalService().outputTargetStatus(request.params.sessionId, {
       ...requestPublicRouting(request)
     });
   });
 
-  routes.actionRoute("POST", "/sessions/:sessionId/launch-terminal", {
-    actionId: ACTION_START_LAUNCH_TARGET_TERMINAL,
-    body: launchTargetInputValidator,
+  routes.actionRoute("POST", "/sessions/:sessionId/output-runs", {
+    actionId: ACTION_START_OUTPUT_TARGET,
+    body: outputTargetInputValidator,
     buildInput: (request) => withVibe64User(request, bodyWithSessionId(routes)(request)),
-    summary: "Start an Vibe64 launch target terminal."
+    summary: "Start a Vibe64 output target."
   });
 
-  routes.actionRoute("POST", "/sessions/:sessionId/launch-target/open", {
-    actionId: ACTION_OPEN_LAUNCH_TARGET,
+  routes.actionRoute("POST", "/sessions/:sessionId/output-runs/open", {
+    actionId: ACTION_OPEN_OUTPUT_TARGET,
     buildInput: sessionInput,
-    summary: "Open the latest Vibe64 launch target."
+    summary: "Open the latest Vibe64 web output."
+  });
+
+  routes.serviceRoute("GET", "/sessions/:sessionId/output-results/:resultId", {
+    summary: "Download one immutable Vibe64 output result."
+  }, async (request, reply) => {
+    const opened = await terminalService().readOutputResult(
+      request.params.sessionId,
+      request.params.resultId
+    );
+    const { fileHandle, result } = opened;
+    try {
+      const digest = Buffer.from(result.sha256, "hex").toString("base64");
+      const stream = fileHandle.createReadStream({ autoClose: true });
+      return reply
+        .header("Cache-Control", "private, no-store")
+        .header("Content-Disposition", outputResultContentDisposition(result.name))
+        .header("Content-Length", String(result.size))
+        .header("Content-Type", result.mediaType)
+        .header("Digest", `sha-256=${digest}`)
+        .header("X-Content-Type-Options", "nosniff")
+        .code(200)
+        .send(stream);
+    } catch (error) {
+      await fileHandle.close().catch(() => null);
+      throw error;
+    }
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/preview-identity", {
@@ -374,20 +412,20 @@ function registerRoutes(
   });
 
   registerTerminalSnapshotRoutes(routes, {
-    close: (sessionId, terminalSessionId) => terminalService().closeLaunchTargetTerminal(sessionId, terminalSessionId),
-    path: "/sessions/:sessionId/launch-terminal/:terminalSessionId",
-    read: (sessionId, terminalSessionId) => terminalService().readLaunchTargetTerminal(sessionId, terminalSessionId),
-    readSummary: "Read an Vibe64 launch target terminal snapshot.",
-    closeSummary: "Close an Vibe64 launch target terminal.",
-    write: (sessionId, terminalSessionId, data) => terminalService().writeLaunchTargetTerminal(sessionId, terminalSessionId, data)
+    close: (sessionId, terminalSessionId) => terminalService().closeOutputTargetTerminal(sessionId, terminalSessionId),
+    path: "/sessions/:sessionId/output-runs/:terminalSessionId/terminal",
+    read: (sessionId, terminalSessionId) => terminalService().readOutputTargetTerminal(sessionId, terminalSessionId),
+    readSummary: "Read a Vibe64 output terminal snapshot.",
+    closeSummary: "Close a Vibe64 output terminal.",
+    write: (sessionId, terminalSessionId, data) => terminalService().writeOutputTargetTerminal(sessionId, terminalSessionId, data)
   });
 
-  routes.serviceRoute("POST", "/sessions/:sessionId/launch-terminal/:terminalSessionId/stop", {
+  routes.serviceRoute("POST", "/sessions/:sessionId/output-runs/:terminalSessionId/stop", {
     statusCode: 200,
-    summary: "Stop an Vibe64 launch target terminal without deleting its log."
+    summary: "Stop a Vibe64 output target without deleting its log."
   }, (request) => {
     const input = terminalRouteInput(request);
-    return terminalService().stopLaunchTargetTerminal(input.sessionId, input.terminalSessionId);
+    return terminalService().stopOutputTargetTerminal(input.sessionId, input.terminalSessionId);
   });
 
   registerTerminalSnapshotRoutes(routes, {
@@ -692,17 +730,17 @@ function registerVibe64TerminalWebSocketRoutes(fastify, routes, terminals, {
 
   registerTerminalWebSocketRoute(fastify, {
     projectContext,
-    routePath: `${routes.routeBase}/sessions/:sessionId/launch-terminal/:terminalSessionId/ws`,
+    routePath: `${routes.routeBase}/sessions/:sessionId/output-runs/:terminalSessionId/terminal/ws`,
     service: terminals,
     serviceUnavailableMessage: VIBE64_TERMINALS_UNAVAILABLE,
     subscribe(service, { sessionId, subscriber, terminalSessionId }) {
-      return service.subscribeLaunchTargetTerminal(sessionId, terminalSessionId, subscriber);
+      return service.subscribeOutputTargetTerminal(sessionId, terminalSessionId, subscriber);
     },
     resize(service, { cols, rows, sessionId, terminalSessionId }) {
-      return service.resizeLaunchTargetTerminal(sessionId, terminalSessionId, { cols, rows });
+      return service.resizeOutputTargetTerminal(sessionId, terminalSessionId, { cols, rows });
     },
     write(service, { data, sessionId, terminalSessionId }) {
-      return service.writeLaunchTargetTerminal(sessionId, terminalSessionId, data);
+      return service.writeOutputTargetTerminal(sessionId, terminalSessionId, data);
     }
   });
 

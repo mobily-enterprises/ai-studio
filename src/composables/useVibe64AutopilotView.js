@@ -319,9 +319,9 @@ function useVibe64AutopilotView(props, emit, {
   const route = useRoute();
   const router = useRouter();
   const projectSlug = useVibe64ProjectSlug();
-  const Vibe64LaunchControls = defineVibe64AsyncComponent({
+  const Vibe64OutputControls = defineVibe64AsyncComponent({
     label: "Launch controls",
-    loader: () => import("@/components/studio/Vibe64LaunchControls.vue"),
+    loader: () => import("@/components/studio/Vibe64OutputControls.vue"),
     minHeight: "10rem"
   });
   const agentSettings = useVibe64AgentSettings();
@@ -1574,7 +1574,7 @@ function useVibe64AutopilotView(props, emit, {
   }, { immediate: true });
 
   return {
-    Vibe64LaunchControls,
+    Vibe64OutputControls,
     agentActive,
     agentStopEnabled,
     agentStopVisible,

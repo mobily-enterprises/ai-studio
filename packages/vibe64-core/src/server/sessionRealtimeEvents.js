@@ -1,9 +1,9 @@
-const VIBE64_LAUNCH_TARGETS_CLIENT_REFRESH_PAYLOAD = Object.freeze({
+const VIBE64_OUTPUTS_CLIENT_REFRESH_PAYLOAD = Object.freeze({
   clientRefresh: Object.freeze({
-    includeLaunchTargets: true
+    includeOutputs: true
   })
 });
 
 export {
-  VIBE64_LAUNCH_TARGETS_CLIENT_REFRESH_PAYLOAD
+  VIBE64_OUTPUTS_CLIENT_REFRESH_PAYLOAD
 };

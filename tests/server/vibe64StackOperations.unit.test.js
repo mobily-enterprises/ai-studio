@@ -3,13 +3,13 @@ import test from "node:test";
 
 import {
   parseVibe64DeploymentLines,
-  parseVibe64LaunchLines,
+  parseVibe64OutputsLines,
   parseVibe64WorkspaceSetupLines
 } from "../../packages/vibe64-genesis/src/server/index.js";
 
 const READY = "- Ready when: `GET` `/api/health` returns `200`";
 
-function launchTarget({
+function webOutputTarget({
   defaultTarget = true,
   id = "app",
   label = "Run app",
@@ -20,13 +20,18 @@ function launchTarget({
     `### Target \`${id}\`: ${label}`,
     "",
     ...(defaultTarget ? ["- Default."] : []),
+    "- Mode: `interactive`",
     "- Workdir: `.`",
+    "- Runtimes: `nodejs`",
+    "- Prepare `Generate assets`: `npm` `run` `prepare`",
+    "- Run `Develop`: `npm` `run` `develop` `--` `--host={host}` `--port={port}`",
+    "",
+    "#### Presentation",
+    "",
+    "- Kind: `web`",
     "- Preferred port: `3000`",
     "- URL path: `/`",
     READY,
-    "- Runtimes: `nodejs`",
-    "- Prepare `Generate assets`: `npm` `run` `prepare`",
-    "- Serve `Develop`: `npm` `run` `develop` `--` `--host={host}` `--port={port}`",
     ...(previewIdentity
       ? [
           "",
@@ -102,11 +107,11 @@ test("Workspace setup rejects shell strings, traversal, and malformed runtimes",
   }
 });
 
-test("Launch Markdown normalizes targets and preview identity without a shell", () => {
-  const parsed = parseVibe64LaunchLines([
-    ...launchTarget(),
+test("Outputs Markdown normalizes web targets and preview identity without a shell", () => {
+  const parsed = parseVibe64OutputsLines([
+    ...webOutputTarget(),
     "",
-    ...launchTarget({
+    ...webOutputTarget({
       defaultTarget: false,
       id: "admin",
       label: "Run admin",
@@ -119,7 +124,18 @@ test("Launch Markdown normalizes targets and preview identity without a shell", 
     { id: "app", isDefault: true },
     { id: "admin", isDefault: false }
   ]);
-  assert.deepEqual(parsed.targets[0].steps.map(({ role }) => role), ["prepare", "server"]);
+  assert.deepEqual(parsed.targets[0].steps.map(({ role }) => role), ["prepare", "run"]);
+  assert.deepEqual(parsed.targets[0].presentation, {
+    kind: "web",
+    preferredPort: 3000,
+    urlPath: "/",
+    readiness: {
+      kind: "http",
+      method: "GET",
+      path: "/api/health",
+      status: 200
+    }
+  });
   assert.deepEqual(parsed.targets[0].previewIdentity, {
     command: ["tools/preview-identity"],
     environment: {
@@ -131,37 +147,86 @@ test("Launch Markdown normalizes targets and preview identity without a shell", 
     runtimes: ["nodejs"],
     timeoutMs: 10_000
   });
-  assert.deepEqual(parseVibe64LaunchLines(["- Nothing."]), { version: 1, targets: [] });
+  assert.deepEqual(parseVibe64OutputsLines(["- Nothing."]), { version: 1, targets: [] });
 });
 
-test("Launch rejects ambiguous targets and unsafe process declarations", () => {
+test("Outputs normalizes terminal and finite targets with declared downloads", () => {
+  const parsed = parseVibe64OutputsLines([
+    "### Target `calculator`: Run calculator",
+    "",
+    "- Default.",
+    "- Mode: `interactive`",
+    "- Workdir: `.`",
+    "- Runtimes: `cpp`",
+    "- Prepare `Configure`: `cmake` `-S` `.` `-B` `build` `-G` `Ninja`",
+    "- Build `Compile`: `cmake` `--build` `build`",
+    "- Run `Calculator`: `./build/calculator`",
+    "",
+    "#### Presentation",
+    "",
+    "- Kind: `terminal`",
+    "",
+    "#### Download `linux-binary`",
+    "",
+    "- Path: `build/calculator`",
+    "- Name: `calculator-linux-x86_64`",
+    "- Media type: `application/octet-stream`",
+    "",
+    "### Target `archive`: Build archive",
+    "",
+    "- Mode: `finite`",
+    "- Runtimes: `shell`",
+    "- Build `Archive`: `tools/build-archive`",
+    "",
+    "#### Download `archive`",
+    "",
+    "- Path: `dist/app.tar.gz`",
+    "- Name: `app.tar.gz`",
+    "- Media type: `application/gzip`"
+  ]);
+
+  assert.deepEqual(parsed.targets[0].presentation, { kind: "terminal" });
+  assert.deepEqual(parsed.targets[0].downloads, [{
+    id: "linux-binary",
+    path: "build/calculator",
+    name: "calculator-linux-x86_64",
+    mediaType: "application/octet-stream"
+  }]);
+  assert.equal(parsed.targets[1].mode, "finite");
+  assert.equal(parsed.targets[1].presentation, null);
+  assert.deepEqual(parsed.targets[1].steps.map(({ role }) => role), ["build"]);
+});
+
+test("Outputs rejects ambiguous targets and unsafe process declarations", () => {
   const invalid = [
-    [...launchTarget(), "", ...launchTarget()],
-    [...launchTarget(), "", ...launchTarget({ id: "admin" })],
-    launchTarget().map((line) => line === "- Workdir: `.`" ? "- Workdir: `../outside`" : line),
-    launchTarget().map((line) => line === "- Preferred port: `3000`" ? "- Preferred port: `80`" : line),
-    launchTarget().map((line) => line === "- URL path: `/`" ? "- URL path: `https://example.invalid`" : line),
-    launchTarget().filter((line) => line !== READY),
-    launchTarget().map((line) => line.includes("--host={host}") ? "- Serve `Develop`: `npm` `run` `develop` `{unknown}`" : line),
-    launchTarget().map((line) => line === "- Runtimes: `nodejs`" ? "- Runtimes: `Node.js`" : line)
+    [...webOutputTarget(), "", ...webOutputTarget()],
+    [...webOutputTarget(), "", ...webOutputTarget({ id: "admin" })],
+    webOutputTarget().map((line) => line === "- Workdir: `.`" ? "- Workdir: `../outside`" : line),
+    webOutputTarget().map((line) => line === "- Preferred port: `3000`" ? "- Preferred port: `80`" : line),
+    webOutputTarget().map((line) => line === "- URL path: `/`" ? "- URL path: `https://example.invalid`" : line),
+    webOutputTarget().filter((line) => line !== READY),
+    webOutputTarget().map((line) => line.includes("--host={host}") ? "- Run `Develop`: `npm` `run` `develop` `{unknown}`" : line),
+    webOutputTarget().map((line) => line === "- Runtimes: `nodejs`" ? "- Runtimes: `Node.js`" : line),
+    webOutputTarget().filter((line) => line !== "- Mode: `interactive`"),
+    webOutputTarget().map((line) => line === "- Kind: `web`" ? "- Kind: `desktop`" : line)
   ];
   for (const lines of invalid) {
     assert.throws(
-      () => parseVibe64LaunchLines(lines),
-      (error) => error?.code === "VIBE64_LAUNCH_INVALID"
+      () => parseVibe64OutputsLines(lines),
+      (error) => error?.code === "VIBE64_OUTPUTS_INVALID"
     );
   }
 });
 
-test("Launch accepts only the current Vibe64 preview-identity protocol", () => {
+test("Outputs accepts preview identity only for web targets with the current protocol", () => {
   for (const protocol of [
     "genesis.preview-identity.command.v1",
     "vibe64.preview-identity.command.v0",
     "another.protocol"
   ]) {
     assert.throws(
-      () => parseVibe64LaunchLines(launchTarget({ protocol })),
-      (error) => error?.code === "VIBE64_LAUNCH_INVALID"
+      () => parseVibe64OutputsLines(webOutputTarget({ protocol })),
+      (error) => error?.code === "VIBE64_OUTPUTS_INVALID"
     );
   }
 });
@@ -230,7 +295,7 @@ test("all Vibe64 operation parsers reject the retired JSON representation", () =
   const json = ["```json vibe64.retired.v1", "{\"version\":1}", "```"];
   for (const [parse, code] of [
     [parseVibe64WorkspaceSetupLines, "VIBE64_WORKSPACE_SETUP_INVALID"],
-    [parseVibe64LaunchLines, "VIBE64_LAUNCH_INVALID"],
+    [parseVibe64OutputsLines, "VIBE64_OUTPUTS_INVALID"],
     [parseVibe64DeploymentLines, "VIBE64_DEPLOYMENT_INVALID"]
   ]) {
     assert.throws(() => parse(json), (error) => error?.code === code);

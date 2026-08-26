@@ -28,7 +28,7 @@ import {
 } from "@local/vibe64-runtime/server/workspaceSetupState";
 import {
   vibe64RuntimePacks
-} from "@local/vibe64-terminals/server/vibe64LaunchTargets";
+} from "@local/vibe64-terminals/server/vibe64OutputTargets";
 import {
   loadProjectExecutionEnv
 } from "@local/vibe64-terminals/server/projectExecutionEnv";

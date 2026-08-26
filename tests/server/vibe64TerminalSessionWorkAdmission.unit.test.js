@@ -184,19 +184,19 @@ async function terminalServiceFixture(t, lock, {
   };
 }
 
-test("launch attempts invalidate preview state in other clients", async (t) => {
+test("output attempts invalidate output state in other clients", async (t) => {
   const published = [];
   const lock = agentWriteLockHarness();
   const { service, session } = await terminalServiceFixture(t, lock, {
     publishSessionChanged: {
-      async launchTarget(sessionId, payload) {
+      async outputTarget(sessionId, payload) {
         published.push({ payload, sessionId });
       }
     }
   });
 
-  const result = await service.startLaunchTargetTerminal(session.sessionId, {
-    launchTargetId: "missing",
+  const result = await service.startOutputTargetTerminal(session.sessionId, {
+    outputTargetId: "missing",
     originId: "tab:preview-a"
   });
 
@@ -204,7 +204,7 @@ test("launch attempts invalidate preview state in other clients", async (t) => {
   assert.deepEqual(published, [{
     payload: {
       originId: "tab:preview-a",
-      reason: "launch-target-started"
+      reason: "output-target-started"
     },
     sessionId: session.sessionId
   }]);

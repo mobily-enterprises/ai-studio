@@ -26,7 +26,7 @@ function originId(...values) {
 function normalizedClientRefresh(value = {}) {
   const source = record(value);
   return {
-    ...(source.includeLaunchTargets === true ? { includeLaunchTargets: true } : {}),
+    ...(source.includeOutputs === true ? { includeOutputs: true } : {}),
     ...(source.includeList === true ? { includeList: true } : {})
   };
 }

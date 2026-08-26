@@ -26,7 +26,7 @@
         "surfaces": [
           {
             "subpath": "./server",
-            "summary": "Uses Genesis transport while Vibe64 owns workspace setup, launch, preview identity, and application deployment contracts."
+            "summary": "Uses Genesis transport while Vibe64 owns workspace setup, Outputs, preview identity, and application deployment contracts."
           }
         ]
       }

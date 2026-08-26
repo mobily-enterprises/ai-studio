@@ -9,16 +9,17 @@ import {
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
-  vibe64LaunchTargetsPath,
-  vibe64LaunchTargetsQueryKey,
+  vibe64OutputsPath,
+  vibe64OutputsQueryKey,
   vibe64PreviewIdentityPath,
-  vibe64LaunchTerminalPath,
-  vibe64LaunchTerminalStopPath,
+  vibe64OutputRunPath,
+  vibe64OutputRunStopPath,
+  vibe64OutputResultPath,
   vibe64SessionPath,
   vibe64SessionPreviewStatePath
 } from "@/lib/vibe64SessionRequestConfig.js";
 import {
-  vibe64LaunchTerminalWebSocketUrl
+  vibe64OutputTerminalWebSocketUrl
 } from "@/lib/vibe64SessionApi.js";
 import {
   readRefOrGetterValue
@@ -34,9 +35,7 @@ import {
   useVibe64Terminal
 } from "@/composables/useVibe64Terminal.js";
 import {
-  readLocalStorageJson,
-  stableLocalStorageKeyPart,
-  writeLocalStorageJson
+  stableLocalStorageKeyPart
 } from "@/lib/browserLocalStorage.js";
 import { createWebSocketTerminalDriver } from "@/lib/vibe64TerminalDriver.js";
 import {
@@ -50,10 +49,6 @@ import {
   currentProjectSlugFromLocation,
   vibe64ProjectScopedStorageKey
 } from "@/lib/vibe64ProjectScope.js";
-import {
-  normalizePreviewInput,
-  previewInputHasValues
-} from "@/lib/vibe64PreviewOptions.js";
 import {
   vibe64SessionDebugError,
   vibe64SessionDebugLog
@@ -74,12 +69,14 @@ const LAUNCH_STATUS_IDLE_RECOVERY_INTERVAL_MS = 3000;
 const LAUNCH_STATUS_IDLE_RECOVERY_LIMIT = 6;
 const TERMINAL_STOP_POLL_INTERVAL_MS = 100;
 const TERMINAL_STOP_POLL_ATTEMPTS = 50;
-const LAUNCH_TARGETS_REALTIME_REASONS = new Set([
-  "launch-target-started",
-  "launch-target-ready",
-  "launch-target-closed",
-  "launch-target-stopped",
-  "launch-target-stale-cleared"
+const OUTPUTS_REALTIME_REASONS = new Set([
+  "output-target-started",
+  "output-target-ready",
+  "output-target-closed",
+  "output-target-stopped",
+  "output-target-stale-cleared",
+  "output-results-ready",
+  "output-results-failed"
 ]);
 
 function browserCanOpenTarget(target = {}) {
@@ -109,18 +106,6 @@ function launchPreviewToolbarStorageKey(session = {}, projectSlug = currentProje
 function launchPreviewLocationStorageKey(session = {}, projectSlug = currentProjectSlugFromLocation()) {
   return vibe64ProjectScopedStorageKey(
     `vibe64:launch-preview-location:${launchBrowserTargetName(session, projectSlug)}`,
-    projectSlug
-  );
-}
-
-function launchPreviewOptionsStorageKey(
-  session = {},
-  projectSlug = currentProjectSlugFromLocation(),
-  launchTargetId = ""
-) {
-  const targetId = stableLocalStorageKeyPart(String(launchTargetId || ""));
-  return vibe64ProjectScopedStorageKey(
-    `vibe64:launch-preview-options:${launchBrowserTargetName(session, projectSlug)}:${targetId}`,
     projectSlug
   );
 }
@@ -237,7 +222,7 @@ function openReadyLaunchBrowserTarget(
   return openLaunchBrowserTarget(target, session, null, projectSlug);
 }
 
-function launchTargetWorktreePath(session = {}) {
+function outputTargetWorktreePath(session = {}) {
   return vibe64SessionSourcePath(session);
 }
 
@@ -249,7 +234,7 @@ function launchControlsSessionCanRun(session = {}) {
     String(session?.sessionId || "").trim() &&
     !isClosedVibe64Session(session) &&
     !String(metadata.session_closing_reason || "").trim() &&
-    launchTargetWorktreePath(session)
+    outputTargetWorktreePath(session)
   );
 }
 
@@ -269,7 +254,7 @@ function launchControlScopeKey(projectSlug = "", sessionId = "") {
   return `${String(projectSlug || "").trim()}::${String(sessionId || "").trim()}`;
 }
 
-function launchTargetsRealtimeShouldRefresh({
+function outputTargetsRealtimeShouldRefresh({
   localLaunchStarting = false,
   payload = {}
 } = {}, sessionId = "") {
@@ -280,14 +265,14 @@ function launchTargetsRealtimeShouldRefresh({
   }
   const reason = String(payload.reason || "").trim();
   if (
-    reason === "launch-target-started" &&
+    reason === "output-target-started" &&
     (localLaunchStarting || vibe64RealtimePayloadFromCurrentTab(payload))
   ) {
     return false;
   }
-  return payload.clientRefresh?.includeLaunchTargets === true ||
+  return payload.clientRefresh?.includeOutputs === true ||
     !reason ||
-    LAUNCH_TARGETS_REALTIME_REASONS.has(reason);
+    OUTPUTS_REALTIME_REASONS.has(reason);
 }
 
 function shouldScheduleLaunchAutoStart({
@@ -317,11 +302,11 @@ function shouldScheduleLaunchAutoStart({
   );
 }
 
-function autoStartLaunchTargetsLoading({
-  launchTargetsLoading = false,
-  launchTargetsSettled = false
+function autoStartOutputsLoading({
+  outputTargetsLoading = false,
+  outputTargetsSettled = false
 } = {}) {
-  return Boolean(launchTargetsLoading || !launchTargetsSettled);
+  return Boolean(outputTargetsLoading || !outputTargetsSettled);
 }
 
 function launchStatusRetryDelay(attempt = 0) {
@@ -541,7 +526,7 @@ function normalizeLaunchPreview(preview = {}) {
     "project_closed"
   ].includes(source.state) ? source.state : "idle";
   const fallbackMessage = state === "idle"
-    ? "Run a launch target first."
+    ? "Run an output target first."
     : state === "starting"
       ? "Preparing preview."
       : state === "ready"
@@ -589,7 +574,7 @@ function launchPreviewFromStatus(status = {}) {
 
   const activeTerminal = plainObject(source.activeTerminal);
   return normalizeLaunchPreview({
-    canRestart: Boolean(activeTerminal.id || plainObject(source.lastLaunchTarget).id),
+    canRestart: Boolean(activeTerminal.id || plainObject(source.lastOutputTarget).id),
     canShowLog: Boolean(activeTerminal.id),
     href,
     message: "Preview is ready.",
@@ -663,7 +648,7 @@ function isLoopbackBrowserHost(hostname = "") {
     normalized === "[::1]";
 }
 
-function useVibe64LaunchControls({
+function useVibe64OutputControls({
   autoStartManagedPreview = () => false,
   autoStartTargetId = () => "",
   busy = () => false,
@@ -679,10 +664,9 @@ function useVibe64LaunchControls({
   const launchStarting = ref(false);
   const terminalExpanded = ref(false);
   const autoStartKey = ref("");
-  const previewInputOverrides = ref({});
   const autoStartCooldownVersion = ref(0);
   const launchStatusAttempt = ref(0);
-  const launchTargetsSettledForAutoStart = ref(false);
+  const outputTargetsSettledForAutoStart = ref(false);
   const sourceOperationsResumePending = ref(false);
   let attachedTerminalId = "";
   let autoStartTimer = 0;
@@ -697,8 +681,8 @@ function useVibe64LaunchControls({
   const selectedSession = computed(() => readRefOrGetterValue(session) || null);
   const sessionId = computed(() => String(selectedSession.value?.sessionId || ""));
   const sessionRevision = computed(() => vibe64SessionRevision(selectedSession.value));
-  let launchTargetsRefreshSessionId = sessionId.value;
-  let launchTargetsRefreshRevision = sessionRevision.value;
+  let outputTargetsRefreshSessionId = sessionId.value;
+  let outputTargetsRefreshRevision = sessionRevision.value;
   const launchScopeKey = computed(() => launchControlScopeKey(projectSlug.value, sessionId.value));
   const requestedAutoStartTargetId = computed(() => String(readRefOrGetterValue(autoStartTargetId) || "").trim());
   const autoStartRequestKey = computed(() => requestedAutoStartTargetId.value || (
@@ -709,7 +693,7 @@ function useVibe64LaunchControls({
   const launchSourceOperationsSuspended = computed(() => (
     readRefOrGetterValue(sourceOperationsSuspended) === true
   ));
-  const canLoadLaunchTargets = computed(() => launchControlsCanLoadTargets({
+  const canLoadOutputs = computed(() => launchControlsCanLoadTargets({
     displayed: terminalDisplayed.value,
     session: selectedSession.value || {},
     sourceOperationsSuspended: launchSourceOperationsSuspended.value
@@ -717,8 +701,8 @@ function useVibe64LaunchControls({
   const sessionsApiPath = computed(() => paths.api(VIBE64_SESSIONS_API_SUFFIX, {
     surface: VIBE64_SURFACE_ID
   }));
-  const launchTargetsPath = computed(() => {
-    return sessionId.value ? vibe64LaunchTargetsPath(sessionsApiPath.value, sessionId.value) : "";
+  const outputTargetsPath = computed(() => {
+    return sessionId.value ? vibe64OutputsPath(sessionsApiPath.value, sessionId.value) : "";
   });
   const terminalWindowStorageKey = computed(() => launchTerminalStorageKey(
     selectedSession.value || {},
@@ -727,7 +711,7 @@ function useVibe64LaunchControls({
   const terminal = useVibe64Terminal({
     driver: createWebSocketTerminalDriver({
       webSocketUrl(terminalId) {
-        return vibe64LaunchTerminalWebSocketUrl(sessionId.value, terminalId);
+        return vibe64OutputTerminalWebSocketUrl(sessionId.value, terminalId);
       }
     })
   });
@@ -752,15 +736,15 @@ function useVibe64LaunchControls({
   } = terminal;
   let disposed = false;
 
-  const launchTargetsResource = useEndpointResource({
-    enabled: canLoadLaunchTargets,
-    fallbackLoadError: "Launch targets could not be loaded.",
-    path: launchTargetsPath,
+  const outputTargetsResource = useEndpointResource({
+    enabled: canLoadOutputs,
+    fallbackLoadError: "Outputs could not be loaded.",
+    path: outputTargetsPath,
     queryOptions: {
       retry: launchStatusShouldRetry,
       retryDelay: launchStatusRetryDelay
     },
-    queryKey: computed(() => vibe64LaunchTargetsQueryKey(
+    queryKey: computed(() => vibe64OutputsQueryKey(
       VIBE64_SURFACE_ID,
       ROUTE_VISIBILITY_PUBLIC,
       sessionId.value,
@@ -776,20 +760,19 @@ function useVibe64LaunchControls({
     apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
     buildCommandOptions: (_payload, { context }) => ({
       method: "POST",
-      path: vibe64LaunchTerminalPath(sessionsApiPath.value, context.sessionId)
+      path: vibe64OutputRunPath(sessionsApiPath.value, context.sessionId)
     }),
     buildRawPayload: (_model, { context }) => ({
       ...vibe64RealtimeOriginPayload(),
       ...(context.forceRestart === true ? { forceRestart: true } : {}),
-      launchInput: context.launchInput || {},
-      launchTargetId: String(context.launchTargetId || "")
+      outputTargetId: String(context.outputTargetId || "")
     }),
-    fallbackRunError: "Launch target could not be started.",
+    fallbackRunError: "Output target could not be started.",
     messages: {
-      error: "Launch target could not be started."
+      error: "Output target could not be started."
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-    placementSource: "vibe64.launch-target.start",
+    placementSource: "vibe64.output-target.start",
     suppressSuccessMessage: true,
     surfaceId: VIBE64_SURFACE_ID,
     writeMethod: "POST"
@@ -800,14 +783,14 @@ function useVibe64LaunchControls({
     apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
     buildCommandOptions: (_payload, { context }) => ({
       method: "POST",
-      path: vibe64LaunchTerminalStopPath(sessionsApiPath.value, context.sessionId, context.terminalSessionId)
+      path: vibe64OutputRunStopPath(sessionsApiPath.value, context.sessionId, context.terminalSessionId)
     }),
-    fallbackRunError: "Launch target could not be stopped.",
+    fallbackRunError: "Output target could not be stopped.",
     messages: {
-      error: "Launch target could not be stopped."
+      error: "Output target could not be stopped."
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-    placementSource: "vibe64.launch-target.stop",
+    placementSource: "vibe64.output-target.stop",
     suppressSuccessMessage: true,
     surfaceId: VIBE64_SURFACE_ID,
     writeMethod: "POST"
@@ -818,14 +801,14 @@ function useVibe64LaunchControls({
     apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
     buildCommandOptions: (_payload, { context }) => ({
       method: "DELETE",
-      path: vibe64LaunchTerminalPath(sessionsApiPath.value, context.sessionId, context.terminalSessionId)
+      path: vibe64OutputRunPath(sessionsApiPath.value, context.sessionId, context.terminalSessionId)
     }),
-    fallbackRunError: "Launch target terminal could not close.",
+    fallbackRunError: "Output target terminal could not close.",
     messages: {
-      error: "Launch target terminal could not close."
+      error: "Output target terminal could not close."
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-    placementSource: "vibe64.launch-target.close",
+    placementSource: "vibe64.output-target.close",
     suppressSuccessMessage: true,
     surfaceId: VIBE64_SURFACE_ID,
     writeMethod: "DELETE"
@@ -853,13 +836,13 @@ function useVibe64LaunchControls({
     writeMethod: "POST"
   });
 
-  const status = computed(() => launchTargetsResource.data.value || {});
+  const status = computed(() => outputTargetsResource.data.value || {});
   const launchStatusLoadError = computed(() => {
-    const error = launchTargetsResource.query?.error?.value || null;
+    const error = outputTargetsResource.query?.error?.value || null;
     return launchStatusErrorText({
       error,
-      fallback: launchTargetsResource.loadError.value,
-      path: launchTargetsPath.value
+      fallback: outputTargetsResource.loadError.value,
+      path: outputTargetsPath.value
     });
   });
   const preview = computed(() => launchPreviewFromStatus(status.value));
@@ -887,18 +870,42 @@ function useVibe64LaunchControls({
       ? status.value.previewTarget
       : null
   ));
-  const launchTargets = computed(() => {
-    return Array.isArray(status.value.launchTargets) ? status.value.launchTargets : [];
+  const outputTargets = computed(() => {
+    return Array.isArray(status.value.outputTargets) ? status.value.outputTargets : [];
+  });
+  const outputRuns = computed(() => {
+    return Array.isArray(status.value.outputRuns) ? status.value.outputRuns : [];
+  });
+  const outputResults = computed(() => outputRuns.value.flatMap((run) => (
+    (Array.isArray(run?.results) ? run.results : []).map((result) => ({
+      ...result,
+      href: vibe64OutputResultPath(sessionsApiPath.value, sessionId.value, result.id),
+      outputTargetId: String(run.outputTargetId || ""),
+      runId: String(run.id || "")
+    }))
+  )));
+  const outputExecution = computed(() => {
+    const value = status.value.output;
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {
+          error: null,
+          mode: "",
+          presentationKind: "",
+          state: "idle",
+          targetId: ""
+        };
   });
   const autoStartTarget = computed(() => {
     if (requestedAutoStartTargetId.value) {
-      return launchTargets.value.find((target) => (
+      return outputTargets.value.find((target) => (
         target.id === requestedAutoStartTargetId.value &&
+        target.presentation?.kind === "web" &&
         target.available !== false
       )) || null;
     }
     return autoStartRequestKey.value
-      ? managedPreviewTarget(launchTargets.value)
+      ? managedPreviewTarget(outputTargets.value)
       : null;
   });
   const activeTerminal = computed(() => {
@@ -907,14 +914,14 @@ function useVibe64LaunchControls({
       ? terminalStatusValue
       : null;
   });
-  const activeLaunchTargetId = computed(() => String(
-    terminalMetadata.value.launchTargetId ||
-    activeTerminal.value?.metadata?.launchTargetId ||
-    status.value.lastLaunchTarget?.id ||
+  const activeOutputTargetId = computed(() => String(
+    terminalMetadata.value.outputTargetId ||
+    activeTerminal.value?.metadata?.outputTargetId ||
+    status.value.lastOutputTarget?.id ||
     ""
   ));
-  const activeLaunchTarget = computed(() => {
-    return launchTargets.value.find((target) => target.id === activeLaunchTargetId.value) || null;
+  const activeOutputTarget = computed(() => {
+    return outputTargets.value.find((target) => target.id === activeOutputTargetId.value) || null;
   });
   const launchActions = computed(() => {
     const actions = terminalMetadata.value.actions || activeTerminal.value?.metadata?.actions || [];
@@ -979,25 +986,31 @@ function useVibe64LaunchControls({
     return "stopped";
   });
   const terminalIndicatorLabel = computed(() => {
+    const presentationKind = activeOutputTarget.value?.presentation?.kind ||
+      outputExecution.value.presentationKind;
+    const finite = activeOutputTarget.value?.mode === "finite" || outputExecution.value.mode === "finite";
     if (terminalIndicatorState.value === "running") {
-      return "Server is running";
+      return presentationKind === "web" ? "Server is running" : "Program is running";
     }
     if (terminalIndicatorState.value === "starting") {
-      return "Server is starting";
+      return finite ? "Build is running" : "Preparing output";
     }
     if (terminalIndicatorState.value === "failed") {
-      return "Server stopped with an error";
+      return finite ? "Build failed" : "Program stopped with an error";
     }
-    return "Server is stopped";
+    if (finite && outputExecution.value.state === "succeeded") {
+      return "Build completed";
+    }
+    return presentationKind === "web" ? "Server is stopped" : "Program is stopped";
   });
   const launchButtonsDisabled = computed(() => Boolean(
     readRefOrGetterValue(busy) ||
     operationBusy.value ||
     terminalIsRunning.value
   ));
-  const launchTargetsLoadingForAutoStart = computed(() => autoStartLaunchTargetsLoading({
-    launchTargetsLoading: launchTargetsResource.isLoading.value,
-    launchTargetsSettled: launchTargetsSettledForAutoStart.value
+  const outputTargetsLoadingForAutoStart = computed(() => autoStartOutputsLoading({
+    outputTargetsLoading: outputTargetsResource.isLoading.value,
+    outputTargetsSettled: outputTargetsSettledForAutoStart.value
   }));
   const terminalCanStop = computed(() => {
     return Boolean(terminalSessionId.value && (terminalStatus.value || activeTerminal.value?.status) === "running");
@@ -1009,11 +1022,11 @@ function useVibe64LaunchControls({
   ));
   const terminalCanRetry = computed(() => Boolean(
     !terminalIsRunning.value &&
-    activeLaunchTargetId.value
+    activeOutputTargetId.value
   ));
   const terminalCanRestart = computed(() => Boolean(
     terminalCanStop.value &&
-    activeLaunchTargetId.value
+    activeOutputTargetId.value
   ));
   const terminalCanCopyLog = computed(() => Boolean(terminalOutput.value));
   const terminalVisible = computed(() => Boolean(terminalSessionId.value || activeTerminal.value));
@@ -1027,7 +1040,7 @@ function useVibe64LaunchControls({
     terminalVisible.value &&
     terminalExpanded.value
   ));
-  const terminalTitle = computed(() => activeLaunchTarget.value?.label || "Run target");
+  const terminalTitle = computed(() => activeOutputTarget.value?.label || "Run target");
   const terminalSubtitle = computed(() => {
     if (terminalIsRunning.value) {
       return "";
@@ -1036,78 +1049,33 @@ function useVibe64LaunchControls({
       const exitCode = terminalExitCode.value ?? activeTerminal.value?.exitCode;
       return exitCode === 0 ? "Exited" : `Exited with code ${exitCode}`;
     }
-    return activeLaunchTargetId.value ? "Ready" : "No launch target running.";
+    return activeOutputTargetId.value ? "Ready" : "No output target running.";
   });
   const visible = computed(() => Boolean(
     (
-      canLoadLaunchTargets.value ||
+      canLoadOutputs.value ||
       terminalVisible.value
     ) &&
-      (launchTargets.value.length > 0 || launchTargetsResource.loadError.value || terminalVisible.value)
+      (outputTargets.value.length > 0 || outputTargetsResource.loadError.value || terminalVisible.value)
   ));
   const launchStatusIdleRecoveryNeeded = computed(() => Boolean(
     previewPaneDisplayed.value &&
-    canLoadLaunchTargets.value &&
+    canLoadOutputs.value &&
     autoStartRequestKey.value &&
-    !launchTargetsResource.isLoading.value &&
+    !outputTargetsResource.isLoading.value &&
     !launchStatusLoadError.value &&
     !operationBusy.value &&
     !terminalVisible.value &&
     !autoStartTarget.value &&
-    launchTargets.value.length < 1 &&
+    outputTargets.value.length < 1 &&
     previewState.value === "idle"
   ));
 
-  function previewOptionsStorageKeyForTarget(launchTarget = {}) {
-    return launchPreviewOptionsStorageKey(
-      selectedSession.value || {},
-      projectSlug.value,
-      launchTarget.id
-    );
-  }
-
-  function storedLaunchInputForTarget(launchTarget = {}) {
-    return readLocalStorageJson(previewOptionsStorageKeyForTarget(launchTarget), null);
-  }
-
-  function previewInputIsRemembered(launchTarget = {}) {
-    return storedLaunchInputForTarget(launchTarget) !== null;
-  }
-
-  function launchInputForTarget(launchTarget = {}) {
-    const targetId = String(launchTarget?.id || "");
-    const override = targetId ? previewInputOverrides.value[targetId] : null;
-    return normalizePreviewInput(
-      launchTarget,
-      override || storedLaunchInputForTarget(launchTarget) || {}
-    );
-  }
-
-  function savePreviewInput(launchTarget = {}, launchInput = {}, {
-    remember = false
-  } = {}) {
-    const targetId = String(launchTarget?.id || "");
-    if (!targetId) {
-      return normalizePreviewInput(launchTarget, launchInput);
-    }
-    const normalizedInput = normalizePreviewInput(launchTarget, launchInput);
-    previewInputOverrides.value = {
-      ...previewInputOverrides.value,
-      [targetId]: normalizedInput
-    };
-    writeLocalStorageJson(
-      previewOptionsStorageKeyForTarget(launchTarget),
-      remember && previewInputHasValues(normalizedInput) ? normalizedInput : null
-    );
-    return normalizedInput;
-  }
-
-  async function run(launchTarget = {}, {
+  async function run(outputTarget = {}, {
     applyDefaultDisplay = true,
     autoStartAttemptKey = "",
     forceRestart = false,
-    ignoreExternalBusy = false,
-    launchInput = null
+    ignoreExternalBusy = false
   } = {}) {
     const currentSession = selectedSession.value || {};
     const externalBusy = readRefOrGetterValue(busy);
@@ -1124,13 +1092,13 @@ function useVibe64LaunchControls({
       operationBusy.value ||
       (!forceRestart && terminalIsRunning.value) ||
       (!forceRestart && !ignoreExternalBusy && externalBusy) ||
-      launchTarget.available === false ||
-      !launchTarget.id
+      outputTarget.available === false ||
+      !outputTarget.id
     ) {
       return false;
     }
     if (applyDefaultDisplay) {
-      terminalExpanded.value = false;
+      terminalExpanded.value = outputTarget.presentation?.kind !== "web";
     }
     launchStarting.value = true;
     launchError.value = "";
@@ -1142,8 +1110,7 @@ function useVibe64LaunchControls({
     try {
       const terminalSession = await startTerminalCommand.run({
         forceRestart,
-        launchInput: normalizePreviewInput(launchTarget, launchInput || launchInputForTarget(launchTarget)),
-        launchTargetId: launchTarget.id,
+        outputTargetId: outputTarget.id,
         sessionId: currentSessionId
       });
       if (
@@ -1165,7 +1132,7 @@ function useVibe64LaunchControls({
       return true;
     } catch (error) {
       launchError.value = String(
-        error?.message || startTerminalCommand.message || "Launch target could not be started."
+        error?.message || startTerminalCommand.message || "Output target could not be started."
       ).trim();
       return false;
     } finally {
@@ -1205,18 +1172,18 @@ function useVibe64LaunchControls({
   async function refresh({
     scopeKey = launchScopeKey.value
   } = {}) {
-    if (!canLoadLaunchTargets.value) {
+    if (!canLoadOutputs.value) {
       return null;
     }
     const refreshScopeKey = String(scopeKey || "").trim();
     if (!refreshScopeKey) {
       return null;
     }
-    return typeof launchTargetsResource.query?.refetch === "function"
-      ? launchTargetsResource.query.refetch({
+    return typeof outputTargetsResource.query?.refetch === "function"
+      ? outputTargetsResource.query.refetch({
           cancelRefetch: true
         })
-      : launchTargetsResource.reload();
+      : outputTargetsResource.reload();
   }
 
   async function startNewlyConfiguredWorkspaceSetup() {
@@ -1313,9 +1280,9 @@ function useVibe64LaunchControls({
   });
 
   useRealtimeEvent({
-    enabled: canLoadLaunchTargets,
+    enabled: canLoadOutputs,
     event: VIBE64_SESSION_CHANGED_EVENT,
-    matches: (context) => launchTargetsRealtimeShouldRefresh({
+    matches: (context) => outputTargetsRealtimeShouldRefresh({
       localLaunchStarting: launchStarting.value,
       payload: context?.payload || {}
     }, sessionId.value),
@@ -1327,9 +1294,9 @@ function useVibe64LaunchControls({
   watch([
     sessionId,
     sessionRevision,
-    canLoadLaunchTargets,
+    canLoadOutputs,
     autoStartRequestKey,
-    () => launchTargetsResource.isLoading.value,
+    () => outputTargetsResource.isLoading.value,
     launchStatusLoadError,
     terminalVisible,
     autoStartTarget,
@@ -1338,29 +1305,29 @@ function useVibe64LaunchControls({
     const currentSessionId = sessionId.value;
     const currentRevision = sessionRevision.value;
     if (
-      currentSessionId !== launchTargetsRefreshSessionId ||
-      launchTargetsRefreshRevision === null
+      currentSessionId !== outputTargetsRefreshSessionId ||
+      outputTargetsRefreshRevision === null
     ) {
-      launchTargetsRefreshSessionId = currentSessionId;
-      launchTargetsRefreshRevision = currentRevision;
+      outputTargetsRefreshSessionId = currentSessionId;
+      outputTargetsRefreshRevision = currentRevision;
       return;
     }
-    if (currentRevision === null || currentRevision <= launchTargetsRefreshRevision) {
+    if (currentRevision === null || currentRevision <= outputTargetsRefreshRevision) {
       return;
     }
     if (terminalVisible.value || autoStartTarget.value || previewState.value !== "idle") {
-      launchTargetsRefreshRevision = currentRevision;
+      outputTargetsRefreshRevision = currentRevision;
       return;
     }
     if (
-      !canLoadLaunchTargets.value ||
+      !canLoadOutputs.value ||
       !autoStartRequestKey.value ||
-      launchTargetsResource.isLoading.value ||
+      outputTargetsResource.isLoading.value ||
       launchStatusLoadError.value
     ) {
       return;
     }
-    launchTargetsRefreshRevision = currentRevision;
+    outputTargetsRefreshRevision = currentRevision;
     void refresh({
       scopeKey: launchScopeKey.value
     });
@@ -1396,8 +1363,8 @@ function useVibe64LaunchControls({
     launchStatusIdleRecoveryScopeKey = launchScopeKey.value;
   }
 
-  function resetLaunchTargetsAutoStartSettlement() {
-    launchTargetsSettledForAutoStart.value = false;
+  function resetOutputsAutoStartSettlement() {
+    outputTargetsSettledForAutoStart.value = false;
   }
 
   function scheduleLaunchStatusIdleRecovery() {
@@ -1487,7 +1454,7 @@ function useVibe64LaunchControls({
     if (!terminalCanRestart.value) {
       return false;
     }
-    const target = activeLaunchTarget.value || launchTargets.value.find((item) => item.id === activeLaunchTargetId.value);
+    const target = activeOutputTarget.value || outputTargets.value.find((item) => item.id === activeOutputTargetId.value);
     if (!target) {
       return false;
     }
@@ -1501,7 +1468,7 @@ function useVibe64LaunchControls({
     if (!terminalCanRetry.value) {
       return false;
     }
-    const target = activeLaunchTarget.value || launchTargets.value.find((item) => item.id === activeLaunchTargetId.value);
+    const target = activeOutputTarget.value || outputTargets.value.find((item) => item.id === activeOutputTargetId.value);
     return target ? run(target, {
       applyDefaultDisplay: false
     }) : false;
@@ -1575,7 +1542,7 @@ function useVibe64LaunchControls({
       return;
     }
     clearAutoStartTimer();
-    resetLaunchTargetsAutoStartSettlement();
+    resetOutputsAutoStartSettlement();
     resetLaunchStatusIdleRecovery();
     closeTerminalSocket();
     disposeTerminalDisplay();
@@ -1585,11 +1552,10 @@ function useVibe64LaunchControls({
     attachedTerminalId = "";
     autoStartKey.value = "";
     launchError.value = "";
-    previewInputOverrides.value = {};
     launchStatusAttempt.value = 0;
     launchStatusAttemptLoading = false;
     launchStatusAttemptScopeKey = launchScopeKey.value;
-    resetLaunchTargetsAutoStartSettlement();
+    resetOutputsAutoStartSettlement();
     resetLaunchStatusIdleRecovery();
     clearAutoStartTimer();
     closeTerminalSocket();
@@ -1599,12 +1565,12 @@ function useVibe64LaunchControls({
     terminalExpanded.value = false;
   });
 
-  watch(canLoadLaunchTargets, (canLoad) => {
+  watch(canLoadOutputs, (canLoad) => {
     if (canLoad) {
       return;
     }
     clearAutoStartTimer();
-    resetLaunchTargetsAutoStartSettlement();
+    resetOutputsAutoStartSettlement();
     resetLaunchStatusIdleRecovery();
   }, {
     flush: "sync",
@@ -1617,7 +1583,7 @@ function useVibe64LaunchControls({
       return;
     }
     clearLaunchStatusIdleRecoveryTimer();
-    if (!launchTargetsResource.isLoading.value) {
+    if (!outputTargetsResource.isLoading.value) {
       launchStatusIdleRecoveryCount = 0;
       launchStatusIdleRecoveryScopeKey = launchScopeKey.value;
     }
@@ -1628,11 +1594,11 @@ function useVibe64LaunchControls({
 
   watch(() => [
     launchScopeKey.value,
-    canLoadLaunchTargets.value ? "loadable" : "blocked",
-    launchTargetsResource.isLoading.value ? "loading" : "ready"
+    canLoadOutputs.value ? "loadable" : "blocked",
+    outputTargetsResource.isLoading.value ? "loading" : "ready"
   ].join("|"), () => {
     const scopeKey = launchScopeKey.value;
-    if (!scopeKey || !canLoadLaunchTargets.value) {
+    if (!scopeKey || !canLoadOutputs.value) {
       launchStatusAttempt.value = 0;
       launchStatusAttemptScopeKey = scopeKey;
       launchStatusAttemptLoading = false;
@@ -1643,12 +1609,12 @@ function useVibe64LaunchControls({
       launchStatusAttemptScopeKey = scopeKey;
       launchStatusAttemptLoading = false;
     }
-    if (launchTargetsResource.isLoading.value && !launchStatusAttemptLoading) {
+    if (outputTargetsResource.isLoading.value && !launchStatusAttemptLoading) {
       launchStatusAttempt.value += 1;
       launchStatusAttemptLoading = true;
       return;
     }
-    if (!launchTargetsResource.isLoading.value) {
+    if (!outputTargetsResource.isLoading.value) {
       launchStatusAttemptLoading = false;
     }
   }, {
@@ -1660,19 +1626,19 @@ function useVibe64LaunchControls({
     projectSlug.value,
     sessionId.value,
     autoStartRequestKey.value,
-    canLoadLaunchTargets.value ? "loadable" : "blocked",
-    launchTargetsResource.isLoading.value ? "loading" : "ready"
+    canLoadOutputs.value ? "loadable" : "blocked",
+    outputTargetsResource.isLoading.value ? "loading" : "ready"
   ].join("|"), () => {
     const scopeKey = launchScopeKey.value;
-    if (!scopeKey || !autoStartRequestKey.value || !canLoadLaunchTargets.value) {
-      resetLaunchTargetsAutoStartSettlement();
+    if (!scopeKey || !autoStartRequestKey.value || !canLoadOutputs.value) {
+      resetOutputsAutoStartSettlement();
       return;
     }
-    if (launchTargetsResource.isLoading.value) {
-      launchTargetsSettledForAutoStart.value = false;
+    if (outputTargetsResource.isLoading.value) {
+      outputTargetsSettledForAutoStart.value = false;
       return;
     }
-    launchTargetsSettledForAutoStart.value = true;
+    outputTargetsSettledForAutoStart.value = true;
   }, {
     flush: "post",
     immediate: true
@@ -1682,10 +1648,10 @@ function useVibe64LaunchControls({
     projectSlug.value,
     sessionId.value,
     autoStartRequestKey.value,
-    launchTargetsLoadingForAutoStart.value ? "loading" : "ready",
+    outputTargetsLoadingForAutoStart.value ? "loading" : "ready",
     terminalVisible.value ? "terminal-visible" : "terminal-hidden",
     terminalDisplayed.value ? "displayed" : "hidden",
-    canLoadLaunchTargets.value ? "loadable" : "blocked",
+    canLoadOutputs.value ? "loadable" : "blocked",
     readRefOrGetterValue(busy) ? "external-busy" : "external-idle",
     operationBusy.value ? "busy" : "idle",
     autoStartTarget.value?.id || "",
@@ -1697,9 +1663,9 @@ function useVibe64LaunchControls({
       autoStartKey: autoStartKey.value,
       externalBusy: readRefOrGetterValue(busy),
       key,
-      loading: launchTargetsLoadingForAutoStart.value,
+      loading: outputTargetsLoadingForAutoStart.value,
       operationBusy: operationBusy.value,
-      sessionLaunchable: canLoadLaunchTargets.value,
+      sessionLaunchable: canLoadOutputs.value,
       sessionId: sessionId.value,
       target,
       terminalDisplayed: terminalDisplayed.value,
@@ -1727,9 +1693,9 @@ function useVibe64LaunchControls({
         autoStartKey: autoStartKey.value,
         externalBusy: readRefOrGetterValue(busy),
         key: currentKey,
-        loading: launchTargetsLoadingForAutoStart.value,
+        loading: outputTargetsLoadingForAutoStart.value,
         operationBusy: operationBusy.value,
-        sessionLaunchable: canLoadLaunchTargets.value,
+        sessionLaunchable: canLoadOutputs.value,
         sessionId: sessionId.value,
         target: currentTarget,
         terminalDisplayed: terminalDisplayed.value,
@@ -1773,8 +1739,8 @@ function useVibe64LaunchControls({
   });
 
   return {
-    activeLaunchTarget,
-    activeLaunchTargetId,
+    activeOutputTarget,
+    activeOutputTargetId,
     activeTerminal,
     closeTerminal,
     copyLog,
@@ -1782,11 +1748,13 @@ function useVibe64LaunchControls({
     launchActions,
     launchButtonsDisabled,
     launchError,
-    launchInputForTarget,
     launchStatusAttempt,
     launchStarting,
-    launchTargets,
-    loading: launchTargetsResource.isLoading,
+    outputTargets,
+    outputExecution,
+    outputResults,
+    outputRuns,
+    loading: outputTargetsResource.isLoading,
     loadError: launchStatusLoadError,
     minimizeTerminal,
     openAction,
@@ -1803,14 +1771,12 @@ function useVibe64LaunchControls({
     previewTargetRecovery,
     terminalPreviewRequiresProxy,
     terminalPreviewProxyPending,
-    previewInputIsRemembered,
     publishPreviewState,
     requestPreviewIdentityGrant,
     refresh,
     restartTerminal,
     retryTerminal,
     run,
-    savePreviewInput,
     sendCtrlC,
     stopTerminal,
     startNewlyConfiguredWorkspaceSetup,
@@ -1850,7 +1816,7 @@ export {
   AUTO_START_STABILITY_DELAY_MS,
   LAUNCH_STATUS_RETRY_LIMIT,
   launchPreviewFromStatus,
-  autoStartLaunchTargetsLoading,
+  autoStartOutputsLoading,
   browserCanOpenTarget,
   clearLaunchAutoStartAttempt,
   launchControlsCanLoadTargets,
@@ -1863,12 +1829,11 @@ export {
   launchStatusRetryDelay,
   launchStatusShouldRetry,
   launchPreviewLocationStorageKey,
-  launchTargetsRealtimeShouldRefresh,
+  outputTargetsRealtimeShouldRefresh,
   launchPreviewRequiresProxy,
-  launchPreviewOptionsStorageKey,
   launchPreviewToolbarStorageKey,
   launchControlScopeKey,
-  launchTargetWorktreePath,
+  outputTargetWorktreePath,
   nextLaunchPreviewToolbarPosition,
   normalizeLaunchPreview,
   normalizeLaunchPreviewToolbarPosition,
@@ -1879,5 +1844,5 @@ export {
   resolveLaunchPreviewDestination,
   sameSiteLoopbackPreviewUrl,
   shouldScheduleLaunchAutoStart,
-  useVibe64LaunchControls
+  useVibe64OutputControls
 };

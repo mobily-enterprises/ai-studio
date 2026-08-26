@@ -21,7 +21,7 @@ import {
 
 const CODEX_TERMINAL_NAMESPACE = "vibe64-codex";
 const GLOBAL_CODEX_TERMINAL_NAMESPACE = "vibe64-global-codex";
-const LAUNCH_TARGET_TERMINAL_NAMESPACE = "vibe64-launch-target";
+const OUTPUT_TARGET_TERMINAL_NAMESPACE = "vibe64-output-target";
 
 function vibe64Result(operation) {
   return sharedVibe64Result(operation, {
@@ -50,8 +50,8 @@ function globalCodexTerminalNamespace() {
   return terminalNamespace(GLOBAL_CODEX_TERMINAL_NAMESPACE);
 }
 
-function launchTargetTerminalNamespace(sessionId) {
-  return terminalNamespace(LAUNCH_TARGET_TERMINAL_NAMESPACE, sessionId);
+function outputTargetTerminalNamespace(sessionId) {
+  return terminalNamespace(OUTPUT_TARGET_TERMINAL_NAMESPACE, sessionId);
 }
 
 function commandInvocation({
@@ -126,7 +126,7 @@ export {
   commandInvocation,
   directoryExists,
   globalCodexTerminalNamespace,
-  launchTargetTerminalNamespace,
+  outputTargetTerminalNamespace,
   pathInsideOrEqual,
   sessionTerminalCwd,
   ensureTerminalSessionSourceGitSelfContained,

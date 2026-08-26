@@ -11,7 +11,7 @@ import {
   projectServiceSourceRoot
 } from "@local/vibe64-core/server/projectServiceSelection";
 import {
-  inspectVibe64Launch
+  inspectVibe64Outputs
 } from "@local/vibe64-genesis/server";
 
 const EXPECTED_UNCONFIGURED_CODES = new Set([
@@ -36,7 +36,7 @@ function unconfiguredCurrentApp(root = "", message = "") {
   return {
     components: [],
     diagnostics: [],
-    message: message || "Vibe64 does not declare a launch target for this project yet.",
+    message: message || "Vibe64 does not declare an output target for this project yet.",
     ok: true,
     ready: false,
     resources: [],
@@ -48,25 +48,25 @@ function unconfiguredCurrentApp(root = "", message = "") {
   };
 }
 
-function launchView(root = "", launch = {}) {
+function outputsView(root = "", outputs = {}) {
   return {
-    components: Array.isArray(launch.components) ? launch.components : [],
-    diagnostics: Array.isArray(launch.diagnostics) ? launch.diagnostics : [],
+    components: Array.isArray(outputs.components) ? outputs.components : [],
+    diagnostics: Array.isArray(outputs.diagnostics) ? outputs.diagnostics : [],
     ok: true,
-    ready: launch.status === "ready",
-    resources: Array.isArray(launch.resources) ? launch.resources : [],
+    ready: outputs.status === "ready",
+    resources: Array.isArray(outputs.resources) ? outputs.resources : [],
     root,
-    runtimeRequirements: Array.isArray(launch.runtimeRequirements) ? launch.runtimeRequirements : [],
-    stackHash: String(launch.stackHash || ""),
-    status: String(launch.status || "unconfigured"),
-    targets: Array.isArray(launch.targets) ? launch.targets : []
+    runtimeRequirements: Array.isArray(outputs.runtimeRequirements) ? outputs.runtimeRequirements : [],
+    stackHash: String(outputs.stackHash || ""),
+    status: String(outputs.status || "unconfigured"),
+    targets: Array.isArray(outputs.targets) ? outputs.targets : []
   };
 }
 
 function createService({
   appRoot = "",
   env = process.env,
-  inspectLaunch = inspectVibe64Launch,
+  inspectOutputs = inspectVibe64Outputs,
   projectService
 } = {}) {
   if (
@@ -121,10 +121,10 @@ function createService({
       return currentAppResult(async () => {
         const root = await rootForInput(input);
         if (!root) {
-          return unconfiguredCurrentApp("", "Choose a project source or session before inspecting Vibe64 launch targets.");
+          return unconfiguredCurrentApp("", "Choose a project source or session before inspecting Vibe64 outputs.");
         }
         try {
-          return launchView(root, await inspectLaunch({
+          return outputsView(root, await inspectOutputs({
             environment: await projectEnvironment(input),
             projectRoot: root
           }));
