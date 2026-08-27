@@ -121,6 +121,54 @@ const agentMessageActionInputValidator = patchSchema({
   }
 });
 
+const assistantAccessActionInputValidator = patchSchema({
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const messageSuggestionActionInputValidator = patchSchema({
+  ...agentMessageFields,
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
+const messageSuggestionDecisionFields = {
+  ...optionalOrigin
+};
+
+const messageSuggestionIdField = {
+  suggestionId: {
+    type: "string",
+    noTrim: false,
+    minLength: 36,
+    maxLength: 36,
+    pattern: /^[0-9a-f-]{36}$/iu,
+    required: true
+  }
+};
+
+const messageSuggestionDecisionInputValidator = patchSchema(
+  messageSuggestionDecisionFields
+);
+const messageSuggestionDecisionActionInputValidator = patchSchema({
+  ...messageSuggestionDecisionFields,
+  ...messageSuggestionIdField,
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
 const agentTurnInterruptFields = {
   ...optionalOrigin,
   reason: {
@@ -450,6 +498,7 @@ const repositoryVersionFileDiffInputValidator = patchSchema({
 });
 
 export {
+  assistantAccessActionInputValidator,
   SESSION_RENEWAL_HANDOVER_MAX_CHARACTERS,
   agentMessageActionInputValidator,
   agentMessageInputValidator,
@@ -459,6 +508,9 @@ export {
   agentTurnInterruptActionInputValidator,
   agentTurnInterruptInputValidator,
   currentSessionInputValidator,
+  messageSuggestionActionInputValidator,
+  messageSuggestionDecisionActionInputValidator,
+  messageSuggestionDecisionInputValidator,
   repositoryHistoryInputValidator,
   repositoryVersionFileDiffInputValidator,
   repositoryVersionFilesInputValidator,

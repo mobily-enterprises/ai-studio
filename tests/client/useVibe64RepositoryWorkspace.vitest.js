@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
 
 const mocks = vi.hoisted(() => ({
+  changes: null,
   historyUpdateCheck: null,
   updateCheckHandler: null,
   updateCheck: null,
@@ -43,7 +44,8 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
           files: [],
           ok: true,
           totalCount: 0,
-          unsaved: false
+          unsaved: false,
+          ...(mocks.changes || {})
         };
       }
     };
@@ -58,10 +60,31 @@ async function flushPromises() {
 
 describe("useVibe64RepositoryWorkspace", () => {
   beforeEach(() => {
+    mocks.changes = null;
     mocks.historyUpdateCheck = null;
     mocks.updateCheckHandler = null;
     mocks.updateCheck = null;
     mocks.requestCalls.length = 0;
+  });
+
+  it("does not enter AI-backed Save when direct assistant use is restricted", async () => {
+    mocks.changes = { unsaved: true };
+    const requestSaveWork = vi.fn(async () => ({ ok: true }));
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const workspace = useVibe64RepositoryWorkspace(ref({
+      assistantDirectAllowed: false,
+      requestSaveWork,
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("changes") });
+
+    await nextTick();
+    await flushPromises();
+
+    await expect(workspace.saveWork()).resolves.toBe(false);
+    expect(requestSaveWork).not.toHaveBeenCalled();
   });
 
   it("unwraps the runtime's ref-backed session API path without cross-loading destinations", async () => {

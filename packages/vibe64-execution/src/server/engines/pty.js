@@ -16,12 +16,11 @@ import {
   startTerminalSession
 } from "./terminalSessions.js";
 import {
+  DEFAULT_EXEC_HELPER_PATH,
+  VIBE64_EXEC_HELPER_PATH_ENV,
   helperOperationForRequest,
   helperPayload
 } from "./helperClient.js";
-import {
-  hostUserExecHelperPath
-} from "../hostUserExecution.js";
 import {
   realUserActorRequiresInstalledHelper
 } from "../policy/permissionPolicy.js";
@@ -87,7 +86,7 @@ function terminalSessionInputForRequest(request = {}, {
       });
       return [
         "-n",
-        hostUserExecHelperPath(),
+        process.env[VIBE64_EXEC_HELPER_PATH_ENV] || DEFAULT_EXEC_HELPER_PATH,
         "execute",
         payloadPath
       ];

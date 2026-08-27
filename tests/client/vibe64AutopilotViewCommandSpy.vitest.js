@@ -76,6 +76,11 @@ describe("Vibe64 direct session view", () => {
     expect(composable).toContain("const saveWorkOperationActive = computed");
     expect(component).toContain("saveWorkActivityVisible || workspaceSetupVisible");
     expect(composable).toContain("Vibe64—not Temporary AI—owns every repository operation");
+    expect(component).toContain(':disabled="repositoryRecoverySending || !assistantDirectAllowed"');
+    expect(component).toContain(":title=\"assistantDirectAllowed ? 'Open temporary AI to resolve this repository problem' : assistantRestrictionMessage\"");
+    expect(component).toContain(":title=\"assistantDirectAllowed ? 'Open temporary AI to resolve workspace preparation' : assistantRestrictionMessage\"");
+    expect(component).toContain("assistantDirectAllowed: assistantDirectAllowed.value");
+    expect(component).toContain("assistantRestrictionMessage: assistantRestrictionMessage.value");
     expect(composable).toContain("Do not run git add, commit, checkout, switch, restore, reset, clean, stash, merge, rebase");
     expect(composable).toContain("leave both byte-for-byte unchanged");
     expect(composable).toContain("Resolve only by editing the conflicting working-tree files");
@@ -187,10 +192,12 @@ describe("Vibe64 direct session view", () => {
     const promptHints = fs.readFileSync(promptHintsPath, "utf8");
 
     expect(component).toContain('v-if="agentStopVisible"');
-    expect(component).toContain(':aria-label="composerSubmitAriaLabel"');
+    expect(component).toContain(':aria-label="composerSubmitActionAriaLabel"');
     expect(component).toContain("composerSubmitMode === 'send' ? mdiSend");
     expect(component).toContain("['steer', 'steering'].includes(composerSubmitMode)");
-    expect(component).toContain('{{ composerSubmitMode === "send" ? "Send" : composerSubmitLabel }}');
+    expect(component).toContain("{{ composerSubmitActionLabel }}");
+    expect(component).toContain('"Suggest to owner"');
+    expect(component).not.toContain('"Suggesting…"');
     expect(component).toContain(':aria-busy="composerSending ? \'true\' : undefined"');
     expect(component).not.toContain(':loading="composerSending"');
     expect(component).not.toContain(':loading="interrupting"');
@@ -274,7 +281,7 @@ describe("Vibe64 direct session view", () => {
       "utf8"
     );
 
-    expect(component).toContain(":ask-codex-to-fix-preview-identity=\"askCodexToFixPreviewIdentity\"");
+    expect(component).toContain(":ask-codex-to-fix-preview-identity=\"assistantDirectAllowed ? askCodexToFixPreviewIdentity : null\"");
     expect(launchControls).toContain("previewIdentityFixAvailable");
     expect(launchControls).toContain("Fix with temporary AI");
     expect(launchControls).toContain("previewIdentityFixSending");

@@ -154,8 +154,10 @@
           v-else
           class="vibe64-source-explanation__action-target"
           color="primary"
+          :disabled="!assistantAvailable"
           :prepend-icon="mdiRefresh"
           size="small"
+          :title="assistantAvailable ? 'Retry explanation' : assistantUnavailableMessage"
           type="button"
           variant="flat"
           @click="emit('retry')"
@@ -173,7 +175,7 @@
       <Vibe64AutopilotPromptTextarea
         :attachments-enabled="false"
         :auto-grow="true"
-        :disabled="busy"
+        :disabled="busy || !assistantAvailable"
         label="Ask about this explanation"
         :model-value="followup"
         placeholder="Ask a follow-up"
@@ -199,10 +201,10 @@
               class="vibe64-source-explanation__action-target"
               aria-label="Send follow-up"
               color="primary"
-              :disabled="!followup.trim() || busy"
+              :disabled="!followup.trim() || busy || !assistantAvailable"
               :icon="mdiSend"
               size="small"
-              title="Send follow-up"
+              :title="assistantAvailable ? 'Send follow-up' : assistantUnavailableMessage"
               type="submit"
               variant="flat"
             />
@@ -231,6 +233,14 @@ import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
 import { sourceEditorLinkTarget } from "@/lib/vibe64SourceEditorLinks.js";
 
 const props = defineProps({
+  assistantAvailable: {
+    default: true,
+    type: Boolean
+  },
+  assistantUnavailableMessage: {
+    default: "The selected AI connection is unavailable for this account.",
+    type: String
+  },
   busy: {
     default: false,
     type: Boolean
@@ -370,7 +380,12 @@ function sourceRangeDisplayLabel(range = {}, {
 }
 
 function submitFollowup() {
-  if (!props.followup.trim() || props.busy || !followupAvailable.value) {
+  if (
+    !props.assistantAvailable ||
+    !props.followup.trim() ||
+    props.busy ||
+    !followupAvailable.value
+  ) {
     return;
   }
   emit("send-followup");

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue";
+import { computed, ref, unref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   VIBE64_DEFAULT_AGENT_PROVIDER_ID
@@ -314,7 +314,11 @@ function repositoryTemporaryAiDedupeKey({
 }
 
 function useVibe64AutopilotView(props, emit, {
-  requestTemporaryAi = null
+  assistantCanRequestMessage = null,
+  assistantCanUseAi = null,
+  assistantRestrictionMessage = null,
+  requestTemporaryAi = null,
+  sendMainChatMessage = null
 } = {}) {
   const route = useRoute();
   const router = useRouter();
@@ -339,6 +343,18 @@ function useVibe64AutopilotView(props, emit, {
       : null;
   });
   const sessionId = computed(() => normalizedAgentTurnText(props.session?.sessionId));
+  const assistantAccessConfigured = assistantCanUseAi !== null;
+  const currentAssistantRestrictionMessage = computed(() => normalizedAgentTurnText(
+    unref(assistantRestrictionMessage)
+  ) || "The selected AI connection is unavailable for this account.");
+  const assistantDirectAllowed = computed(() => (
+    !assistantAccessConfigured || unref(assistantCanUseAi) === true
+  ));
+  const assistantMainChatAllowed = computed(() => (
+    !assistantAccessConfigured ||
+    unref(assistantCanUseAi) === true ||
+    unref(assistantCanRequestMessage) === true
+  ));
   const sessionGithubActor = computed(() => sessionGithubCommandActor(props.session || {}));
   const sessionGithubActorHeaderVisible = computed(() => Boolean(
     props.active &&
@@ -438,10 +454,14 @@ function useVibe64AutopilotView(props, emit, {
     String(operation?.status || "").trim().toLowerCase()
   )));
 
-  const composerDisabled = computed(() => Boolean(
+  const sessionInteractionDisabled = computed(() => Boolean(
     !props.active ||
     !sessionId.value ||
     props.sessionSelectionClosed
+  ));
+  const composerDisabled = computed(() => Boolean(
+    sessionInteractionDisabled.value ||
+    !assistantMainChatAllowed.value
   ));
   const composerAttachmentsSupported = computed(() => (
     normalizedAgentTurnText(props.session?.assistantSelection?.engineId) !== "opencode"
@@ -511,7 +531,9 @@ function useVibe64AutopilotView(props, emit, {
   ));
   const agentStopVisible = computed(() => agentActive.value);
   const agentStopEnabled = computed(() => Boolean(
-    agentStopVisible.value && !interrupting.value && !composerSending.value
+    agentStopVisible.value &&
+    !interrupting.value &&
+    !composerSending.value
   ));
   const thinkingVisible = computed(() => Boolean(agentActive.value || composerSending.value));
   const thinkingLabel = computed(() => (
@@ -582,7 +604,8 @@ function useVibe64AutopilotView(props, emit, {
     !props.active ||
     !sessionId.value ||
     props.sessionSelectionClosed ||
-    repositoryOperationActive.value
+    repositoryOperationActive.value ||
+    !assistantDirectAllowed.value
   ));
 
   async function retryWorkspaceSetup() {
@@ -633,6 +656,7 @@ function useVibe64AutopilotView(props, emit, {
   async function askCodexToFixPreviewIdentity(input = {}) {
     if (
       typeof requestTemporaryAi !== "function" ||
+      !assistantDirectAllowed.value ||
       !props.active ||
       !sessionId.value ||
       props.sessionSelectionClosed ||
@@ -661,6 +685,7 @@ function useVibe64AutopilotView(props, emit, {
     return Boolean(
       repositoryRecoverySending.value ||
       typeof requestTemporaryAi !== "function" ||
+      !assistantDirectAllowed.value ||
       !props.active ||
       !sessionId.value ||
       props.sessionSelectionClosed ||
@@ -808,18 +833,27 @@ function useVibe64AutopilotView(props, emit, {
     composerSubmissionKind.value = submissionKind === "steer" ? "steer" : "send";
     composerSending.value = true;
     try {
-      const accepted = await props.sendAgentMessage({
+      const sendMessage = typeof sendMainChatMessage === "function"
+        ? sendMainChatMessage
+        : props.sendAgentMessage;
+      const response = await sendMessage({
         ...payload,
         ...(requestAgentSettings.value ? { agentSettings: requestAgentSettings.value } : {}),
         messageId
-      }) !== false;
+      });
+      const accepted = response !== false && response?.ok !== false;
+      const suggested = response?.suggested === true;
       if (!accepted) {
         updateOptimisticMessage(messageId, {
           error: "Message could not be sent.",
           status: "failed"
         });
       }
-      if (accepted) {
+      if (accepted && suggested) {
+        optimisticMessages.value = optimisticMessages.value.filter((message) => (
+          message.id !== messageId
+        ));
+      } else if (accepted) {
         conversationFollowLatestKey.value += 1;
       }
       return accepted;
@@ -1022,13 +1056,14 @@ function useVibe64AutopilotView(props, emit, {
     String(toolbarRepositoryWorkState.value?.state || "")
   ));
   const saveWorkDisabled = computed(() => Boolean(
-    composerDisabled.value ||
+    sessionInteractionDisabled.value ||
     agentActive.value ||
     composerSending.value ||
     saveWorkSending.value ||
     saveWorkRepositoryBusy.value ||
     saveWorkRepositoryState.value?.loading ||
     saveWorkRepositoryState.value?.error ||
+    (!saveWorkRequiresUpdate.value && !assistantDirectAllowed.value) ||
     (!saveWorkRequiresUpdate.value && !saveWorkUnsaved.value)
   ));
   const saveWorkActionLabel = computed(() => (
@@ -1083,6 +1118,9 @@ function useVibe64AutopilotView(props, emit, {
     }
     if (!saveWorkUnsaved.value) {
       return "No work to save";
+    }
+    if (!assistantDirectAllowed.value) {
+      return currentAssistantRestrictionMessage.value;
     }
     return "Save this session's work to the project repository";
   });
@@ -1333,6 +1371,12 @@ function useVibe64AutopilotView(props, emit, {
   ));
 
   function sessionToolRuntimeState(toolId = "") {
+    if (toolId === "ai-terminal" && !assistantDirectAllowed.value) {
+      return {
+        disabled: true,
+        title: currentAssistantRestrictionMessage.value
+      };
+    }
     if (["editor", "database", "system"].includes(toolId)) {
       return {
         disabled: !sessionSourceRoot.value,
@@ -1465,7 +1509,10 @@ function useVibe64AutopilotView(props, emit, {
   }
 
   const sourceEditorAskCodexAvailable = computed(() => Boolean(
-    props.active && sessionId.value && !props.sessionSelectionClosed
+    props.active &&
+    sessionId.value &&
+    !props.sessionSelectionClosed &&
+    assistantDirectAllowed.value
   ));
 
   function prefillComposer(text = "") {
@@ -1575,6 +1622,7 @@ function useVibe64AutopilotView(props, emit, {
 
   return {
     Vibe64OutputControls,
+    assistantDirectAllowed,
     agentActive,
     agentStopEnabled,
     agentStopVisible,

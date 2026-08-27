@@ -632,6 +632,20 @@ function createCodexSessionAgentProvider({
     async interruptTurn(context, input = {}) {
       return normalizeCodexSessionResult(await controller.interruptTurn(context.sessionId, input));
     },
+    async pinAttachments(context, input = {}) {
+      if (typeof controller.pinAttachments !== "function") {
+        return codexAttachmentDeliveryFailure(
+          "vibe64_agent_attachment_unavailable",
+          "Attachments cannot be retained for owner approval.",
+          true
+        );
+      }
+      return controller.pinAttachments(
+        context.sessionId,
+        codexAttachmentIds(input),
+        normalizeText(input.suggestionId)
+      );
+    },
     async invalidateRuntimes(_context, input = {}) {
       return controller.invalidateAppServerRuntimes(input);
     },
@@ -789,6 +803,16 @@ function createCodexSessionAgentProvider({
     },
     async uploadAttachment(context, input = {}) {
       return controller.uploadAttachment(context.sessionId, input);
+    },
+    async unpinAttachments(context, input = {}) {
+      if (typeof controller.unpinAttachments !== "function") {
+        return { ok: true, released: [] };
+      }
+      return controller.unpinAttachments(
+        context.sessionId,
+        codexAttachmentIds(input),
+        normalizeText(input.suggestionId)
+      );
     },
     async waitForConversationTurn(context, input = {}) {
       return controller.waitForConversationTurn(context.sessionId, input, {

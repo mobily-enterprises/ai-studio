@@ -169,6 +169,71 @@ test("terminals feature creates the direct API from runtime env", async () => {
   });
 });
 
+test("personal Codex access blocks a member before authentication starts", async () => {
+  await withTemporaryRoot(async (root) => {
+    let authenticationStarts = 0;
+    const feature = createVibe64TerminalsFeature({
+      codexTerminalController: {
+        async codexAuthPreflight() {
+          authenticationStarts += 1;
+          return { ok: true };
+        }
+      }
+    });
+    const runtimeRoot = path.join(root, "runtime");
+    const targetRoot = path.join(root, "project");
+    await Promise.all([
+      mkdir(runtimeRoot, { recursive: true }),
+      mkdir(targetRoot, { recursive: true })
+    ]);
+    const outputs = await feature.setup(featureDependencies({
+      env: {
+        [VIBE64_SERVICE_DATA_ROOT_ENV]: path.join(root, "services")
+      },
+      project: {
+        async createRuntime() {
+          return { adapter: {}, projectConfig: {}, stateRoot: runtimeRoot };
+        },
+        currentProjectRuntimeRoot() {
+          return runtimeRoot;
+        },
+        currentTargetRoot() {
+          return targetRoot;
+        },
+        async readCurrentProject() {
+          return { slug: "project" };
+        },
+        async readEnv() {
+          return { env: { records: [] }, ok: true };
+        },
+        runInProjectContext(_slug, operation) {
+          return operation();
+        },
+        async saveEnvUserValues() {
+          return { ok: true };
+        }
+      }
+    }), { profile: "test" });
+    outputs.terminals.configureAssistantRuntime({
+      async readAssistantAccess() {
+        return { ownerOnly: true };
+      }
+    });
+
+    await assert.rejects(
+      outputs.terminals.startGlobalCodexTerminal({
+        vibe64User: { role: "user", username: "member" }
+      }),
+      (error) => error.code === "vibe64_assistant_owner_required"
+    );
+    assert.equal(authenticationStarts, 0);
+    await feature.shutdown(featureDependencies({ project: {} }), {
+      outputs,
+      profile: "test"
+    });
+  });
+});
+
 test("session source creation holds the project source mutation lock while it reads repository authority", async () => {
   await withTemporaryRoot(async (root) => {
     const targetRoot = path.join(root, "project");

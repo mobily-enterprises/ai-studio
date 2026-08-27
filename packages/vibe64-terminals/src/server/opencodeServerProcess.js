@@ -33,7 +33,7 @@ const OPENCODE_MANAGED_STARTUP_SCRIPT = [
   "chmod 600 \"$log_path\"",
   "exec \"$@\" >>\"$log_path\" 2>&1"
 ].join("\n");
-const OPENCODE_INLINE_CONFIG = JSON.stringify({
+const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
   agent: {
     [OPENCODE_ECONOMY_AGENT_ID]: {
       description: "Vibe64 bounded helper turns without tools.",
@@ -50,14 +50,63 @@ function text(value = "") {
   return String(value ?? "").trim();
 }
 
+function canonicalProviderUrl(value = "") {
+  const source = text(value);
+  if (!source) {
+    return "";
+  }
+  let parsed;
+  try {
+    parsed = new URL(source);
+  } catch {
+    throw new TypeError("OpenCode provider routes require a canonical HTTPS URL.");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.toString().replace(/\/$/u, "") !== source.replace(/\/$/u, "")
+  ) {
+    throw new TypeError("OpenCode provider routes require a canonical HTTPS URL.");
+  }
+  return source;
+}
+
+function openCodeInlineConfig({
+  canonicalUrl = "",
+  modelProviderId = ""
+} = {}) {
+  const providerId = text(modelProviderId);
+  const baseURL = canonicalProviderUrl(canonicalUrl);
+  if (Boolean(providerId) !== Boolean(baseURL)) {
+    throw new TypeError("OpenCode provider id and canonical URL must be supplied together.");
+  }
+  return JSON.stringify({
+    ...OPENCODE_INLINE_CONFIG_BASE,
+    ...(providerId
+      ? {
+          provider: {
+            [providerId]: {
+              options: { baseURL }
+            }
+          }
+        }
+      : {})
+  });
+}
+
 function wait(milliseconds = 0) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function safeOpenCodeEnvironment(baseEnv = {}, {
   cacheRoot = "",
+  canonicalUrl = "",
   dbPath = "",
   managedEnv = {},
+  modelProviderId = "",
   password = "",
   privateRoot = "",
   shimDirs = []
@@ -78,7 +127,7 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
         .filter(Boolean)
         .join(","),
       OPENCODE_DB: dbPath,
-      OPENCODE_CONFIG_CONTENT: OPENCODE_INLINE_CONFIG,
+      OPENCODE_CONFIG_CONTENT: openCodeInlineConfig({ canonicalUrl, modelProviderId }),
       OPENCODE_DISABLE_AUTOUPDATE: "1",
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
       OPENCODE_DISABLE_SHARE: "1",
@@ -155,6 +204,7 @@ async function waitForOpenCodeReady({
 async function createOpenCodeServerProcess({
   apiKey = "",
   cacheRoot = "",
+  canonicalUrl = "",
   command = "opencode",
   commandRunner = runVibe64Command,
   dbPath = "",
@@ -240,8 +290,10 @@ async function createOpenCodeServerProcess({
   try {
     const processEnv = safeOpenCodeEnvironment(env, {
       cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : "",
+      canonicalUrl,
       dbPath: normalizedDbPath,
       managedEnv,
+      modelProviderId,
       password,
       privateRoot: normalizedPrivateRoot,
       shimDirs
@@ -327,6 +379,7 @@ async function createOpenCodeServerProcess({
       await client.authenticateApiKey(modelProviderId, apiKey);
     }
     return Object.freeze({
+      canonicalUrl: canonicalProviderUrl(canonicalUrl),
       client,
       dbPath: normalizedDbPath,
       health: Object.freeze({ ...health }),
@@ -357,6 +410,8 @@ export {
   OPENCODE_READY_TIMEOUT_MS,
   OPENCODE_STOP_TIMEOUT_MS,
   availableLoopbackPort,
+  canonicalProviderUrl,
   createOpenCodeServerProcess,
+  openCodeInlineConfig,
   safeOpenCodeEnvironment
 };

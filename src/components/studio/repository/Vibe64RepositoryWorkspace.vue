@@ -113,9 +113,12 @@
             v-if="canResolveUpdateWithTemporaryAi && typeof dashboard.requestTemporaryAi === 'function'"
             :aria-busy="resolvingUpdateProblem ? 'true' : undefined"
             class="vibe64-repository-workspace__recovery-action"
-            :disabled="resolvingUpdateProblem"
+            :disabled="resolvingUpdateProblem || dashboard.assistantDirectAllowed === false"
             :prepend-icon="mdiRobotOutline"
             size="small"
+            :title="dashboard.assistantDirectAllowed === false
+              ? dashboard.assistantRestrictionMessage
+              : 'Open temporary AI to resolve this repository update'"
             type="button"
             variant="tonal"
             @click="resolveUpdateProblem"
@@ -403,6 +406,7 @@ const repositoryOperationBusy = computed(() => Boolean(
 ));
 const saveWorkDisabled = computed(() => Boolean(
   repositoryOperationBusy.value ||
+  dashboard.value.assistantDirectAllowed === false ||
   updates.canonicalChangePending ||
   updates.error ||
   !updates.payload ||
@@ -413,6 +417,9 @@ const saveWorkDisabled = computed(() => Boolean(
   typeof dashboard.value.requestSaveWork !== "function"
 ));
 const saveWorkTitle = computed(() => {
+  if (dashboard.value.assistantDirectAllowed === false) {
+    return dashboard.value.assistantRestrictionMessage;
+  }
   if (sourceOperationsSuspended.value) {
     return "Session renewal is safely using this session’s source";
   }
@@ -600,7 +607,11 @@ function versionButtonLabel(version = {}, index = -1) {
 }
 
 async function resolveUpdateProblem() {
-  if (resolvingUpdateProblem.value || typeof dashboard.value.requestTemporaryAi !== "function") {
+  if (
+    resolvingUpdateProblem.value ||
+    dashboard.value.assistantDirectAllowed === false ||
+    typeof dashboard.value.requestTemporaryAi !== "function"
+  ) {
     return false;
   }
   resolvingUpdateProblem.value = true;

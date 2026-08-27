@@ -1,8 +1,12 @@
 import {
+  assertCanUseVibe64Assistant,
+  canUseVibe64Assistant,
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_PROVIDER_NOT_IMPLEMENTED_CODE,
   Vibe64AgentExecutionProfileError,
+  defineVibe64AssistantAccess,
   defineVibe64AssistantCapabilities,
+  defineVibe64AssistantSelection,
   defineVibe64AgentExecutionProfileRequest,
   resolveVibe64AssistantSelection,
   vibe64AssistantSelectionFromMetadata,
@@ -11,6 +15,9 @@ import {
 import {
   normalizeText
 } from "@local/vibe64-core/server/core";
+import {
+  currentProjectVibe64User
+} from "@local/vibe64-core/server/projectRequestContext";
 
 const SESSION_AGENT_PROVIDER_BINDING_CONFLICT_CODE = "vibe64_agent_provider_binding_conflict";
 const EXECUTION_PROFILE_RESOLUTION_METHODS = new Set([
@@ -24,6 +31,19 @@ const EXECUTION_PROFILE_RESOLUTION_FIELDS = new Set([
   "request",
   "revision",
   "thinking"
+]);
+const AI_METHODS = new Set([
+  "createConversation",
+  "ensureSession",
+  "generateSessionRenewalHandover",
+  "resolveExecutionProfile",
+  "runDetachedChatTurn",
+  "seedSessionRenewalHandover",
+  "sendMessage",
+  "startConversationTurn",
+  "startTerminal",
+  "streamDetachedChatTurn",
+  "writeTerminal"
 ]);
 
 function hasOwn(value, key) {
@@ -46,6 +66,7 @@ function sessionAgentProviderId(options = {}, fallbackProviderId = "") {
   );
   return normalizeText(
     durableSelection?.engineId ||
+    options?.assistantSelection?.engineId ||
     options?.engineId ||
     options?.providerId ||
     options?.agentSettings?.providerId ||
@@ -56,6 +77,9 @@ function sessionAgentProviderId(options = {}, fallbackProviderId = "") {
 }
 
 function sessionAssistantSelection(options = {}) {
+  if (options?.assistantSelection) {
+    return defineVibe64AssistantSelection(options.assistantSelection);
+  }
   return vibe64AssistantSelectionFromMetadata(options?.session?.metadata, {
     required: false
   });
@@ -144,6 +168,7 @@ function untrustedExecutionProfileResolutionError(provider = {}, sessionId = "",
 
 function createSessionAgentManager({
   defaultProviderId = "codex",
+  readAssistantAccess = async () => ({ ownerOnly: false }),
   providers = []
 } = {}) {
   const providerById = new Map();
@@ -154,6 +179,10 @@ function createSessionAgentManager({
   // in-process object issued by this manager may carry those details into a
   // turn; clones and durable snapshots are audit records, not capabilities.
   const verifiedExecutionProfiles = new WeakMap();
+
+  if (typeof readAssistantAccess !== "function") {
+    throw new TypeError("Session agent manager requires an assistant-access reader.");
+  }
 
   for (const candidate of providers) {
     const provider = normalizeProvider(candidate);
@@ -256,6 +285,42 @@ function createSessionAgentManager({
     }, expected);
   }
 
+  function assistantUser(options = {}) {
+    return currentProjectVibe64User() || options?.vibe64User || null;
+  }
+
+  async function accessFor(provider = {}, sessionId = "", options = {}) {
+    const vibe64User = assistantUser(options);
+    const assistantSelection = sessionAssistantSelection(options);
+    const access = defineVibe64AssistantAccess(await readAssistantAccess({
+      assistantSelection,
+      engineId: provider.id,
+      modelProviderId: assistantSelection?.modelProviderId || "",
+      session: options.session || null,
+      sessionId: normalizeText(sessionId),
+      vibe64User
+    }));
+    return Object.freeze({
+      ...access,
+      canRequestMessage: Boolean(
+        access.available &&
+        access.ownerOnly &&
+        vibe64User &&
+        vibe64User.role !== "owner"
+      ),
+      canUse: canUseVibe64Assistant(access, vibe64User),
+      engineId: provider.id,
+      modelProviderId: assistantSelection?.modelProviderId || "",
+      transportId: provider.transportId
+    });
+  }
+
+  async function requireAccessFor(provider = {}, sessionId = "", options = {}) {
+    const access = await accessFor(provider, sessionId, options);
+    assertCanUseVibe64Assistant(access, assistantUser(options));
+    return access;
+  }
+
   async function callSessionProvider(method = "", sessionId = "", input = {}, options = {}, {
     coalesceIdentity = ""
   } = {}) {
@@ -267,8 +332,12 @@ function createSessionAgentManager({
     if (typeof provider[method] !== "function") {
       throw new TypeError(`Assistant provider ${provider.id} does not implement ${method}().`);
     }
+    const assistantAccess = AI_METHODS.has(method)
+      ? await requireAccessFor(provider, sessionId, operationOptions)
+      : null;
     const context = {
       agentSettings: operationOptions.agentSettings,
+      assistantAccess,
       assistantSelection: sessionAssistantSelection(operationOptions),
       onEvent: typeof operationOptions.onEvent === "function" ? operationOptions.onEvent : null,
       providerId: provider.id,
@@ -278,7 +347,7 @@ function createSessionAgentManager({
       signal: operationOptions.signal || null,
       transportId: provider.transportId,
       turnOwnership: operationOptions.turnOwnership || null,
-      vibe64User: operationOptions.vibe64User || null
+      vibe64User: assistantUser(operationOptions)
     };
     const run = async () => {
       const executionProfileRequest = method === "resolveExecutionProfile"
@@ -483,6 +552,23 @@ function createSessionAgentManager({
   }
 
   return Object.freeze({
+    async assistantAccess(sessionId = "", options = {}) {
+      const provider = bindSession(sessionId, options);
+      return accessFor(provider, sessionId, options);
+    },
+    async requireAssistantAccess(sessionId = "", options = {}) {
+      const provider = bindSession(sessionId, options);
+      return requireAccessFor(provider, sessionId, options);
+    },
+    requireAssistantAccessForEngine(engineId = "", options = {}) {
+      const engineOptions = { ...options, engineId };
+      return requireAccessFor(providerFor(engineOptions), "", engineOptions);
+    },
+    requireAssistantAccessForSelection(assistantSelection = {}, options = {}) {
+      const selection = defineVibe64AssistantSelection(assistantSelection);
+      const selectionOptions = { ...options, assistantSelection: selection };
+      return requireAccessFor(providerFor(selectionOptions), "", selectionOptions);
+    },
     binding(sessionId = "") {
       return bindings.get(normalizeText(sessionId)) || "";
     },
@@ -507,6 +593,7 @@ function createSessionAgentManager({
       if (typeof provider.describeProvider !== "function") {
         return Object.freeze(fallback);
       }
+      await requireAccessFor(provider, sessionId, options);
       const described = await provider.describeProvider({
         providerId: provider.id,
         runtime: options.runtime || null,
@@ -575,6 +662,14 @@ function createSessionAgentManager({
             `Assistant provider ${provider.id} does not implement reconcileSessions().`
           );
         }
+        if (assistantUser(options)) {
+          for (const session of providerSessions) {
+            await requireAccessFor(provider, session?.sessionId || session?.id, {
+              ...options,
+              session
+            });
+          }
+        }
         results.push(agentOperationResult(provider, "", await provider.reconcileSessions({
           providerId: provider.id,
           transportId: provider.transportId
@@ -594,6 +689,7 @@ function createSessionAgentManager({
     readTerminal(sessionId = "", terminalSessionId = "", options = {}) {
       return callSessionProvider("readTerminal", sessionId, { terminalSessionId }, options);
     },
+    pinAttachments: sessionMethod("pinAttachments"),
     resizeTerminal(sessionId = "", terminalSessionId = "", size = {}, options = {}) {
       return callSessionProvider("resizeTerminal", sessionId, { size, terminalSessionId }, options);
     },
@@ -616,6 +712,7 @@ function createSessionAgentManager({
     unsubscribeSessions(sessions = [], options = {}) {
       return callProvider("unsubscribeSessions", sessions, options);
     },
+    unpinAttachments: sessionMethod("unpinAttachments"),
     uploadAttachment: sessionMethod("uploadAttachment"),
     waitForConversationTurn: sessionMethod("waitForConversationTurn"),
     writeTerminal(sessionId = "", terminalSessionId = "", data = "", input = {}, options = {}) {

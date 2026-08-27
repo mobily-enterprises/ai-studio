@@ -35,6 +35,7 @@ export {
   EXEC_HELPER_PAYLOAD_SCHEMA,
   EXEC_HELPER_PAYLOAD_SCHEMA_VERSION,
   VIBE64_EXEC_HELPER_PATH_ENV,
+  helperOperationForRequest,
   helperPayload,
   normalizedHelperPayload,
   runHelperCommand

@@ -57,10 +57,12 @@
           class="vibe64-source-editor__explain-button"
           :aria-busy="editor.explanationBusy.value ? 'true' : 'false'"
           color="primary"
-          :disabled="!editor.selectedPath.value || editor.explanationBusy.value"
+          :disabled="!assistantAvailable || !editor.selectedPath.value || editor.explanationBusy.value"
           :prepend-icon="mdiRobotOutline"
           size="small"
-          :title="editor.explanationBusy.value ? 'Explanation in progress' : 'Explain file or selection'"
+          :title="!assistantAvailable
+            ? assistantUnavailableMessage
+            : editor.explanationBusy.value ? 'Explanation in progress' : 'Explain file or selection'"
           type="button"
           variant="tonal"
           @click="explainCurrentSelection"
@@ -356,6 +358,8 @@
           >
             <Vibe64SourceExplanationPanel
               v-show="!explanationCollapsed"
+              :assistant-available="assistantAvailable"
+              :assistant-unavailable-message="assistantUnavailableMessage"
               :busy="editor.explanationBusy.value"
               :explanation="editor.activeExplanation.value"
               :followup="editor.explanationFollowup.value"
@@ -364,8 +368,8 @@
               @collapse="collapseExplanation"
               @open-range="openExplanationRange"
               @open-source-link="openExplanationSourceLink"
-              @retry="editor.retryExplanation"
-              @send-followup="editor.sendExplanationFollowup"
+              @retry="retryExplanation"
+              @send-followup="sendExplanationFollowup"
               @stop="editor.stopExplanation"
               @update:followup="editor.updateExplanationFollowup"
             />
@@ -519,6 +523,14 @@ const props = defineProps({
   active: {
     default: false,
     type: Boolean
+  },
+  assistantAvailable: {
+    default: true,
+    type: Boolean
+  },
+  assistantUnavailableMessage: {
+    default: "The selected AI connection is unavailable for this account.",
+    type: String
   },
   codeFocusMode: {
     default: false,
@@ -1148,7 +1160,27 @@ function currentEditorSelectionRange() {
 }
 
 function explainCurrentSelection() {
+  if (!props.assistantAvailable) {
+    return false;
+  }
   void editor.explainSelection(currentEditorSelectionRange());
+  return true;
+}
+
+function retryExplanation() {
+  if (!props.assistantAvailable) {
+    return false;
+  }
+  void editor.retryExplanation();
+  return true;
+}
+
+function sendExplanationFollowup() {
+  if (!props.assistantAvailable) {
+    return false;
+  }
+  void editor.sendExplanationFollowup();
+  return true;
 }
 
 function openExplanationRange(explanation = {}) {

@@ -426,7 +426,11 @@ test("scope saving and session creation share one project policy boundary", asyn
           return projectService.runProjectSessionPolicyExclusive(operation, options);
         }
       },
-      terminals: {},
+      terminals: {
+        async requireAssistantSelectionAccess() {
+          return { ok: true };
+        }
+      },
       workspaceSetupRunner: {
         isRunning: () => false,
         start: () => ({ completion: null }),

@@ -372,7 +372,7 @@
         >
           <header>
             <span class="database-workspace__copilot-mark"><v-icon :icon="mdiCreationOutline" size="18" /></span>
-            <div><strong>Database copilot</strong><small>{{ state.assistant.available ? state.assistant.model : "Not configured" }}</small></div>
+            <div><strong>Database copilot</strong><small>{{ assistantStatusLabel }}</small></div>
             <v-btn
               :icon="mdiClose"
               size="small"
@@ -382,7 +382,7 @@
               @click="copilotOpen = false"
             />
           </header>
-          <div v-if="state.assistant.available" class="database-workspace__copilot-body">
+          <div v-if="assistantCanRun" class="database-workspace__copilot-body">
             <div class="database-workspace__assistant-note">
               Gets the complete refreshed schema on every turn. Schema comments are treated as untrusted data. It can only run read-only queries.
             </div>
@@ -433,8 +433,8 @@
           </div>
           <div v-else class="database-workspace__copilot-unavailable">
             <v-icon :icon="mdiInformationOutline" size="26" />
-            <strong>Copilot is optional.</strong>
-            <span>Configure the server’s database-assistant OpenAI key to enable it. Database browsing and editing work without AI.</span>
+            <strong>{{ assistantUnavailableTitle }}</strong>
+            <span>{{ assistantUnavailableCopy }}</span>
           </div>
         </aside>
       </div>
@@ -597,6 +597,14 @@ const props = defineProps({
     default: true,
     type: Boolean
   },
+  assistantAvailable: {
+    default: true,
+    type: Boolean
+  },
+  assistantUnavailableMessage: {
+    default: "",
+    type: String
+  },
   projectSlug: {
     default: "",
     type: String
@@ -688,6 +696,22 @@ const databaseScopeLabel = computed(() => (
       ? "Session database"
       : "Resolved database"
 ));
+const assistantConfigured = computed(() => Boolean(state.value?.assistant?.available));
+const assistantCanRun = computed(() => assistantConfigured.value && props.assistantAvailable);
+const assistantStatusLabel = computed(() => {
+  if (!assistantConfigured.value) return "Not configured";
+  if (!props.assistantAvailable) return "Owner only";
+  return state.value?.assistant?.model || "Available";
+});
+const assistantUnavailableTitle = computed(() => (
+  assistantConfigured.value ? "Copilot is owner-only for this connection." : "Copilot is optional."
+));
+const assistantUnavailableCopy = computed(() => {
+  if (assistantConfigured.value) {
+    return props.assistantUnavailableMessage || "This Personal AI connection can only be used by the workspace owner. Database browsing and editing remain available.";
+  }
+  return "Configure the server’s database-assistant OpenAI key to enable it. Database browsing and editing work without AI.";
+});
 const selectedTable = computed(() => schema.value.tables.find((table) => table.qualifiedName === selectedTableName.value) || null);
 const currentQueryIsDefault = computed(() => Boolean(
   selectedTable.value && sqlText.value.trim() === defaultTableSql(selectedTable.value)
@@ -1119,7 +1143,7 @@ function useAssistantSql(sql) {
 
 async function askCopilot() {
   const content = assistantDraft.value.trim();
-  if (!content || assistantBusy.value) return;
+  if (!content || assistantBusy.value || !assistantCanRun.value) return;
   assistantMessages.value.push({ content, role: "user" });
   assistantDraft.value = "";
   const result = await askAssistant(assistantMessages.value.map(({ content: text, role }) => ({ content: text, role })));

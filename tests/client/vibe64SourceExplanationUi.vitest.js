@@ -12,6 +12,8 @@ describe("source explanation Material interaction", () => {
     )?.[0] || "";
 
     expect(explainButton).toContain(":aria-busy=");
+    expect(explainButton).toContain("!assistantAvailable");
+    expect(explainButton).toContain("assistantUnavailableMessage");
     expect(explainButton).toContain("Working…");
     expect(explainButton).not.toContain(":loading=");
     expect(editor).toContain("min-inline-size: 6.25rem");
@@ -53,7 +55,25 @@ describe("source explanation Material interaction", () => {
 
     expect(followupFooter).toContain('v-if="busy"');
     expect(followupFooter).toContain('aria-label="Stop explanation"');
+    expect(followupFooter).toContain("!assistantAvailable");
     expect(followupFooter).not.toContain('v-if="thinking"');
+  });
+
+  it("keeps existing explanations readable while disabling new AI work", () => {
+    const editor = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue",
+      import.meta.url
+    ), "utf8");
+    const panel = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue",
+      import.meta.url
+    ), "utf8");
+
+    expect(editor).toContain(':assistant-available="assistantAvailable"');
+    expect(editor).toContain("if (!props.assistantAvailable)");
+    expect(panel).toContain(':disabled="busy || !assistantAvailable"');
+    expect(panel).toContain(':disabled="!followup.trim() || busy || !assistantAvailable"');
+    expect(panel).not.toContain('v-if="assistantAvailable" class="vibe64-source-explanation__thread"');
   });
 
   it("restores focus when the explanation is collapsed, expanded, or closed", () => {

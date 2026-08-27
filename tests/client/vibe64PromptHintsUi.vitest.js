@@ -190,6 +190,22 @@ describe("Vibe64 prompt hints UI", () => {
     expect(autopilot).not.toContain("studio-autopilot__thinking-mark");
   });
 
+  it("keeps static starters available without granting dynamic hints", () => {
+    const autopilot = fs.readFileSync(autopilotPath, "utf8");
+    const canRequestStart = autopilot.indexOf("const promptHintsCanRequest");
+    const canRequestEnd = autopilot.indexOf(
+      "const promptHintsConversationKey",
+      canRequestStart
+    );
+    const canRequest = autopilot.slice(canRequestStart, canRequestEnd);
+
+    expect(autopilot.indexOf("const promptHintsBlankConversation"))
+      .toBeLessThan(canRequestStart);
+    expect(canRequest).toMatch(
+      /promptHintsBlankConversation\.value \|\| \(\s*props\.agentConnectionStatus === "connected" &&\s*assistantDirectAllowed\.value\s*\)/u
+    );
+  });
+
   it("reuses the support row for authenticated typing presence", () => {
     const autopilot = fs.readFileSync(autopilotPath, "utf8");
     const promptTextarea = fs.readFileSync(promptTextareaPath, "utf8");

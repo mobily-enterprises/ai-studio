@@ -218,6 +218,7 @@ test("Codex economy resolves Luna-low from the live catalog with bounded tool-fr
     result.limits,
     CODEX_ECONOMY_WORKLOAD_LIMITS[VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SOURCE_EXPLANATION]
   );
+
 });
 
 test("Codex prompt-hint profile can enforce its complete three-suggestion schema", () => {

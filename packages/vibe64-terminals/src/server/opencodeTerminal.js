@@ -93,11 +93,15 @@ function conversationMessageId(...values) {
   return `oc_${fingerprint(...values).slice(0, 48)}`;
 }
 
-function openCodeModel(selection = {}) {
+function openCodeModel(selection = {}, executionProfile = null) {
+  const modelId = text(executionProfile?.model) || text(selection.modelId);
+  const variantId = executionProfile
+    ? text(executionProfile.thinking)
+    : text(selection.variantId);
   return {
-    id: text(selection.modelId),
+    id: modelId,
     providerID: text(selection.modelProviderId),
-    ...(text(selection.variantId) ? { variant: text(selection.variantId) } : {})
+    ...(variantId ? { variant: variantId } : {})
   };
 }
 
@@ -225,8 +229,23 @@ function requireOpenCodeConnection(value = null, modelProviderId = "") {
       { modelProviderId: text(modelProviderId) }
     );
   }
+  const canonicalUrl = text(connection.canonicalUrl);
+  const endpointCode = text(connection.endpointCode);
+  if (
+    !canonicalUrl ||
+    !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(endpointCode)
+  ) {
+    throw openCodeError(
+      "vibe64_assistant_connection_route_invalid",
+      "The selected OpenCode connection has no billing endpoint. Ask the owner to choose one.",
+      { modelProviderId: actualProviderId }
+    );
+  }
   return {
     apiKey,
+    canonicalUrl,
+    economyModelId: text(connection.economyModelId),
+    endpointCode,
     fingerprint: connectionIdentity(connection, apiKey),
     modelProviderId: actualProviderId
   };
@@ -644,6 +663,7 @@ function createOpenCodeTerminalController({
     if (
       existing &&
       existing.connectionFingerprint === connection.fingerprint &&
+      existing.endpointCode === connection.endpointCode &&
       existing.modelProviderId === connection.modelProviderId &&
       existing.workdir === context.workdir
     ) {
@@ -668,6 +688,7 @@ function createOpenCodeTerminalController({
       const server = await createServerProcess({
         apiKey: connection.apiKey,
         cacheRoot: roots.cacheRoot,
+        canonicalUrl: connection.canonicalUrl,
         command,
         dbPath: roots.dbPath,
         env,
@@ -687,6 +708,7 @@ function createOpenCodeTerminalController({
       const created = {
         abortController: new AbortController(),
         connectionFingerprint: connection.fingerprint,
+        endpointCode: connection.endpointCode,
         key: context.key,
         modelProviderId: connection.modelProviderId,
         selection: context.selection,
@@ -1123,11 +1145,14 @@ function createOpenCodeTerminalController({
       const created = await target.server.client.createSession({
         agent,
         location: { directory: context.workdir },
-        model: openCodeModel(context.selection)
+        model: openCodeModel(context.selection, executionProfile)
       });
       conversationId = created.id;
     } else {
-      await target.server.client.switchModel(conversationId, openCodeModel(context.selection));
+      await target.server.client.switchModel(
+        conversationId,
+        openCodeModel(context.selection, executionProfile)
+      );
       await target.server.client.switchAgent(conversationId, agent);
     }
     const key = `${context.key}\0${conversationId}`;
@@ -1135,6 +1160,35 @@ function createOpenCodeTerminalController({
     tracked.target = target;
     temporaryConversations.set(key, tracked);
     return { context, conversationId, executionProfile, key, target, tracked };
+  }
+
+  async function existingDetachedTarget(sessionId = "", input = {}, options = {}) {
+    const context = await contextFor(sessionId, options);
+    const target = processes.get(context.key) || null;
+    const conversationId = text(input.conversationId || input.threadId);
+    if (!conversationId) {
+      throw openCodeError(
+        "vibe64_opencode_conversation_id_required",
+        "OpenCode conversation id is required.",
+        {},
+        400
+      );
+    }
+    return {
+      context,
+      conversationId,
+      key: `${context.key}\0${conversationId}`,
+      target
+    };
+  }
+
+  function openCodeReadUnavailable() {
+    return openCodeError(
+      "vibe64_opencode_process_not_running",
+      "The OpenCode conversation is not connected. Reading it must not start AI infrastructure.",
+      {},
+      409
+    );
   }
 
   async function runDetachedChatTurn(sessionId = "", input = {}, options = {}) {
@@ -1159,7 +1213,7 @@ function createOpenCodeTerminalController({
       agent: openCodeAgent(context.selection, executionProfile),
       delivery: "queue",
       id: inputMessageId,
-      model: openCodeModel(context.selection),
+      model: openCodeModel(context.selection, executionProfile),
       prompt: { text: prompt },
       resume: true
     });
@@ -1434,21 +1488,29 @@ function createOpenCodeTerminalController({
     closeAllForSession,
     createConversation,
     async deleteConversation(sessionId, input = {}, options = {}) {
-      const { context, conversationId, target } = await detachedTarget(
+      const { context, conversationId, target } = await existingDetachedTarget(
         sessionId,
         input,
-        options,
-        { createIfMissing: false }
+        options
       );
+      if (!target) {
+        temporaryConversations.delete(`${context.key}\0${conversationId}`);
+        return { conversationId, deleted: false, ok: true };
+      }
       await target.server.client.deleteSession(conversationId);
       temporaryConversations.delete(`${context.key}\0${conversationId}`);
       return { conversationId, deleted: true, ok: true };
     },
     async describeProvider(sessionId, options = {}) {
       const context = await contextFor(sessionId, options);
-      const target = await ensureProcess(context, options);
+      const connection = requireOpenCodeConnection(await resolveConnection({
+        engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+        modelProviderId: context.selection.modelProviderId,
+        sessionId: context.sessionId,
+        vibe64User: options.vibe64User || null
+      }), context.selection.modelProviderId);
       return {
-        accountIdentitySignature: target.connectionFingerprint,
+        accountIdentitySignature: connection.fingerprint,
         providerId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
         transportId: "opencode_server"
       };
@@ -1473,8 +1535,16 @@ function createOpenCodeTerminalController({
     async interruptTurn(sessionId, input = {}, options = {}) {
       void input;
       const context = await contextFor(sessionId, options);
-      const target = await ensureProcess(context, options);
+      const target = processes.get(context.key) || null;
       const turn = turns.get(context.key);
+      if (!target) {
+        return {
+          interrupted: false,
+          ok: true,
+          thread: { id: upstreamSessionId(context.runtime.stateRoot, context.sessionId) },
+          turn: openCodeTurnSnapshot(turn)
+        };
+      }
       if (turn) {
         turn.interruptRequested = true;
       }
@@ -1491,15 +1561,25 @@ function createOpenCodeTerminalController({
         closed = true;
       }
       catalogSnapshot = null;
-      return closeAllForProject();
+      const providerId = text(input.modelProviderId);
+      if (!providerId) {
+        return closeAllForProject();
+      }
+      await Promise.all([...processStarts.values()].map((start) => start.catch(() => null)));
+      const targets = [...processes.values()].filter((target) => (
+        target.modelProviderId === providerId
+      ));
+      const results = await Promise.all(targets.map((target) => stopProcessRecord(target)));
+      return {
+        closed: results.length,
+        ok: results.every((result) => result?.exited !== false)
+      };
     },
     async readConversation(sessionId, input = {}, options = {}) {
-      const { conversationId, target } = await detachedTarget(
-        sessionId,
-        input,
-        options,
-        { createIfMissing: false }
-      );
+      const { conversationId, target } = await existingDetachedTarget(sessionId, input, options);
+      if (!target) {
+        throw openCodeReadUnavailable();
+      }
       return readDetachedConversation(target, conversationId);
     },
     async reconcileSessions(sessions = [], options = {}) {
@@ -1519,11 +1599,7 @@ function createOpenCodeTerminalController({
           }
           results.push({ ok: true, resumed: Boolean(activeRun), sessionId });
         } catch (error) {
-          results.push({
-            error: text(error?.message),
-            ok: false,
-            sessionId
-          });
+          results.push({ error: text(error?.message), ok: false, sessionId });
         }
       }
       return {
@@ -1558,23 +1634,19 @@ function createOpenCodeTerminalController({
       };
     },
     async stopConversation(sessionId, input = {}, options = {}) {
-      const { conversationId, target } = await detachedTarget(
-        sessionId,
-        input,
-        options,
-        { createIfMissing: false }
-      );
+      const { conversationId, target } = await existingDetachedTarget(sessionId, input, options);
+      if (!target) {
+        return { conversationId, ok: true, stopped: false };
+      }
       await target.server.client.interrupt(conversationId);
       return { conversationId, ok: true, stopped: true };
     },
     streamDetachedChatTurn: runDetachedChatTurn,
     async waitForConversationTurn(sessionId, input = {}, options = {}) {
-      const { conversationId, target } = await detachedTarget(
-        sessionId,
-        input,
-        options,
-        { createIfMissing: false }
-      );
+      const { conversationId, target } = await existingDetachedTarget(sessionId, input, options);
+      if (!target) {
+        throw openCodeReadUnavailable();
+      }
       await waitForOpenCodeMessages(target.server.client, conversationId, "", {
         signal: input.timeoutMs ? AbortSignal.timeout(Number(input.timeoutMs)) : undefined
       });

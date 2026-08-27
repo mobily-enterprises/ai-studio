@@ -16,6 +16,9 @@ import {
   Vibe64SessionRuntime
 } from "../../packages/vibe64-runtime/src/server/runtime.js";
 import {
+  serializeVibe64AssistantSelection
+} from "../../packages/vibe64-runtime/src/shared/index.js";
+import {
   SESSION_RENEWAL_STATUS,
   readSessionRenewalState
 } from "../../packages/vibe64-sessions/src/server/sessionRenewalState.js";
@@ -67,6 +70,15 @@ import {
 
 const execFileAsync = promisify(execFile);
 const PREDECESSOR_ID = "renewal-resource-predecessor";
+const ASSISTANT_SELECTION = Object.freeze({
+  agentId: "codex",
+  catalogRevision: `sha256:${"1".repeat(64)}`,
+  engineId: "codex",
+  modelId: "gpt-5.5",
+  modelProviderId: "openai",
+  schema: "vibe64.assistant-selection.v1",
+  variantId: "high"
+});
 
 async function pathExists(filePath) {
   try {
@@ -112,6 +124,7 @@ async function initializeGitWorktree(sourceRoot) {
 function sourceMetadata(targetRoot, sessionId, commit) {
   return {
     agent_identity_conversation_id: sessionId === PREDECESSOR_ID ? "thread-predecessor" : "",
+    assistant_selection: serializeVibe64AssistantSelection(ASSISTANT_SELECTION),
     base_branch: "main",
     base_commit: commit,
     canonical_commit: commit,
@@ -405,9 +418,20 @@ async function renewalHarness(targetRoot, {
     VIBE64_RUNTIME_NAMESPACE: `renewal-resource-${randomUUID()}`,
     VIBE64_RUNTIME_PACK_ROOT: path.join(targetRoot, "runtime-packs")
   };
+  const codexToolHomeSource = path.join(targetRoot, "codex-tool-home");
+  await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+  await writeFile(
+    path.join(codexToolHomeSource, ".codex", "auth.json"),
+    `${JSON.stringify({
+      OPENAI_API_KEY: "renewal-resource-proof-key",
+      auth_mode: "api_key"
+    })}\n`,
+    "utf8"
+  );
   const terminalService = createTerminalService({
     codexTerminalController: {
-      codexToolHomeRequired: false
+      codexToolHomeRequired: false,
+      codexToolHomeSource
     },
     env,
     projectService: commandProject

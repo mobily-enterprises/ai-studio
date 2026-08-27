@@ -32,6 +32,7 @@ import {
   codexTurnInput,
   currentCodexAccountIdentitySignature,
   ensureCodexAppServerRuntime,
+  readCodexSelectedAccountAccess,
   startCodexAppServerProcess,
   stopCodexAppServerRuntime
 } from "@local/vibe64-runtime/server/codexAppServerProvider";
@@ -2382,6 +2383,56 @@ test("Codex account identity signatures survive token refresh and change on acco
       toolHomeSource: apiKeyHome
     });
     assert.notEqual(secondApiKey, firstApiKey);
+  });
+});
+
+test("Codex access distinguishes account authentication from API keys without exposing secrets", async () => {
+  await withTemporaryDirectory(async (root) => {
+    const chatgptHome = path.join(root, "chatgpt-home");
+    await writeChatgptAuth(chatgptHome, {
+      accessToken: "first-private-access-token",
+      accountId: "account-one"
+    });
+    const account = await readCodexSelectedAccountAccess({ toolHomeSource: chatgptHome });
+    assert.equal(account.ownerOnly, true);
+    assert.equal(account.endpointCode, "codex_subscription");
+    assert.doesNotMatch(JSON.stringify(account), /first-private-access-token/u);
+
+    await writeChatgptAuth(chatgptHome, {
+      accessToken: "refreshed-private-access-token",
+      accountId: "account-one"
+    });
+    assert.deepEqual(
+      await readCodexSelectedAccountAccess({ toolHomeSource: chatgptHome }),
+      account
+    );
+
+    const apiKeyHome = path.join(root, "api-key-home");
+    await writeApiKeyAuth(apiKeyHome, "sk-private-selected-key");
+    const apiKey = await readCodexSelectedAccountAccess({ toolHomeSource: apiKeyHome });
+    assert.equal(apiKey.ownerOnly, false);
+    assert.equal(apiKey.endpointCode, "openai_api");
+    assert.doesNotMatch(JSON.stringify(apiKey), /sk-private-selected-key/u);
+
+    const factsOnlyHome = path.join(root, "facts-only-home");
+    await writeChatgptAuth(factsOnlyHome, {
+      accessToken: "token-that-facts-must-not-resolve",
+      accountId: "facts-only-account"
+    });
+    const factsOnlyAuthPath = path.join(factsOnlyHome, ".codex", "auth.json");
+    const factsOnlyAuth = JSON.parse(await readFile(factsOnlyAuthPath, "utf8"));
+    delete factsOnlyAuth.tokens.access_token;
+    await writeFile(factsOnlyAuthPath, `${JSON.stringify(factsOnlyAuth)}\n`);
+    const factsOnly = await readCodexSelectedAccountAccess({ toolHomeSource: factsOnlyHome });
+    assert.equal(factsOnly.ownerOnly, true);
+    assert.equal(factsOnly.endpointCode, "codex_subscription");
+    await assert.rejects(
+      currentCodexAccountIdentitySignature({
+        executionMode: "economy",
+        toolHomeSource: factsOnlyHome
+      }),
+      (error) => error.code === "vibe64_codex_economy_auth_invalid"
+    );
   });
 });
 

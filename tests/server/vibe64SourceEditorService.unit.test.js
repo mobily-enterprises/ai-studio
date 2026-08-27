@@ -126,6 +126,13 @@ async function createSourceEditorFixture({
 
   const fixtureTerminalService = {
     ...(terminalService || {}),
+    ...(typeof terminalService?.requireAssistantAccess === "function"
+      ? {}
+      : {
+          requireAssistantAccess() {
+            return { ok: true };
+          }
+        }),
     ...(typeof terminalService?.describeAgentProvider === "function"
       ? {}
       : {
@@ -1965,6 +1972,135 @@ test("source editor cache identity follows the resolved economy profile revision
     assert.equal(cachedReplacement.explanation.engine, "agent-cache");
     assert.equal(cachedReplacement.explanation.executionProfile.model, "gpt-5.4-nano");
     assert.equal(cachedReplacement.explanation.executionProfile.revision, "codex-economy-v3");
+  } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source explanation access denial precedes provider inspection, cache reuse, regeneration, streaming, and follow-ups", async () => {
+  let restricted = false;
+  let accessCalls = 0;
+  let providerCalls = 0;
+  let profileCalls = 0;
+  let generationCalls = 0;
+  let followupCalls = 0;
+  const fixture = await createSourceEditorFixture({
+    explanationFollowupGenerator() {
+      followupCalls += 1;
+      return "This follow-up must not run.";
+    },
+    explanationGenerator(_input, { context } = {}) {
+      generationCalls += 1;
+      return {
+        agentThreadId: `thread-restricted-${generationCalls}`,
+        agentTurnId: `turn-restricted-${generationCalls}`,
+        body: "Authorized explanation.",
+        engine: "agent-chat",
+        executionProfile: context.agentExecutionProfile,
+        messages: [],
+        model: context.agentExecutionProfile.model,
+        summary: "Authorized explanation.",
+        title: "Authorized explanation"
+      };
+    },
+    terminalService: {
+      describeAgentProvider() {
+        providerCalls += 1;
+        return {
+          accountIdentitySignature: "codex-account-restricted-cache",
+          providerId: "codex",
+          transportId: "codex_app_server"
+        };
+      },
+      requireAssistantAccess(sessionId, options) {
+        accessCalls += 1;
+        assert.equal(sessionId, "session-1");
+        assert.equal(options.vibe64User.username, "member");
+        if (restricted) {
+          const error = new Error("Only the workspace owner can use this personal AI connection.");
+          error.code = "vibe64_assistant_owner_required";
+          error.statusCode = 403;
+          throw error;
+        }
+        return { ok: true };
+      },
+      resolveAgentExecutionProfile() {
+        profileCalls += 1;
+        return resolvedSourceExplanationProfile();
+      }
+    }
+  });
+  const request = (explanationId, extra = {}) => ({
+    endColumn: 20,
+    endLine: 1,
+    explanationId,
+    path: "src/app.js",
+    sessionId: "session-1",
+    startColumn: 1,
+    startLine: 1,
+    vibe64User: { username: "member" },
+    ...extra
+  });
+  try {
+    const created = await fixture.service.explainSelection(request("exp_restricted_initial"));
+    assert.equal(created.ok, true);
+    assert.equal(generationCalls, 1);
+    assert.equal(providerCalls > 0, true);
+    assert.equal(profileCalls > 0, true);
+    const authorizedProviderCalls = providerCalls;
+    const authorizedProfileCalls = profileCalls;
+
+    restricted = true;
+    const cached = await fixture.service.explainSelection(request("exp_restricted_cached"));
+    const regenerated = await fixture.service.explainSelection(request(
+      "exp_restricted_regenerated",
+      { force: true }
+    ));
+    assert.equal(cached.ok, false);
+    assert.equal(cached.code, "vibe64_assistant_owner_required");
+    assert.equal(regenerated.ok, false);
+    assert.equal(regenerated.code, "vibe64_assistant_owner_required");
+
+    const explanationEvents = [];
+    await fixture.service.streamExplanation(request("exp_restricted_stream"), {
+      emit(event) {
+        explanationEvents.push(event);
+      },
+      isClosed: () => false
+    });
+    assert.equal(explanationEvents.at(-1).code, "vibe64_assistant_owner_required");
+
+    const followup = await fixture.service.addExplanationFollowup({
+      explanationId: created.explanation.id,
+      message: "Why?",
+      sessionId: "session-1",
+      vibe64User: { username: "member" }
+    });
+    assert.equal(followup.ok, false);
+    assert.equal(followup.code, "vibe64_assistant_owner_required");
+
+    const followupEvents = [];
+    await fixture.service.streamExplanationFollowup({
+      explanationId: created.explanation.id,
+      message: "Why?",
+      sessionId: "session-1",
+      vibe64User: { username: "member" }
+    }, {
+      emit(event) {
+        followupEvents.push(event);
+      },
+      isClosed: () => false
+    });
+    assert.equal(followupEvents.at(-1).code, "vibe64_assistant_owner_required");
+
+    assert.equal(accessCalls, 6);
+    assert.equal(providerCalls, authorizedProviderCalls);
+    assert.equal(profileCalls, authorizedProfileCalls);
+    assert.equal(generationCalls, 1);
+    assert.equal(followupCalls, 0);
   } finally {
     await rm(fixture.root, {
       force: true,

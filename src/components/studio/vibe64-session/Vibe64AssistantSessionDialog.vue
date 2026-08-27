@@ -30,6 +30,27 @@
           </template>
         </p>
 
+        <v-skeleton-loader
+          v-if="editing && accessLoading"
+          aria-label="Loading AI access"
+          class="vibe64-assistant-dialog__access"
+          type="list-item-avatar-two-line"
+        />
+
+        <v-alert
+          v-else-if="editing && normalizedAccessLabel"
+          class="vibe64-assistant-dialog__access"
+          :color="normalizedAccessLabel === 'Workspace use' ? 'success' : 'warning'"
+          density="compact"
+          :icon="normalizedAccessLabel === 'Workspace use' ? mdiAccountMultipleOutline : mdiLockOutline"
+          variant="tonal"
+        >
+          <div class="vibe64-assistant-dialog__access-copy">
+            <strong>{{ normalizedAccessLabel }}</strong>
+            <span>{{ accessSummary }}</span>
+          </div>
+        </v-alert>
+
         <div v-if="overviewLoading" class="vibe64-assistant-dialog__engine-grid" aria-label="Loading AI engines">
           <v-skeleton-loader
             v-for="index in 2"
@@ -281,6 +302,7 @@
 <script setup>
 import { computed, nextTick, onScopeDispose, ref, watch } from "vue";
 import {
+  mdiAccountMultipleOutline,
   mdiCheck,
   mdiCheckCircleOutline,
   mdiChevronUp,
@@ -288,6 +310,7 @@ import {
   mdiCodeBraces,
   mdiCreationOutline,
   mdiKeyOutline,
+  mdiLockOutline,
   mdiMagnify,
   mdiTuneVariant
 } from "@mdi/js";
@@ -296,6 +319,14 @@ import { useVibe64AssistantCatalog } from "@/composables/useVibe64AssistantCatal
 import { requestVibe64AccountConnectionsDialog } from "@/lib/vibe64AccountConnectionsDialog.js";
 
 const props = defineProps({
+  accessLoading: {
+    default: false,
+    type: Boolean
+  },
+  accessLabel: {
+    default: "",
+    type: String
+  },
   engineLocked: {
     default: false,
     type: Boolean
@@ -410,6 +441,12 @@ const canSubmit = computed(() => Boolean(
 ));
 const submitting = computed(() => (
   props.submitRunning === true || props.toolbar.createSessionRunning === true
+));
+const normalizedAccessLabel = computed(() => String(props.accessLabel || "").trim());
+const accessSummary = computed(() => (
+  normalizedAccessLabel.value === "Workspace use"
+    ? "Authorized workspace members may use this owner-configured API connection."
+    : "Only the workspace owner may use this subscription or plan-quota connection."
 ));
 const selectionSummary = computed(() => [
   selectedOverviewEngine.value?.label,
@@ -673,6 +710,11 @@ onScopeDispose(() => {
   color: rgba(var(--v-theme-on-surface), 0.7);
   line-height: 1.45;
   margin: 0;
+}
+
+.vibe64-assistant-dialog__access-copy {
+  display: grid;
+  gap: 0.15rem;
 }
 
 .vibe64-assistant-dialog__engine-grid {

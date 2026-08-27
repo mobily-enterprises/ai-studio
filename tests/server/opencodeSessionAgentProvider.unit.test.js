@@ -22,11 +22,15 @@ const selection = Object.freeze({
   schema: "vibe64.assistant-selection.v1",
   variantId: "high"
 });
+const assistantAccess = Object.freeze({
+  economyModelId: "deepseek-chat"
+});
 
 test("OpenCode resolves every Vibe64 helper workload to the selected model and a deny-all policy", () => {
   for (const workloadId of Object.values(VIBE64_AGENT_EXECUTION_WORKLOAD_IDS)) {
     const profile = resolveOpenCodeEconomyExecutionProfile({
-      assistantSelection: selection
+      assistantSelection: selection,
+      assistantAccess
     }, {
       profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
       workloadId
@@ -35,7 +39,7 @@ test("OpenCode resolves every Vibe64 helper workload to the selected model and a
     assert.equal(profile.workloadId, workloadId);
     assert.equal(profile.providerId, VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE);
     assert.equal(profile.model, "deepseek-chat");
-    assert.equal(profile.thinking, "high");
+    assert.equal(profile.thinking, "");
     assert.equal(profile.revision, OPENCODE_ECONOMY_PROFILE_REVISION);
     assert.deepEqual(profile.policy, {
       environmentAccess: false,
@@ -50,6 +54,7 @@ test("OpenCode resolves every Vibe64 helper workload to the selected model and a
 test("OpenCode refuses helper profiles without its durable provider and model selection", () => {
   assert.throws(
     () => resolveOpenCodeEconomyExecutionProfile({
+      assistantAccess,
       assistantSelection: { ...selection, engineId: "codex" }
     }, {
       profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
@@ -74,13 +79,15 @@ test("OpenCode provider advertises and audits its helper execution profile on tu
   };
   const provider = createOpenCodeSessionAgentProvider({ controller });
   const profile = resolveOpenCodeEconomyExecutionProfile({
-    assistantSelection: selection
+    assistantSelection: selection,
+    assistantAccess
   }, {
     profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
     workloadId: VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.COMMIT_TITLE
   });
   const result = await provider.runDetachedChatTurn({
     assistantSelection: selection,
+    assistantAccess,
     onEvent: (event) => events.push(event),
     runtime: { stateRoot: "/runtime" },
     session: { sessionId: "session-1" },

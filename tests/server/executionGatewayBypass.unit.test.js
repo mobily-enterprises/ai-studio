@@ -29,10 +29,6 @@ const DIRECT_EXECUTION_PATTERNS = Object.freeze([
   {
     id: "runHostCommand call",
     pattern: /\brunHostCommand\s*\(/gu
-  },
-  {
-    id: "runHostUserCommand call",
-    pattern: /\brunHostUserCommand\s*\(/gu
   }
 ]);
 

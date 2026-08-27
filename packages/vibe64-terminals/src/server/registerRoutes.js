@@ -220,8 +220,8 @@ function registerRoutes(
 
   routes.serviceRoute("POST", "/codex-terminal", {
     summary: "Start a global Vibe64 Codex terminal."
-  }, () => {
-    return terminalService().startGlobalCodexTerminal();
+  }, (request) => {
+    return terminalService().startGlobalCodexTerminal(withVibe64User(request));
   });
 
   routes.serviceRoute("POST", "/agent-sessions/reconcile", {
@@ -445,7 +445,7 @@ function registerRoutes(
     read: (terminalSessionId) => terminalService().readGlobalCodexTerminal(terminalSessionId),
     readSummary: "Read a global Vibe64 Codex terminal snapshot.",
     closeSummary: "Close a global Vibe64 Codex terminal.",
-    write: (terminalSessionId, data) => terminalService().writeGlobalCodexTerminal(terminalSessionId, data)
+    write: (terminalSessionId, data, input) => terminalService().writeGlobalCodexTerminal(terminalSessionId, data, input)
   });
 
   registerVibe64TerminalWebSocketRoutes(fastify, routes, terminals, {
@@ -539,10 +539,10 @@ function terminalRouteInput(request, input = {}) {
 }
 
 function globalTerminalRouteInput(request, input = {}) {
-  return {
+  return withVibe64User(request, {
     ...(input && typeof input === "object" && !Array.isArray(input) ? input : {}),
     terminalSessionId: request.params.terminalSessionId
-  };
+  });
 }
 
 function registerTerminalSnapshotRoutes(routes, {
@@ -615,7 +615,7 @@ function registerGlobalTerminalSnapshotRoutes(routes, {
       path,
       read: (input) => read(input.terminalSessionId),
       write: write
-        ? (input, data) => write(input.terminalSessionId, data)
+        ? (input, data) => write(input.terminalSessionId, data, input)
         : null
     });
   }
@@ -704,8 +704,12 @@ function registerVibe64TerminalWebSocketRoutes(fastify, routes, terminals, {
     resize(service, { cols, rows, terminalSessionId }) {
       return service.resizeGlobalCodexTerminal(terminalSessionId, { cols, rows });
     },
-    write(service, { data, terminalSessionId }) {
-      return service.writeGlobalCodexTerminal(terminalSessionId, data);
+    write(service, { data, request, terminalSessionId }) {
+      return service.writeGlobalCodexTerminal(
+        terminalSessionId,
+        data,
+        withVibe64User(request)
+      );
     }
   });
 

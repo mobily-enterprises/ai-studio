@@ -410,6 +410,7 @@ function createSessionPromptHintsService({
   diagnostic = null,
   interruptAgentTurn,
   now = () => Date.now(),
+  requireAssistantAccess,
   projectService,
   readBlueprintText = readPromptHintBlueprint,
   resolveExecutionProfile,
@@ -423,6 +424,7 @@ function createSessionPromptHintsService({
     deleteAgentThread,
     describeProvider,
     interruptAgentTurn,
+    requireAssistantAccess,
     resolveExecutionProfile,
     runAgentTurn
   })) {
@@ -905,6 +907,16 @@ function createSessionPromptHintsService({
         basis: snapshot.basis,
         suggestions: promptHintStaticSuggestions(context)
       });
+    }
+
+    try {
+      await requireAssistantAccess(sessionId, agentOptions(context, vibe64User));
+    } catch (error) {
+      if (request.cancelled) {
+        return promptHintResponse("cancelled", { basis: snapshot.basis });
+      }
+      reportDiagnostic("vibe64_prompt_hints_access_restricted", error, { sessionId });
+      return promptHintResponse("unavailable", { basis: snapshot.basis });
     }
 
     let identity = null;

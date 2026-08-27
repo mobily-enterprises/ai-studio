@@ -1086,3 +1086,90 @@ test("session agent manager surfaces required Codex authentication before econom
   );
   assert.equal(detachedTurns, 0);
 });
+
+test("session agent manager gates AI work with only the current connection's ownerOnly flag", async () => {
+  async function run({ ownerOnly, role }) {
+    let descriptions = 0;
+    let sends = 0;
+    const manager = createSessionAgentManager({
+      readAssistantAccess: async () => ({ ownerOnly }),
+      providers: [{
+        id: "codex",
+        transportId: "codex_app_server",
+        async describeProvider() {
+          descriptions += 1;
+          return {};
+        },
+        async sendMessage() {
+          sends += 1;
+          return { delivered: true, ok: true };
+        }
+      }]
+    });
+    const options = { vibe64User: { role, username: role } };
+    return {
+      access: await manager.assistantAccess("session-1", options),
+      descriptions: () => descriptions,
+      manager,
+      options,
+      sends: () => sends
+    };
+  }
+
+  for (const example of [
+    { allowed: true, ownerOnly: false, role: "owner" },
+    { allowed: true, ownerOnly: false, role: "user" },
+    { allowed: true, ownerOnly: true, role: "owner" },
+    { allowed: false, ownerOnly: true, role: "user" }
+  ]) {
+    const harness = await run(example);
+    assert.equal(harness.access.canUse, example.allowed);
+    assert.equal(
+      harness.access.canRequestMessage,
+      example.ownerOnly && example.role !== "owner"
+    );
+    if (example.allowed) {
+      await harness.manager.sendMessage("session-1", { message: "Hello" }, harness.options);
+      assert.equal(harness.sends(), 1);
+    } else {
+      await assert.rejects(
+        harness.manager.describeProvider({
+          ...harness.options,
+          session: { sessionId: "session-1" }
+        }),
+        (error) => error.code === "vibe64_assistant_owner_required"
+      );
+      await assert.rejects(
+        harness.manager.sendMessage("session-1", { message: "Hello" }, harness.options),
+        (error) => error.code === "vibe64_assistant_owner_required"
+      );
+      assert.equal(harness.descriptions(), 0);
+      assert.equal(harness.sends(), 0);
+    }
+  }
+});
+
+test("session agent manager leaves non-AI reads and cleanup available on personal connections", async () => {
+  const calls = [];
+  const manager = createSessionAgentManager({
+    readAssistantAccess: async () => ({ ownerOnly: true }),
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server",
+      async closeSession() {
+        calls.push("close");
+        return { closed: true, ok: true };
+      },
+      async readConversation() {
+        calls.push("read");
+        return { messages: [], ok: true };
+      }
+    }]
+  });
+  const options = { vibe64User: { role: "user", username: "member" } };
+
+  await manager.readConversation("session-1", {}, options);
+  await manager.closeSession("session-1", options);
+
+  assert.deepEqual(calls, ["read", "close"]);
+});

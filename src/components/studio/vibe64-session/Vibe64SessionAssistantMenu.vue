@@ -14,6 +14,8 @@
 
   <Vibe64AssistantSessionDialog
     v-model="open"
+    :access-label="accessLabel"
+    :access-loading="accessLoading"
     engine-locked
     :initial-selection="assistantSelection"
     mode="edit"
@@ -38,9 +40,21 @@ import {
 } from "@/lib/vibe64SessionRequestConfig.js";
 
 const props = defineProps({
+  accessLoading: {
+    default: false,
+    type: Boolean
+  },
+  accessLabel: {
+    default: "",
+    type: String
+  },
   disabled: {
     default: false,
     type: Boolean
+  },
+  disabledReason: {
+    default: "",
+    type: String
   },
   session: {
     default: null,
@@ -55,7 +69,12 @@ const props = defineProps({
 const open = ref(false);
 const saving = ref(false);
 const assistantSelection = computed(() => props.session?.assistantSelection || null);
+const accessLabel = computed(() => String(props.accessLabel || "").trim());
 const buttonTitle = computed(() => {
+  const disabledReason = String(props.disabledReason || "").trim();
+  if (props.disabled && disabledReason) {
+    return disabledReason;
+  }
   const selection = assistantSelection.value || {};
   return [
     "AI session settings",
@@ -63,7 +82,7 @@ const buttonTitle = computed(() => {
     selection.modelProviderId,
     selection.modelId,
     selection.variantId
-  ].filter(Boolean).join(": ");
+  ].filter(Boolean).join(": ") + (accessLabel.value ? ` · ${accessLabel.value}` : "");
 });
 const updateCommand = useCommand({
   access: "never",

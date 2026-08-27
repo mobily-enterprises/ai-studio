@@ -856,6 +856,14 @@ test("database service is owner-only and routes read-only SQL through the reader
       assistantDeletions.push({ input, options, sessionId });
       return { deleted: true, ok: true };
     },
+    async requireAssistantAccess(sessionId, options) {
+      assert.equal(sessionId, "service-session");
+      assert.deepEqual(options.vibe64User, {
+        role: "owner",
+        username: "owner"
+      });
+      return { ok: true };
+    },
     async runDetachedAgentChatTurn(sessionId, input, options) {
       assistantTurns.push({ input, options, sessionId });
       options.onEvent({
@@ -1004,6 +1012,96 @@ test("database service is owner-only and routes read-only SQL through the reader
   assert.equal(refreshed.ok, true);
   assert.equal(environments.at(-1), "reader");
   await service.close();
+});
+
+test("database assistant denial happens before schema inspection or its read-query loop", async () => {
+  let artifactReads = 0;
+  let databaseConnections = 0;
+  let providerCalls = 0;
+  const store = {
+    async readArtifact() {
+      artifactReads += 1;
+      return JSON.stringify(testSchema());
+    },
+    async readSession(sessionId) {
+      return {
+        metadata: {
+          assistant_selection: JSON.stringify({
+            agentId: "build",
+            catalogRevision: `sha256:${"c".repeat(64)}`,
+            engineId: "opencode",
+            modelId: "deepseek-chat",
+            modelProviderId: "deepseek",
+            schema: "vibe64.assistant-selection.v1",
+            variantId: ""
+          })
+        },
+        sessionId
+      };
+    }
+  };
+  const denied = new Error("This AI connection is unavailable.");
+  denied.code = "vibe64_assistant_owner_required";
+  denied.statusCode = 403;
+  const service = createDatabaseService({
+    projectService: {
+      async createSessionStore() {
+        return store;
+      },
+      async sessionDatabaseEnvironment() {
+        return {
+          databaseToolEnvironment: {
+            contract: "vibe64.database-tool-environment.v1",
+            kind: "postgresql",
+            read: {
+              database: "catalogue",
+              host: "127.0.0.1",
+              password: "reader-secret",
+              port: 5432,
+              username: "reader"
+            },
+            write: {
+              database: "catalogue",
+              host: "127.0.0.1",
+              password: "writer-secret",
+              port: 5432,
+              username: "writer"
+            }
+          },
+          developmentDatabaseScope: "session",
+          source: { label: "Session source" }
+        };
+      }
+    },
+    terminalService: {
+      async deleteDetachedAgentChatThread() {
+        providerCalls += 1;
+      },
+      async requireAssistantAccess(sessionId, options) {
+        assert.equal(sessionId, "service-session");
+        assert.equal(options.vibe64User.username, "owner");
+        throw denied;
+      },
+      async runDetachedAgentChatTurn() {
+        providerCalls += 1;
+      }
+    },
+    async withKnex() {
+      databaseConnections += 1;
+    }
+  });
+
+  const result = await service.askAssistant({
+    messages: [{ content: "Describe the catalogue.", role: "user" }],
+    sessionId: "service-session",
+    vibe64User: { role: "owner", username: "owner" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_assistant_owner_required");
+  assert.equal(artifactReads, 0);
+  assert.equal(databaseConnections, 0);
+  assert.equal(providerCalls, 0);
 });
 
 test("database service replaces a schema snapshot owned by a different database", async () => {

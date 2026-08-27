@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTION_APPROVE_MESSAGE_SUGGESTION,
   ACTION_CANCEL_SESSION_RENEWAL,
   ACTION_CONFIRM_SESSION_RENEWAL,
   ACTION_INSPECT_REPOSITORY_HISTORY,
@@ -9,6 +10,8 @@ import {
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
   ACTION_ABANDON_SESSION,
   ACTION_CREATE_SESSION,
+  ACTION_DISCARD_MESSAGE_SUGGESTION,
+  ACTION_INSPECT_ASSISTANT_ACCESS,
   ACTION_INSPECT_SESSION,
   ACTION_INSPECT_SESSION_RENEWAL,
   ACTION_INSPECT_SESSION_CHANGE_DIFF,
@@ -16,6 +19,7 @@ import {
   ACTION_INSPECT_SESSION_WORK,
   ACTION_LIST_ASSISTANT_CAPABILITIES,
   ACTION_LIST_SESSIONS,
+  ACTION_LIST_MESSAGE_SUGGESTIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_REQUEST_SESSION_RENEWAL_DRAFT,
   ACTION_RETRY_SESSION_RENEWAL,
@@ -28,8 +32,10 @@ import {
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,
   ACTION_SEND_AGENT_MESSAGE,
+  ACTION_SUGGEST_AGENT_MESSAGE,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
+  ACTION_WITHDRAW_MESSAGE_SUGGESTION,
   createSessionActions
 } from "../../packages/vibe64-sessions/src/server/actions.js";
 import {
@@ -125,8 +131,10 @@ function sessionCreationPolicyHarness({
   beforeCreate = async () => {},
   initialSessions = [],
   managed = true,
+  requireAssistantSelectionAccess = async () => ({ ok: true }),
   publishSessionChanged = async () => {},
   projectRuntimeRoot: runtimeRoot,
+  resolveAssistantSelection = null,
   scope = "session",
   startWorkspaceSetup = () => ({ completion: null })
 } = {}) {
@@ -135,6 +143,7 @@ function sessionCreationPolicyHarness({
     ...session
   }));
   const creationInputs = [];
+  let runtimeCreations = 0;
   let nextSession = openSessions.length + 1;
   const runtime = {
     store: {
@@ -167,6 +176,7 @@ function sessionCreationPolicyHarness({
   };
   const project = {
     async createRuntime() {
+      runtimeCreations += 1;
       return runtime;
     },
     async developmentDatabasePolicy({ openSessions: currentSessions = [] } = {}) {
@@ -183,7 +193,12 @@ function sessionCreationPolicyHarness({
   const service = createService({
     project,
     publishSessionChanged,
-    terminals: {},
+    terminals: {
+      requireAssistantSelectionAccess,
+      ...(typeof resolveAssistantSelection === "function"
+        ? { resolveAssistantSelection }
+        : {})
+    },
     workspaceSetupRunner: {
       isRunning: () => false,
       start: startWorkspaceSetup,
@@ -194,6 +209,9 @@ function sessionCreationPolicyHarness({
     creationInputs,
     openSessions,
     project,
+    get runtimeCreations() {
+      return runtimeCreations;
+    },
     runtime,
     service
   };
@@ -226,6 +244,12 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_RETRY_WORKSPACE_SETUP,
     ACTION_ABANDON_SESSION,
     ACTION_SEND_AGENT_MESSAGE,
+    ACTION_INSPECT_ASSISTANT_ACCESS,
+    ACTION_LIST_MESSAGE_SUGGESTIONS,
+    ACTION_SUGGEST_AGENT_MESSAGE,
+    ACTION_WITHDRAW_MESSAGE_SUGGESTION,
+    ACTION_APPROVE_MESSAGE_SUGGESTION,
+    ACTION_DISCARD_MESSAGE_SUGGESTION,
     ACTION_INTERRUPT_AGENT_TURN,
     ACTION_UPDATE_SESSION_PRESENCE,
     ACTION_BROADCAST_SESSION_PREVIEW_STATE
@@ -568,6 +592,9 @@ test("session work inspection returns operations read after repository inspectio
       }
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async inspectSessionWork() {
         saveTask = {
           id: "save-work",
@@ -699,6 +726,9 @@ test("work inspection recovers an interrupted prepared Update and advances its b
       }
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async inspectSessionWork() {
         return { unsaved: true };
       },
@@ -769,6 +799,9 @@ test("work inspection observes a live Save without mistaking it for an interrupt
       }
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async inspectSessionWork() {
         return { unsaved: true };
       },
@@ -801,6 +834,58 @@ test("work inspection observes a live Save without mistaking it for an interrupt
   assert.equal(saved.operation.status, "ready");
 });
 
+test("Save access denial happens before commit naming or durable Save state", async () => {
+  const taskEvents = [];
+  const metadataWrites = [];
+  let saveCalls = 0;
+  const denied = new Error("Only the workspace owner can use this personal AI connection.");
+  denied.code = "vibe64_assistant_owner_required";
+  denied.statusCode = 403;
+  const runtime = {
+    async getSession() {
+      return { agentRuns: [], sessionId: "session-1", status: "active" };
+    },
+    store: {
+      async writeBackgroundTaskEvent(...args) {
+        taskEvents.push(args);
+      },
+      async writeMetadataValue(...args) {
+        metadataWrites.push(args);
+      }
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async requireAssistantAccess(sessionId, options) {
+        assert.equal(sessionId, "session-1");
+        assert.equal(options.runtime, runtime);
+        assert.equal(options.session.sessionId, "session-1");
+        assert.equal(options.vibe64User.username, "member");
+        throw denied;
+      },
+      async saveSessionWork() {
+        saveCalls += 1;
+        throw new Error("Save must not start after authorization denial.");
+      }
+    }
+  });
+
+  const result = await service.saveSessionWork("session-1", {
+    vibe64User: { username: "member" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_assistant_owner_required");
+  assert.equal(saveCalls, 0);
+  assert.deepEqual(taskEvents, []);
+  assert.deepEqual(metadataWrites, []);
+});
+
 test("Save authority races become a ready update requirement rather than an AI failure", async () => {
   let backgroundTask = { id: "save-work", status: "ready" };
   const publications = [];
@@ -830,6 +915,9 @@ test("Save authority races become a ready update requirement rather than an AI f
       publications.push(change);
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async saveSessionWork(_sessionId, input) {
         await input.onRepositoryWriteAcquired();
         const error = new Error("The saved project changed. Update this session (rebase).");
@@ -896,6 +984,9 @@ test("native Save persists bounded progress and advances the session base only a
       publications.push(args);
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async saveSessionWork(sessionId, input) {
         assert.equal(sessionId, "session-1");
         await input.onRepositoryWriteAcquired();
@@ -986,6 +1077,9 @@ test("native Save persists its semantic commit-title profile across a durable ta
         }
       },
       terminals: {
+        async requireAssistantAccess() {
+          return { ok: true };
+        },
         async saveSessionWork(_sessionId, input) {
           await input.onRepositoryWriteAcquired();
           await input.onProgress({
@@ -1061,6 +1155,9 @@ test("a successful Save keeps mirror maintenance failure as a visible retryable 
     },
     async publishSessionChanged() {},
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async saveSessionWork(_sessionId, input) {
         await input.onRepositoryWriteAcquired();
         await input.onProgress({
@@ -1136,6 +1233,9 @@ test("a reconciled Save supersedes an older failed session update", async () => 
       }
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async saveSessionWork(_sessionId, input) {
         await input.onRepositoryWriteAcquired();
         return {
@@ -1613,6 +1713,9 @@ test("native Save rejects every active provider state before touching Git", asyn
       }
     },
     terminals: {
+      async requireAssistantAccess() {
+        return { ok: true };
+      },
       async saveSessionWork() {
         saveCalls += 1;
         const error = new Error("Wait for the assistant turn to finish before saving this session's work.");
@@ -1686,7 +1789,11 @@ test("live workspace preparation prevents retry and close races", async () => {
         };
       }
     },
-    terminals: {},
+    terminals: {
+      async requireAssistantSelectionAccess() {
+        return { ok: true };
+      }
+    },
     workspaceSetupRunner: {
       isRunning: () => true,
       start() {
@@ -2069,6 +2176,128 @@ test("closing a source-creation failure does not release resources that were nev
   assert.deepEqual(calls, ["closing", "terminals", "abandon"]);
 });
 
+test("session creation resolves a partial selection before checking access", async () => {
+  let catalogResolutions = 0;
+  const resolvedSelection = {
+    agentId: "codex",
+    catalogRevision: "sha256:cd4f63e20cf4c9a130dc9581a295517e1273bc501b166d9d4a0ba8e6bec54729",
+    engineId: "codex",
+    modelId: VIBE64_CODEX_DEFAULT_MODEL,
+    modelProviderId: "openai",
+    schema: "vibe64.assistant-selection.v1",
+    variantId: VIBE64_CODEX_DEFAULT_THINKING
+  };
+  const denied = new Error("Only the workspace owner can use this personal AI connection.");
+  denied.code = "vibe64_assistant_owner_required";
+  denied.statusCode = 403;
+  const harness = sessionCreationPolicyHarness({
+    async requireAssistantSelectionAccess(selection, options) {
+      assert.deepEqual(selection, resolvedSelection);
+      assert.equal(options.vibe64User.username, "member");
+      throw denied;
+    },
+    async resolveAssistantSelection(selection) {
+      catalogResolutions += 1;
+      assert.deepEqual(selection, { engineId: "codex" });
+      return resolvedSelection;
+    }
+  });
+
+  const result = await harness.service.createSession({
+    vibe64User: { username: "member" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_assistant_owner_required");
+  assert.equal(catalogResolutions, 1);
+  assert.equal(harness.runtimeCreations, 0);
+  assert.equal(harness.creationInputs.length, 0);
+  assert.equal(harness.openSessions.length, 0);
+});
+
+test("assistant selection resolves partial UI input before checking access", async () => {
+  const lock = agentWriteLockHarness();
+  const metadataWrites = [];
+  let agentStateCalls = 0;
+  let catalogResolutions = 0;
+  const currentSelection = {
+    agentId: "codex",
+    catalogRevision: "sha256:cd4f63e20cf4c9a130dc9581a295517e1273bc501b166d9d4a0ba8e6bec54729",
+    engineId: "codex",
+    modelId: VIBE64_CODEX_DEFAULT_MODEL,
+    modelProviderId: "openai",
+    schema: "vibe64.assistant-selection.v1",
+    variantId: VIBE64_CODEX_DEFAULT_THINKING
+  };
+  const session = {
+    metadata: {
+      assistant_selection: JSON.stringify(currentSelection)
+    },
+    sessionId: "session-1",
+    status: "active"
+  };
+  const requestedSelection = {
+    ...currentSelection,
+    modelId: "gpt-5.6-codex"
+  };
+  const denied = new Error("Only the workspace owner can use this personal AI connection.");
+  denied.code = "vibe64_assistant_owner_required";
+  denied.statusCode = 403;
+  const runtime = {
+    async getSession() {
+      return session;
+    },
+    store: {
+      ...lock.store,
+      async writeMetadataValue(...args) {
+        metadataWrites.push(args);
+      }
+    }
+  };
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return runtime;
+      }
+    },
+    terminals: {
+      async agentSessionState() {
+        agentStateCalls += 1;
+        return null;
+      },
+      async requireAssistantAccess(sessionId, options) {
+        assert.equal(sessionId, "session-1");
+        assert.equal(options.vibe64User.username, "member");
+        return { ownerOnly: false };
+      },
+      async requireAssistantSelectionAccess(selection, options) {
+        assert.deepEqual(selection, requestedSelection);
+        assert.equal(options.vibe64User.username, "member");
+        throw denied;
+      },
+      async resolveAssistantSelection(selection) {
+        catalogResolutions += 1;
+        assert.deepEqual(selection, {
+          engineId: "codex",
+          modelId: requestedSelection.modelId
+        });
+        return requestedSelection;
+      }
+    }
+  });
+
+  const result = await service.updateAssistantSelection("session-1", {
+    assistantSelection: { modelId: requestedSelection.modelId },
+    vibe64User: { username: "member" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_assistant_owner_required");
+  assert.equal(catalogResolutions, 1);
+  assert.equal(agentStateCalls, 0);
+  assert.deepEqual(metadataWrites, []);
+});
+
 test("session responses enforce the ordinary three-session policy on the server", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const harness = sessionCreationPolicyHarness({
@@ -2371,7 +2600,11 @@ test("new sessions publish running workspace preparation and its eventual result
     async publishSessionChanged(...args) {
       publications.push(args);
     },
-    terminals: {},
+    terminals: {
+      async requireAssistantSelectionAccess() {
+        return { ok: true };
+      }
+    },
     workspaceSetupRunner: {
       isRunning: () => true,
       start() {

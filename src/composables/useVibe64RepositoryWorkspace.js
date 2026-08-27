@@ -489,6 +489,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     const requestSaveWork = context.value.requestSaveWork;
     if (
       !sessionId.value ||
+      context.value.assistantDirectAllowed === false ||
       sourceOperationsSuspended.value ||
       saving.value ||
       updates.checking ||

@@ -119,6 +119,9 @@ async function controllerHarness({ withCommandBoundary = false } = {}) {
   };
   const connection = {
     apiKey: "deepseek-key-one",
+    canonicalUrl: "https://api.deepseek.com",
+    economyModelId: "deepseek-chat",
+    endpointCode: "deepseek_api",
     fingerprint: `sha256:${"1".repeat(64)}`,
     modelProviderId: "deepseek",
     providerRevision
@@ -391,6 +394,9 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     assistantSelection: {
       ...harness.selection,
       schema: "vibe64.assistant-selection.v1"
+    },
+    assistantAccess: {
+      economyModelId: harness.connection.economyModelId
     }
   }, {
     profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
@@ -420,16 +426,14 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
   assert.equal(helperSession.agent, OPENCODE_ECONOMY_AGENT_ID);
   assert.deepEqual(helperSession.model, {
     id: "deepseek-chat",
-    providerID: "deepseek",
-    variant: "high"
+    providerID: "deepseek"
   });
   assert.equal(result.text, '{"subject":"Add durable OpenCode sessions"}');
   const helperPrompt = harness.promptCalls.find((entry) => entry.id === result.threadId).input;
   assert.equal(helperPrompt.agent, OPENCODE_ECONOMY_AGENT_ID);
   assert.deepEqual(helperPrompt.model, {
     id: "deepseek-chat",
-    providerID: "deepseek",
-    variant: "high"
+    providerID: "deepseek"
   });
   assert.match(helperPrompt.prompt.text, /Return only one JSON value matching this JSON Schema/u);
   assert.match(helperPrompt.prompt.text, /"required":\["subject"\]/u);

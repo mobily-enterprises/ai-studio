@@ -12,6 +12,7 @@ import {
   OPENCODE_ECONOMY_AGENT_ID,
   OPENCODE_EXPECTED_VERSION,
   createOpenCodeServerProcess,
+  openCodeInlineConfig,
   safeOpenCodeEnvironment
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
 
@@ -54,6 +55,60 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
     mode: "primary",
     permission: { "*": "deny" }
   });
+});
+
+test("OpenCode forces Z.AI API and Coding Plan through distinct canonical billing routes", () => {
+  const standard = JSON.parse(openCodeInlineConfig({
+    canonicalUrl: "https://api.z.ai/api/paas/v4",
+    modelProviderId: "zai"
+  }));
+  const codingPlan = JSON.parse(openCodeInlineConfig({
+    canonicalUrl: "https://api.z.ai/api/coding/paas/v4",
+    modelProviderId: "zai-coding-plan"
+  }));
+
+  assert.deepEqual(Object.keys(standard.provider), ["zai"]);
+  assert.equal(
+    standard.provider.zai.options.baseURL,
+    "https://api.z.ai/api/paas/v4"
+  );
+  assert.deepEqual(Object.keys(codingPlan.provider), ["zai-coding-plan"]);
+  assert.equal(
+    codingPlan.provider["zai-coding-plan"].options.baseURL,
+    "https://api.z.ai/api/coding/paas/v4"
+  );
+  assert.notDeepEqual(standard.provider, codingPlan.provider);
+});
+
+test("OpenCode route configuration contains one provider and no inherited provider keys", () => {
+  const env = safeOpenCodeEnvironment({
+    ANTHROPIC_API_KEY: "must-not-leak",
+    DEEPSEEK_API_KEY: "must-not-leak",
+    OPENAI_API_KEY: "must-not-leak",
+    ZHIPU_API_KEY: "must-not-leak"
+  }, {
+    canonicalUrl: "https://api.z.ai/api/coding/paas/v4",
+    dbPath: "/state/opencode.sqlite",
+    modelProviderId: "zai-coding-plan",
+    password: "loopback-password",
+    privateRoot: "/private/session"
+  });
+  const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+
+  assert.deepEqual(Object.keys(config.provider), ["zai-coding-plan"]);
+  assert.equal(
+    config.provider["zai-coding-plan"].options.baseURL,
+    "https://api.z.ai/api/coding/paas/v4"
+  );
+  for (const name of [
+    "ANTHROPIC_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENAI_API_KEY",
+    "ZHIPU_API_KEY"
+  ]) {
+    assert.equal(env[name], undefined);
+  }
+  assert.equal(JSON.stringify(env).includes("must-not-leak"), false);
 });
 
 test("OpenCode child cleanup terminates its detached process group", async () => {

@@ -311,6 +311,30 @@ async function readCodexSelectedAccountAuth(options = {}) {
   );
 }
 
+async function readCodexSelectedAccountAccess(options = {}) {
+  const toolHomeSource = normalizeAgentText(options.toolHomeSource);
+  if (!toolHomeSource || !path.isAbsolute(toolHomeSource)) {
+    throw codexAppServerEconomyAuthError(
+      "vibe64_codex_economy_auth_unavailable",
+      "The selected Codex account is unavailable. Reconnect Codex and retry."
+    );
+  }
+  const auth = await readBoundedCodexAuthJson(path.join(toolHomeSource, ".codex", "auth.json"));
+  const authMode = normalizeAgentText(auth.auth_mode).toLowerCase();
+  if (!["chatgpt", "apikey", "api_key"].includes(authMode)) {
+    throw codexAppServerEconomyAuthError(
+      "vibe64_codex_economy_auth_invalid",
+      "The selected Codex authentication mode is unsupported. Reconnect Codex and retry."
+    );
+  }
+  const ownerOnly = authMode === "chatgpt";
+  const endpointCode = ownerOnly ? "codex_subscription" : "openai_api";
+  return Object.freeze({
+    endpointCode,
+    ownerOnly
+  });
+}
+
 async function currentCodexAccountIdentitySignature(options = {}) {
   const explicit = normalizeAgentText(options.accountIdentitySignature);
   if (explicit) {
@@ -3841,6 +3865,7 @@ export {
   codexAppServerRuntimeBaseDir,
   codexAppServerRuntimeDir,
   currentCodexAccountIdentitySignature,
+  readCodexSelectedAccountAccess,
   codexCliResumeCommand,
   codexTextInput,
   codexTurnInput,

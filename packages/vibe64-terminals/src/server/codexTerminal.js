@@ -34,6 +34,7 @@ import {
   codexAppServerRequestIsInvalid,
   codexAppServerRuntimeDir,
   createCodexAppServerAgentProvider,
+  readCodexSelectedAccountAccess,
   stopCodexAppServerRuntime
 } from "@local/vibe64-runtime/server/codexAppServerProvider";
 import {
@@ -105,10 +106,12 @@ import {
 import {
   VIBE64_CODEX_ATTACHMENTS_ROOT_ENV,
   cleanupCodexAttachments,
+  pinCodexAttachments,
   prepareCodexAttachmentRoot,
   releaseCodexSessionAttachments,
   renewCodexAttachments,
-  storeCodexAttachment
+  storeCodexAttachment,
+  unpinCodexAttachments
 } from "./codexAttachments.js";
 import {
   loadProjectExecutionEnv,
@@ -9241,6 +9244,10 @@ function createCodexTerminalController({
     });
   }
 
+  async function codexAppServerAssistantAccess() {
+    return readCodexSelectedAccountAccess({ toolHomeSource: codexToolHomeSource });
+  }
+
   async function codexAppServerConversationThreadSettings(context = {}, input = {}) {
     const promptSession = context.session;
     return codexAppServerThreadSettings({
@@ -12162,6 +12169,10 @@ function createCodexTerminalController({
       return createCodexAppServerConversation(sessionId, input);
     },
 
+    assistantAccess() {
+      return codexAppServerAssistantAccess();
+    },
+
     hasActiveTemporaryConversation(sessionId) {
       const conversations = codexAppServerEphemeralConversations.get(
         codexTerminalNamespace(sessionId)
@@ -12575,6 +12586,52 @@ function createCodexTerminalController({
           ...await renewCodexAttachments(executionRoot, sessionId, attachmentIds, {
             env: codexAttachmentEnv()
           }),
+          ok: true
+        };
+      });
+    },
+
+    async pinAttachments(sessionId, attachmentIds = [], suggestionId = "") {
+      return vibe64Result(async () => {
+        const runtime = await createRuntimeForSession();
+        const session = await runtime.getSession(sessionId);
+        const executionRoot = terminalSessionSourceRoot(session);
+        if (!executionRoot) {
+          return {
+            code: "vibe64_agent_attachment_source_root_missing",
+            error: "Vibe64 Codex session source root is not available.",
+            ok: false
+          };
+        }
+        return {
+          ...await pinCodexAttachments(
+            executionRoot,
+            sessionId,
+            attachmentIds,
+            suggestionId,
+            { env: codexAttachmentEnv() }
+          ),
+          ok: true
+        };
+      });
+    },
+
+    async unpinAttachments(sessionId, attachmentIds = [], suggestionId = "") {
+      return vibe64Result(async () => {
+        const runtime = await createRuntimeForSession();
+        const session = await runtime.getSession(sessionId);
+        const executionRoot = terminalSessionSourceRoot(session);
+        if (!executionRoot) {
+          return { ok: true, released: [] };
+        }
+        return {
+          ...await unpinCodexAttachments(
+            executionRoot,
+            sessionId,
+            attachmentIds,
+            suggestionId,
+            { env: codexAttachmentEnv() }
+          ),
           ok: true
         };
       });

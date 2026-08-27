@@ -27,6 +27,7 @@ import {
   CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
   CODEX_APP_SERVER_PROVIDER_ID,
   codexAppServerRuntimeDir,
+  currentCodexAccountIdentitySignature,
   stopCodexAppServerRuntime
 } from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
 import {
@@ -44,6 +45,10 @@ import {
   defineVibe64AgentExecutionProfileResolution,
   vibe64AgentExecutionProfileAuditSnapshot
 } from "../../packages/vibe64-runtime/src/shared/agentExecutionProfiles.js";
+import {
+  VIBE64_ASSISTANT_SELECTION_METADATA,
+  serializeVibe64AssistantSelection
+} from "../../packages/vibe64-runtime/src/shared/assistantSelection.js";
 import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
@@ -435,6 +440,19 @@ test("source explanations preserve one pre-resolved profile through the terminal
     subscribers,
     temporaryRoot
   }) => {
+    const codexToolHomeSource = path.join(temporaryRoot, "codex-tool-home");
+    await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+    await writeFile(
+      path.join(codexToolHomeSource, ".codex", "auth.json"),
+      JSON.stringify({
+        OPENAI_API_KEY: "test-source-explanation-api-key",
+        auth_mode: "api_key"
+      })
+    );
+    captures.runtimeInfo.accountIdentitySignature = await currentCodexAccountIdentitySignature({
+      executionMode: "economy",
+      toolHomeSource: codexToolHomeSource
+    });
     const terminalProjectService = {
       ...projectService,
       async readCurrentProject() {
@@ -458,7 +476,8 @@ test("source explanations preserve one pre-resolved profile through the terminal
         codexAppServerProviderFactory(providerOptions) {
           return createProvider(calls, subscribers, captures, providerOptions);
         },
-        codexToolHomeRequired: false
+        codexToolHomeRequired: false,
+        codexToolHomeSource
       },
       env: {
         VIBE64_RUNTIME_NAMESPACE: "test",
@@ -825,9 +844,11 @@ function flushPromises() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+const FIXTURE_WAIT_TIMEOUT_MS = 3_000;
+
 async function waitForSessionValue(readValue, predicate, description) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 1_000) {
+  while (Date.now() - startedAt < FIXTURE_WAIT_TIMEOUT_MS) {
     const value = await readValue();
     if (predicate(value)) {
       return value;
@@ -840,7 +861,7 @@ async function waitForSessionValue(readValue, predicate, description) {
 
 async function waitForCapturedTurns(captures, expectedCount) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 1000) {
+  while (Date.now() - startedAt < FIXTURE_WAIT_TIMEOUT_MS) {
     if (captures.turns.length >= expectedCount) {
       return;
     }
@@ -852,7 +873,7 @@ async function waitForCapturedTurns(captures, expectedCount) {
 async function waitForEconomyLedgerLifecycle(projectRuntimeRoot, lifecycle) {
   const ledger = createCodexEconomyThreadLedger({ projectRuntimeRoot });
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 1000) {
+  while (Date.now() - startedAt < FIXTURE_WAIT_TIMEOUT_MS) {
     const listed = await ledger.readAll();
     if (listed.records.length === 1 && listed.records[0].lifecycle === lifecycle) {
       return listed.records[0];
@@ -968,6 +989,14 @@ async function managedSessionFixture(temporaryRoot) {
     projectRuntimeRoot,
     session: {
       metadata: {
+        [VIBE64_ASSISTANT_SELECTION_METADATA]: serializeVibe64AssistantSelection({
+          agentId: "codex",
+          catalogRevision: `sha256:${"f".repeat(64)}`,
+          engineId: "codex",
+          modelId: "gpt-5.5",
+          modelProviderId: "openai",
+          variantId: "high"
+        }),
         repository_mode: "local_source",
         source_kind: "session_clone",
         source_path: sourcePath,

@@ -192,6 +192,7 @@ function createFixture({
   describeProvider = null,
   now = () => Date.now(),
   policy = projectPolicy(),
+  requireAssistantAccess = null,
   readBlueprintText = null,
   resolveExecutionProfile = null,
   runAgentTurn = null,
@@ -204,6 +205,7 @@ function createFixture({
     diagnostic: [],
     interrupt: [],
     policy: [],
+    access: [],
     resolve: [],
     run: [],
     session: []
@@ -277,6 +279,12 @@ function createFixture({
       };
     },
     now,
+    async requireAssistantAccess(sessionId, options) {
+      calls.access.push({ options, sessionId });
+      return requireAssistantAccess
+        ? requireAssistantAccess({ options, sessionId })
+        : { ok: true };
+    },
     projectService: {
       async createRuntime() {
         return runtime;
@@ -529,8 +537,56 @@ test("prompt hints stop at project policy and blank-session static starters with
   assert.equal(blankResult.suggestions.length, 3);
   assert.equal(blankResult.suggestions.every((suggestion) => suggestion.length > 0), true);
   assert.equal(blank.calls.describe.length, 0);
+  assert.equal(blank.calls.access.length, 0);
   assert.equal(blank.calls.resolve.length, 0);
   assert.equal(blank.calls.run.length, 0);
+});
+
+test("restricted prompt hints stop before provider inspection and cannot reuse an authorized cache", async () => {
+  let restricted = false;
+  const fixture = createFixture({
+    requireAssistantAccess({ options, sessionId }) {
+      assert.equal(sessionId, "session-1");
+      assert.equal(options.vibe64User.username, "member");
+      if (restricted) {
+        const error = new Error("Only the workspace owner can use this personal AI connection.");
+        error.code = "vibe64_assistant_owner_required";
+        error.statusCode = 403;
+        throw error;
+      }
+      return { ok: true };
+    }
+  });
+  const vibe64User = { username: "member" };
+  const first = await fixture.service.generateSessionPromptHints(
+    "session-1",
+    generateInput("hint:access-cache:1", vibe64User)
+  );
+  assert.equal(first.status, "ready");
+  assert.equal(fixture.calls.describe.length, 1);
+  assert.equal(fixture.calls.resolve.length, 1);
+  assert.equal(fixture.calls.run.length, 1);
+
+  restricted = true;
+  const denied = await fixture.service.generateSessionPromptHints(
+    "session-1",
+    generateInput("hint:access-cache:2", vibe64User)
+  );
+
+  assert.equal(denied.ok, true);
+  assert.equal(denied.status, "unavailable");
+  assert.equal(denied.cached, false);
+  assert.deepEqual(denied.suggestions, []);
+  assert.equal(fixture.calls.access.length, 2);
+  assert.equal(fixture.calls.describe.length, 1);
+  assert.equal(fixture.calls.resolve.length, 1);
+  assert.equal(fixture.calls.run.length, 1);
+  assert.equal(
+    fixture.calls.diagnostic.some((event) => (
+      event.code === "vibe64_prompt_hints_access_restricted"
+    )),
+    true
+  );
 });
 
 test("prompt hints use only the selected account's prompt_hint economy profile and clean the detached thread", async () => {

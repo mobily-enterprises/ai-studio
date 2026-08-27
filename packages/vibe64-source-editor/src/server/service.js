@@ -637,6 +637,19 @@ function createService({
     let agentExecutionProfile = null;
     let agentProviderId = "";
     if (agentOperation) {
+      if (typeof terminalService?.requireAssistantAccess !== "function") {
+        throw sourceEditorError(
+          "Assistant authorization is unavailable for source explanations.",
+          "vibe64_source_explanation_authorization_unavailable",
+          {},
+          503
+        );
+      }
+      await terminalService.requireAssistantAccess(normalizedSessionId, {
+        runtime,
+        session,
+        vibe64User
+      });
       let provider;
       try {
         provider = await describeSourceEditorAgentProvider(terminalService, {

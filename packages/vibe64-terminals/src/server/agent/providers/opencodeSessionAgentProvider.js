@@ -69,21 +69,22 @@ function resolveOpenCodeEconomyExecutionProfile(context = {}, request = {}) {
     );
   }
   const selection = context.assistantSelection || {};
+  const economyModelId = String(context.assistantAccess?.economyModelId || "").trim();
   if (
     selection.engineId !== VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE ||
     !String(selection.modelProviderId || "").trim() ||
-    !String(selection.modelId || "").trim()
+    !economyModelId
   ) {
     throw openCodeExecutionProfileError(
       VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.MODEL_UNAVAILABLE,
-      "OpenCode cannot run a helper turn without the session's selected provider and model."
+      "The selected OpenCode endpoint has no configured helper model."
     );
   }
-  const thinking = String(selection.variantId || "").trim();
+  const thinking = "";
   return defineVibe64AgentExecutionProfileResolution({
     ...executionProfile,
     limits,
-    model: String(selection.modelId).trim(),
+    model: economyModelId,
     policy: {
       environmentAccess: false,
       networkAccess: false,
@@ -216,6 +217,18 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         vibe64User: context.vibe64User
       });
     },
+    async pinAttachments(_context, input = {}) {
+      const attachmentIds = Array.isArray(input.attachmentIds) ? input.attachmentIds : [];
+      return attachmentIds.length < 1
+        ? { missing: [], ok: true, retained: [] }
+        : {
+            code: "vibe64_opencode_attachment_unsupported",
+            error: "OpenCode does not support message attachments.",
+            missing: attachmentIds,
+            ok: false,
+            retained: []
+          };
+    },
     async invalidateRuntimes(_context, input = {}) {
       return controller.invalidateRuntimes(input);
     },
@@ -253,7 +266,7 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     async resizeTerminal() {
       return unsupportedOperation("raw terminal");
     },
-    async resolveExecutionProfile(context, input = {}) {
+    resolveExecutionProfile(context, input = {}) {
       return resolveOpenCodeEconomyExecutionProfile(context, input);
     },
     async runDetachedChatTurn(context, input = {}) {
@@ -322,6 +335,9 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async uploadAttachment() {
       return unsupportedOperation("attachment upload");
+    },
+    async unpinAttachments() {
+      return { ok: true, released: [] };
     },
     async waitForConversationTurn(context, input = {}) {
       return controller.waitForConversationTurn(context.sessionId, input, {

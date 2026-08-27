@@ -201,6 +201,48 @@ function createVibe64AccountsChangedPublisher({ events = null } = {}) {
   };
 }
 
+function createVibe64ConnectionsChangedPublisher({ events = null } = {}) {
+  if (!events || typeof events.publish !== "function") {
+    return async function publishNoop() {
+      return null;
+    };
+  }
+
+  return async function publishVibe64ConnectionsChanged(connectionId = "", {
+    connected,
+    operation = "updated",
+    reason = "",
+    status = ""
+  } = {}) {
+    const normalizedConnectionId = normalizeAccountValue(connectionId);
+    if (!normalizedConnectionId) {
+      return null;
+    }
+    return events.publish({
+      source: VIBE64_ACCOUNT_EVENT_SOURCE,
+      entity: "connection",
+      operation: normalizeAccountValue(operation) || "updated",
+      entityId: normalizedConnectionId,
+      scope: {
+        kind: "global",
+        id: null
+      },
+      occurredAt: new Date().toISOString(),
+      realtime: {
+        event: VIBE64_CONNECTIONS_CHANGED_EVENT,
+        audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
+        payload: {
+          connectionId: normalizedConnectionId,
+          ...(typeof connected === "boolean" ? { connected } : {}),
+          ...(reason ? { reason: normalizeAccountValue(reason) } : {}),
+          ...(status ? { status: normalizeAccountValue(status) } : {})
+        }
+      },
+      type: "entity.changed"
+    });
+  };
+}
+
 function createVibe64AccountAuthSessionChangedPublisher({ events = null } = {}) {
   if (!events || typeof events.publish !== "function") {
     return async function publishNoop() {
@@ -253,5 +295,6 @@ export {
   vibe64AccountsChangedActionEvent,
   vibe64ConnectionsChangedActionEvent,
   createVibe64AccountAuthSessionChangedPublisher,
-  createVibe64AccountsChangedPublisher
+  createVibe64AccountsChangedPublisher,
+  createVibe64ConnectionsChangedPublisher
 };

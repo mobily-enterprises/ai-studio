@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 
 import { vibe64Result } from "@local/vibe64-core/server/serverResponses";
 import {
-  currentProjectRequestContext
+  currentProjectRequestContext,
+  currentProjectVibe64User
 } from "@local/vibe64-core/server/projectRequestContext";
 import {
   writeSessionUiSyncPreviewState
@@ -37,6 +38,17 @@ import {
 } from "./sessionRenewalAdvisory.js";
 import { createSessionRenewalController } from "./sessionRenewal.js";
 import { presenceActor } from "./sessionPresence.js";
+import {
+  appendSuggestion,
+  assertSuggestionSubmissionAllowed,
+  newSessionMessageSuggestion,
+  readSessionMessageSuggestionState,
+  replaceSuggestion,
+  strictSuggestion,
+  suggestionById,
+  suggestionError,
+  writeSessionMessageSuggestionState
+} from "./sessionMessageSuggestions.js";
 
 function text(value = "") {
   return String(value || "").trim();
@@ -253,12 +265,98 @@ function createService({
   });
   const activeSaveOperations = new Map();
   const activeUpdateOperations = new Map();
+  const activeSuggestionDeliveries = new Map();
   let configuredRenewalActorResolver = renewalActorResolver;
   async function resolveRenewalActor(actor = {}, context = {}) {
     if (typeof configuredRenewalActorResolver !== "function") {
       throw renewalActorResolverUnavailableError();
     }
     return configuredRenewalActorResolver(actor, context);
+  }
+
+  function trustedAssistantUser(input = {}) {
+    return currentProjectVibe64User() || input.vibe64User || null;
+  }
+
+  async function publishSuggestionChanged(sessionId, suggestion, reason, originId = "") {
+    await publishSessionChanged(sessionId, {
+      originId: text(originId),
+      payload: {
+        messageSuggestionPatch: {
+          suggestion,
+          type: "upsert"
+        }
+      },
+      reason,
+      session: null
+    });
+  }
+
+  async function pinSuggestionAttachments(terminalsContext, suggestion) {
+    if (suggestion.attachmentIds.length < 1) {
+      return;
+    }
+    if (
+      typeof terminals.pinAgentAttachments !== "function" ||
+      typeof terminals.unpinAgentAttachments !== "function"
+    ) {
+      throw suggestionError(
+        "vibe64_message_suggestion_attachment_unavailable",
+        "Attachments cannot be retained for owner approval.",
+        503
+      );
+    }
+    const result = await terminals.pinAgentAttachments(
+      terminalsContext.session.sessionId,
+      {
+        attachmentIds: suggestion.attachmentIds,
+        suggestionId: suggestion.id
+      },
+      terminalsContext
+    );
+    const retained = new Set(Array.isArray(result?.retained) ? result.retained.map(text) : []);
+    const failed = (
+      result?.ok === false ||
+      Array.isArray(result?.missing) && result.missing.length > 0 ||
+      Array.isArray(result?.busy) && result.busy.length > 0 ||
+      suggestion.attachmentIds.some((id) => !retained.has(id))
+    );
+    if (failed) {
+      if (retained.size > 0) {
+        await unpinSuggestionAttachments(terminalsContext, {
+          ...suggestion,
+          attachmentIds: [...retained]
+        }).catch((error) => {
+          vibe64SessionDebugLog("server.sessions.messageSuggestion.pinRollback.error", {
+            error: vibe64SessionDebugError(error),
+            sessionId: terminalsContext.session.sessionId,
+            suggestionId: suggestion.id
+          });
+        });
+      }
+      throw suggestionError(
+        text(result?.code) || "vibe64_message_suggestion_attachment_unavailable",
+        text(result?.error) || "One or more attachments could not be retained for owner approval.",
+        409
+      );
+    }
+  }
+
+  async function unpinSuggestionAttachments(terminalsContext, suggestion) {
+    if (
+      suggestion.attachmentIds.length < 1 ||
+      typeof terminals.unpinAgentAttachments !== "function"
+    ) {
+      return;
+    }
+    await terminals.unpinAgentAttachments(
+      terminalsContext.session.sessionId,
+      {
+        attachmentIds: suggestion.attachmentIds,
+        suggestionId: suggestion.id
+      },
+      terminalsContext
+    );
   }
   const renewal = createSessionRenewalController({
     project,
@@ -516,6 +614,187 @@ function createService({
     });
   }
 
+  function publicAssistantAccess(access = {}) {
+    return {
+      accessLabel: text(access.accessLabel) || "Unavailable",
+      available: access.available === true,
+      canRequestMessage: access.canRequestMessage === true,
+      canUse: access.canUse === true,
+      endpointCode: text(access.endpointCode),
+      engineId: text(access.engineId),
+      modelProviderId: text(access.modelProviderId),
+      ok: true,
+      ownerOnly: access.ownerOnly === true,
+      transportId: text(access.transportId)
+    };
+  }
+
+  async function suggestionTerminalContext(runtime, sessionId, vibe64User) {
+    const session = await runtime.getSession(sessionId, { inspectSource: false });
+    return {
+      runtime,
+      session,
+      vibe64User
+    };
+  }
+
+  function requireSuggestionOwner(vibe64User = null) {
+    if (vibe64User?.role !== "owner") {
+      throw suggestionError(
+        "vibe64_message_suggestion_owner_required",
+        "Only the workspace owner can review message requests.",
+        403
+      );
+    }
+  }
+
+  async function approveMessageSuggestion(sessionId, input = {}) {
+    const suggestionId = text(input.suggestionId);
+    const key = `${text(sessionId)}:${suggestionId}`;
+    const existing = activeSuggestionDeliveries.get(key);
+    if (existing) {
+      return existing;
+    }
+    const delivery = sessionResult(async () => {
+      const vibe64User = trustedAssistantUser(input);
+      const runtime = await project.createRuntime({ inspectSource: false });
+      const prepared = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+        const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
+        requireSuggestionOwner(vibe64User);
+        await terminals.requireAssistantAccess(sessionId, context);
+        const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+        const current = suggestionById(state, suggestionId);
+        if (current.status === "delivered") {
+          return { alreadyDelivered: true, context, suggestion: current };
+        }
+        if (["discarded", "withdrawn"].includes(current.status)) {
+          throw suggestionError(
+            "vibe64_message_suggestion_not_pending",
+            "Only a pending suggestion can be approved.",
+            409
+          );
+        }
+        const now = new Date().toISOString();
+        const approvingActor = {
+          displayName: text(vibe64User?.displayName || vibe64User?.preferredName || vibe64User?.username),
+          username: text(vibe64User?.username).toLowerCase()
+        };
+        const next = strictSuggestion({
+          ...current,
+          decidedAt: now,
+          decidedBy: approvingActor,
+          deliveryAttempts: current.deliveryAttempts + 1,
+          lastDeliveryError: "",
+          status: "delivering",
+          updatedAt: now
+        });
+        await writeSessionMessageSuggestionState(
+          runtime.store,
+          sessionId,
+          replaceSuggestion(state, next, now)
+        );
+        return { alreadyDelivered: false, context, suggestion: next };
+      });
+      if (!prepared.acquired) {
+        return prepared.value;
+      }
+      if (prepared.value.alreadyDelivered) {
+        return { duplicate: true, ok: true, suggestion: prepared.value.suggestion };
+      }
+      const pending = prepared.value.suggestion;
+      await publishSuggestionChanged(
+        sessionId,
+        pending,
+        "session-message-suggestion-approval-started",
+        input.originId
+      );
+      let result = null;
+      let deliveryError = null;
+      try {
+        result = await terminals.sendAgentMessage(sessionId, {
+          attachmentIds: pending.attachmentIds,
+          displayMessage: [
+            `Suggested by ${pending.author.displayName} (${pending.author.username}); approved by ${pending.decidedBy.displayName} (${pending.decidedBy.username}).`,
+            pending.displayMessage || pending.message
+          ].join("\n\n"),
+          message: pending.message,
+          messageId: pending.providerMessageId,
+          originId: input.originId,
+          vibe64User
+        }, {
+          runtime,
+          vibe64User
+        });
+      } catch (error) {
+        deliveryError = error;
+      }
+      const delivered = !deliveryError && result?.ok !== false;
+      const finalized = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+        const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+        const current = suggestionById(state, suggestionId);
+        if (current.status === "delivered") {
+          return { context: prepared.value.context, suggestion: current };
+        }
+        const now = new Date().toISOString();
+        const next = strictSuggestion({
+          ...current,
+          deliveredAt: delivered ? now : "",
+          lastDeliveryError: delivered
+            ? ""
+            : text(deliveryError?.message || result?.error || "Assistant delivery failed."),
+          status: delivered ? "delivered" : "pending",
+          updatedAt: now
+        });
+        await writeSessionMessageSuggestionState(
+          runtime.store,
+          sessionId,
+          replaceSuggestion(state, next, now)
+        );
+        return { context: prepared.value.context, suggestion: next };
+      });
+      if (!finalized.acquired) {
+        if (deliveryError) {
+          throw deliveryError;
+        }
+        return finalized.value;
+      }
+      if (delivered) {
+        await unpinSuggestionAttachments(finalized.value.context, finalized.value.suggestion)
+          .catch((error) => {
+            vibe64SessionDebugLog("server.sessions.messageSuggestion.unpin.error", {
+              error: vibe64SessionDebugError(error),
+              sessionId,
+              suggestionId
+            });
+          });
+      }
+      await publishSuggestionChanged(
+        sessionId,
+        finalized.value.suggestion,
+        delivered
+          ? "session-message-suggestion-delivered"
+          : "session-message-suggestion-delivery-failed",
+        input.originId
+      );
+      if (deliveryError) {
+        throw deliveryError;
+      }
+      return {
+        ...(result || {}),
+        ok: delivered,
+        suggestion: finalized.value.suggestion
+      };
+    }, "Vibe64 could not approve this message suggestion.");
+    activeSuggestionDeliveries.set(key, delivery);
+    try {
+      return await delivery;
+    } finally {
+      if (activeSuggestionDeliveries.get(key) === delivery) {
+        activeSuggestionDeliveries.delete(key);
+      }
+    }
+  }
+
   return Object.freeze({
     ...renewal,
     closeSessionPresence() {
@@ -627,10 +906,14 @@ function createService({
 
     async createSession(input = {}) {
       return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
         const assistantSelection = await resolveAssistantSelection(
           input.assistantSelection,
-          input.vibe64User || null
+          vibe64User
         );
+        await terminals.requireAssistantSelectionAccess(assistantSelection, {
+          vibe64User
+        });
         const runtime = await project.createRuntime(sessionRuntimeOptions(terminals));
         if (
           typeof project.developmentDatabasePolicy !== "function" ||
@@ -652,10 +935,10 @@ function createService({
               [VIBE64_ASSISTANT_SELECTION_METADATA]: serializeVibe64AssistantSelection(
                 assistantSelection
               ),
-              created_by: text(input.vibe64User?.username || input.vibe64User?.name)
+              created_by: text(vibe64User?.username || vibe64User?.name)
             },
             sourceContext: {
-              vibe64User: input.vibe64User || null
+              vibe64User
             }
           });
           const updatedPolicy = await project.developmentDatabasePolicy({
@@ -824,11 +1107,17 @@ function createService({
 
     async saveSessionWork(sessionId, input = {}) {
       return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
         const runtime = await project.createRuntime({
           inspectSource: false
         });
         const session = await runtime.getSession(sessionId, {
           inspectSource: false
+        });
+        await terminals.requireAssistantAccess(sessionId, {
+          runtime,
+          session,
+          vibe64User
         });
         const operationId = crypto.randomUUID();
         let operationStarted = false;
@@ -878,7 +1167,7 @@ function createService({
             },
             runtime,
             session,
-            vibe64User: input.vibe64User || null
+            vibe64User
           });
           await runtime.store.writeMetadataValue(sessionId, "canonical_commit", result.saveCommit);
           if (result.reconciled === true) {
@@ -1202,6 +1491,209 @@ function createService({
       }, "Vibe64 could not retry workspace preparation.");
     },
 
+    async inspectAssistantAccess(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
+        return publicAssistantAccess(await terminals.inspectAssistantAccess(sessionId, context));
+      }, "Vibe64 could not inspect assistant access.");
+    },
+
+    async listMessageSuggestions(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
+        const username = text(vibe64User?.username).toLowerCase();
+        if (!username) {
+          throw suggestionError(
+            "vibe64_message_suggestion_actor_invalid",
+            "Sign in before viewing message suggestions.",
+            401
+          );
+        }
+        const runtime = await project.createRuntime({ inspectSource: false });
+        await runtime.getSession(sessionId, { inspectSource: false });
+        const canManage = vibe64User?.role === "owner";
+        const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+        const suggestions = state.entries
+          .filter((entry) => canManage || entry.author.username === username)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+        return {
+          canManage,
+          ok: true,
+          revision: state.revision,
+          suggestions
+        };
+      }, "Vibe64 could not read message suggestions.");
+    },
+
+    async suggestAgentMessage(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const request = messageText(input);
+        const vibe64User = trustedAssistantUser(input);
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
+          const access = await terminals.inspectAssistantAccess(sessionId, context);
+          if (access?.canRequestMessage !== true) {
+            if (access?.canUse === true) {
+              throw suggestionError(
+                "vibe64_message_suggestion_not_required",
+                "This connection permits direct messages; send the message normally.",
+                409
+              );
+            }
+            throw suggestionError(
+              "vibe64_assistant_connection_unavailable",
+              "Message requests are unavailable for the current AI.",
+              409
+            );
+          }
+          const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+          assertSuggestionSubmissionAllowed(state, vibe64User);
+          const suggestion = newSessionMessageSuggestion({
+            attachmentIds: input.attachmentIds,
+            author: vibe64User,
+            displayMessage: input.displayMessage,
+            id: crypto.randomUUID(),
+            message: request
+          });
+          await pinSuggestionAttachments(context, suggestion);
+          try {
+            await writeSessionMessageSuggestionState(
+              runtime.store,
+              sessionId,
+              appendSuggestion(state, suggestion, suggestion.updatedAt)
+            );
+          } catch (error) {
+            await unpinSuggestionAttachments(context, suggestion).catch(() => null);
+            throw error;
+          }
+          return suggestion;
+        });
+        if (!exclusive.acquired) {
+          return exclusive.value;
+        }
+        await publishSuggestionChanged(
+          sessionId,
+          exclusive.value,
+          "session-message-suggestion-created",
+          input.originId
+        );
+        return { ok: true, suggestion: exclusive.value };
+      }, "Vibe64 could not suggest this message to the owner.");
+    },
+
+    async withdrawMessageSuggestion(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
+        const username = text(vibe64User?.username).toLowerCase();
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
+          const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+          const current = suggestionById(state, input.suggestionId);
+          if (current.author.username !== username) {
+            throw suggestionError(
+              "vibe64_message_suggestion_withdraw_forbidden",
+              "Only the suggestion's author may withdraw it.",
+              403
+            );
+          }
+          if (current.status !== "pending") {
+            throw suggestionError(
+              "vibe64_message_suggestion_not_pending",
+              "Only a pending suggestion can be withdrawn.",
+              409
+            );
+          }
+          const now = new Date().toISOString();
+          const next = strictSuggestion({
+            ...current,
+            status: "withdrawn",
+            updatedAt: now,
+            withdrawnAt: now
+          });
+          await writeSessionMessageSuggestionState(
+            runtime.store,
+            sessionId,
+            replaceSuggestion(state, next, now)
+          );
+          await unpinSuggestionAttachments(context, next).catch((error) => {
+            vibe64SessionDebugLog("server.sessions.messageSuggestion.unpin.error", {
+              error: vibe64SessionDebugError(error),
+              sessionId,
+              suggestionId: next.id
+            });
+          });
+          return next;
+        });
+        if (!exclusive.acquired) {
+          return exclusive.value;
+        }
+        await publishSuggestionChanged(
+          sessionId,
+          exclusive.value,
+          "session-message-suggestion-withdrawn",
+          input.originId
+        );
+        return { ok: true, suggestion: exclusive.value };
+      }, "Vibe64 could not withdraw this message suggestion.");
+    },
+
+    approveMessageSuggestion,
+
+    async discardMessageSuggestion(sessionId, input = {}) {
+      return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
+          requireSuggestionOwner(vibe64User);
+          const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+          const current = suggestionById(state, input.suggestionId);
+          if (current.status !== "pending") {
+            throw suggestionError(
+              "vibe64_message_suggestion_not_pending",
+              "Only a pending suggestion can be discarded.",
+              409
+            );
+          }
+          const now = new Date().toISOString();
+          const next = strictSuggestion({
+            ...current,
+            decidedAt: now,
+            decidedBy: vibe64User,
+            status: "discarded",
+            updatedAt: now
+          });
+          await writeSessionMessageSuggestionState(
+            runtime.store,
+            sessionId,
+            replaceSuggestion(state, next, now)
+          );
+          await unpinSuggestionAttachments(context, next).catch((error) => {
+            vibe64SessionDebugLog("server.sessions.messageSuggestion.unpin.error", {
+              error: vibe64SessionDebugError(error),
+              sessionId,
+              suggestionId: next.id
+            });
+          });
+          return next;
+        });
+        if (!exclusive.acquired) {
+          return exclusive.value;
+        }
+        await publishSuggestionChanged(
+          sessionId,
+          exclusive.value,
+          "session-message-suggestion-discarded",
+          input.originId
+        );
+        return { ok: true, suggestion: exclusive.value };
+      }, "Vibe64 could not discard this message suggestion.");
+    },
+
     async sendAgentMessage(sessionId, input = {}) {
       const request = messageText(input);
       if (!request) {
@@ -1252,9 +1744,15 @@ function createService({
 
     async updateAssistantSelection(sessionId, input = {}) {
       return sessionResult(async () => {
+        const vibe64User = trustedAssistantUser(input);
         const runtime = await project.createRuntime({ inspectSource: false });
         const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
           const session = await runtime.getSession(sessionId, { inspectSource: false });
+          await terminals.requireAssistantAccess(sessionId, {
+            runtime,
+            session,
+            vibe64User
+          });
           const current = vibe64AssistantSelectionFromMetadata(session.metadata);
           const requested = {
             ...record(input.assistantSelection),
@@ -1262,8 +1760,11 @@ function createService({
           };
           const resolved = await resolveAssistantSelection(
             requested,
-            input.vibe64User || null
+            vibe64User
           );
+          await terminals.requireAssistantSelectionAccess(resolved, {
+            vibe64User
+          });
           const agentSession = typeof terminals.agentSessionState === "function"
             ? await terminals.agentSessionState(sessionId, { runtime, session })
             : null;

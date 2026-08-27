@@ -11,7 +11,6 @@ import {
 import {
   DATABASE_TOOL_ENVIRONMENT_CONTRACT
 } from "@local/vibe64-project/server/resourceEnvironment";
-
 import {
   databaseAssistantAvailability,
   runDatabaseAssistant
@@ -532,6 +531,7 @@ function createService({
       return databaseResult(async () => {
         if (
           typeof terminalService?.deleteDetachedAgentChatThread !== "function" ||
+          typeof terminalService?.requireAssistantAccess !== "function" ||
           typeof terminalService?.runDetachedAgentChatTurn !== "function"
         ) {
           throw databaseError(
@@ -540,6 +540,10 @@ function createService({
           );
         }
         const context = await sessionContext(input);
+        await terminalService.requireAssistantAccess(context.sessionId, {
+          session: context.session,
+          vibe64User: context.vibe64User
+        });
         const schema = await currentSchema(context);
         const startedAt = Date.now();
         const queries = sessionQueries(context.sessionId);

@@ -506,7 +506,7 @@ describe("session renewal dialog", () => {
   });
 
   it("makes the advisory available by tap with full-size header targets", () => {
-    expect(autopilotSource).toContain(":title=\"sessionRenewalActionPresentation.reason");
+    expect(autopilotSource).toContain(":title=\"assistantDirectAllowed ? sessionRenewalActionPresentation.reason : assistantRestrictionMessage\"");
     expect(autopilotSource).toContain('ref="sessionActionsTrigger"');
     expect(autopilotSource).toContain('@click="requestSessionRenewal(sessionActionsTrigger)"');
     expect(autopilotSource).toContain('@click="requestSessionRenewal($event.currentTarget)"');

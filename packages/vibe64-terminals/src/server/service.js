@@ -391,6 +391,7 @@ function createService({
   const assistantRuntime = {
     codexConnectionStatus: async () => true,
     listConnections: async () => [],
+    readAssistantAccess: async () => ({ ownerOnly: false }),
     resolveConnection: async () => null
   };
 
@@ -483,7 +484,16 @@ function createService({
       createOpenCodeSessionAgentProvider({
         controller: opencode
       })
-    ]
+    ],
+    async readAssistantAccess(context) {
+      if (context.engineId !== "codex") {
+        return assistantRuntime.readAssistantAccess(context);
+      }
+      if (!await assistantRuntime.codexConnectionStatus(context)) {
+        return { available: false, ownerOnly: true };
+      }
+      return codex.assistantAccess(context);
+    }
   });
   const sessionPromptHints = createSessionPromptHintsService({
     deleteAgentThread: (sessionId, input, options) => (
@@ -499,6 +509,9 @@ function createService({
     }, "Vibe64 prompt hints were unavailable."),
     interruptAgentTurn: (sessionId, input, options) => (
       sessionAgent.interruptDetachedChatTurn(sessionId, input, options)
+    ),
+    requireAssistantAccess: (sessionId, options) => (
+      sessionAgent.requireAssistantAccess(sessionId, options)
     ),
     projectService,
     resolveExecutionProfile: (sessionId, input, options) => (
@@ -530,6 +543,20 @@ function createService({
       }
     );
     return exclusive.value;
+  }
+
+  async function authorizeGlobalCodexTerminal(options = {}) {
+    await sessionAgent.requireAssistantAccessForEngine("codex", options);
+  }
+
+  async function assistantSessionOptions(sessionId = "", options = {}) {
+    const runtime = options.runtime || await projectService.createRuntime({
+      inspectSource: false
+    });
+    const session = options.session || await runtime.getSession(sessionId, {
+      inspectSource: false
+    });
+    return { ...options, runtime, session };
   }
 
   async function prepareWorkspaceSetup(sessionId = "", options = {}) {
@@ -1289,7 +1316,12 @@ function createService({
 
   const service = {
     configureAssistantRuntime(input = {}) {
-      for (const name of ["codexConnectionStatus", "listConnections", "resolveConnection"]) {
+      for (const name of [
+        "codexConnectionStatus",
+        "listConnections",
+        "readAssistantAccess",
+        "resolveConnection"
+      ]) {
         if (Object.hasOwn(input, name)) {
           if (typeof input[name] !== "function") {
             throw new TypeError(`Assistant runtime ${name} must be a function.`);
@@ -1975,6 +2007,24 @@ function createService({
       return sessionAgent.describeProvider(options);
     },
 
+    async inspectAssistantAccess(sessionId, options = {}) {
+      return sessionAgent.assistantAccess(
+        sessionId,
+        await assistantSessionOptions(sessionId, options)
+      );
+    },
+
+    async requireAssistantAccess(sessionId, options = {}) {
+      return sessionAgent.requireAssistantAccess(
+        sessionId,
+        await assistantSessionOptions(sessionId, options)
+      );
+    },
+
+    requireAssistantSelectionAccess(assistantSelection, options = {}) {
+      return sessionAgent.requireAssistantAccessForSelection(assistantSelection, options);
+    },
+
     listAssistantCapabilities(input = {}, options = {}) {
       return sessionAgent.listCapabilities(input, options);
     },
@@ -2214,7 +2264,8 @@ function createService({
       return sessionAgent.stopConversation(sessionId, input, options);
     },
 
-    startGlobalCodexTerminal() {
+    async startGlobalCodexTerminal(options = {}) {
+      await authorizeGlobalCodexTerminal(options);
       return codex.startGlobalTerminal();
     },
 
@@ -2255,6 +2306,14 @@ function createService({
       ));
     },
 
+    pinAgentAttachments(sessionId, input = {}, options = {}) {
+      return sessionAgent.pinAttachments(sessionId, input, options);
+    },
+
+    unpinAgentAttachments(sessionId, input = {}, options = {}) {
+      return sessionAgent.unpinAttachments(sessionId, input, options);
+    },
+
     deleteAgentAttachment(sessionId, input = {}, options = {}) {
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.deleteAttachment(sessionId, input, context)
@@ -2276,7 +2335,8 @@ function createService({
         sessionAgent.writeTerminal(sessionId, terminalSessionId, data, input, options);
     },
 
-    writeGlobalCodexTerminal(terminalSessionId, data) {
+    async writeGlobalCodexTerminal(terminalSessionId, data, options = {}) {
+      await authorizeGlobalCodexTerminal(options);
       return codex.writeGlobalTerminal(terminalSessionId, data);
     },
 

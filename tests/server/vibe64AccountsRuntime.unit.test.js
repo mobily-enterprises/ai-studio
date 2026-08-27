@@ -52,6 +52,8 @@ import {
 } from "../../packages/vibe64-accounts/src/server/service.js";
 import {
   createVibe64AccountAuthSessionChangedPublisher,
+  createVibe64ConnectionsChangedPublisher,
+  VIBE64_CONNECTIONS_CHANGED_EVENT,
   VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT
 } from "../../packages/vibe64-accounts/src/server/accountRealtimeEvents.js";
 import {
@@ -544,6 +546,36 @@ test("auth-session publisher emits a scoped session event", async () => {
     status: "authenticating",
     terminalStatus: "running"
   });
+});
+
+test("connection publisher invalidates every client without exposing connection material", async () => {
+  const events = [];
+  const publishConnectionChanged = createVibe64ConnectionsChangedPublisher({
+    events: {
+      async publish(event) {
+        events.push(event);
+        return event;
+      }
+    }
+  });
+
+  await publishConnectionChanged("zai-coding-plan", {
+    connected: true,
+    operation: "updated",
+    reason: "replaced",
+    status: "connected"
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].entityId, "zai-coding-plan");
+  assert.equal(events[0].realtime.event, VIBE64_CONNECTIONS_CHANGED_EVENT);
+  assert.deepEqual(events[0].realtime.payload, {
+    connected: true,
+    connectionId: "zai-coding-plan",
+    reason: "replaced",
+    status: "connected"
+  });
+  assert.equal(JSON.stringify(events[0]).includes("apiKey"), false);
 });
 
 test("GitHub identity save updates Git config without starting an auth terminal", async () => {

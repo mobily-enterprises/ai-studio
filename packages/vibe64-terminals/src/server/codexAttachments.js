@@ -7,7 +7,8 @@ import {
   rm,
   rmdir,
   stat,
-  utimes
+  utimes,
+  writeFile
 } from "node:fs/promises";
 import path from "node:path";
 import { Transform } from "node:stream";
@@ -38,6 +39,7 @@ const ATTACHMENT_TTL_MS = 30 * 60 * 1000;
 const ATTACHMENT_FILES_DIRECTORY = "files";
 const ATTACHMENT_LOCKS_DIRECTORY = "locks";
 const ATTACHMENT_LEASE_LOCK_FILE = ".lease-lock";
+const ATTACHMENT_SUGGESTION_PIN_PREFIX = ".suggestion-pin-";
 const ATTACHMENT_LOCK_POLL_MS = 25;
 const ATTACHMENT_RENEW_LOCK_WAIT_MS = 500;
 const ATTACHMENT_DELETE_LOCK_WAIT_MS = 30_000;
@@ -92,6 +94,21 @@ function assertAttachmentId(attachmentId = "") {
     );
   }
   return normalized;
+}
+
+function suggestionPinFileName(suggestionId = "") {
+  const id = String(suggestionId || "").trim();
+  if (!ATTACHMENT_ID_PATTERN.test(id)) {
+    throw attachmentUploadValidationError(
+      "vibe64_agent_attachment_pin_invalid",
+      "Attachment retention requires a valid suggestion id."
+    );
+  }
+  return `${ATTACHMENT_SUGGESTION_PIN_PREFIX}${id}`;
+}
+
+function isSuggestionPin(entry = {}) {
+  return entry.isFile() && entry.name.startsWith(ATTACHMENT_SUGGESTION_PIN_PREFIX);
 }
 
 function sanitizeAttachmentFileName(fileName = "") {
@@ -150,6 +167,14 @@ async function cleanupCodexAttachments(executionRoot, sessionId, attachmentId = 
   if (normalizedAttachmentId) {
     try {
       const deletion = await withAttachmentDirectoryLock(cleanupPath, async () => {
+        const entries = await readDirectoryEntries(cleanupPath);
+        if (entries.some(isSuggestionPin)) {
+          throw attachmentUploadValidationError(
+            "vibe64_agent_attachment_retained",
+            "This attachment belongs to a pending owner suggestion. Withdraw the suggestion before removing it.",
+            409
+          );
+        }
         return retireAttachmentDirectory(cleanupPath);
       }, {
         waitMs: attachmentLockWaitMs(options, ATTACHMENT_DELETE_LOCK_WAIT_MS)
@@ -166,7 +191,10 @@ async function cleanupCodexAttachments(executionRoot, sessionId, attachmentId = 
       await pruneAttachmentSessionDirectory(executionRoot, sessionId, options);
       return deletion.value === true;
     } catch (error) {
-      if (await attachmentDirectoryExists(cleanupPath)) {
+      if (
+        error?.code !== "vibe64_agent_attachment_retained" &&
+        await attachmentDirectoryExists(cleanupPath)
+      ) {
         scheduleAttachmentForcedCleanup(
           executionRoot,
           sessionId,
@@ -526,10 +554,12 @@ async function attachmentDirectoryActivity(directory, now = Date.now(), retry = 
     }
     throw error;
   }
-  const storedFiles = entries.filter((entry) => entry.isFile() && !entry.name.startsWith(".uploading-"));
-  const stagedFiles = entries.filter((entry) => entry.isFile() && entry.name.startsWith(".uploading-"));
-  const isStored = storedFiles.length === 1 && stagedFiles.length === 0 && entries.length === 1;
-  const isUploading = storedFiles.length === 0 && stagedFiles.length === 1 && entries.length === 1;
+  const pinned = entries.some(isSuggestionPin);
+  const contentEntries = entries.filter((entry) => !isSuggestionPin(entry));
+  const storedFiles = contentEntries.filter((entry) => entry.isFile() && !entry.name.startsWith(".uploading-"));
+  const stagedFiles = contentEntries.filter((entry) => entry.isFile() && entry.name.startsWith(".uploading-"));
+  const isStored = storedFiles.length === 1 && stagedFiles.length === 0 && contentEntries.length === 1;
+  const isUploading = storedFiles.length === 0 && stagedFiles.length === 1 && contentEntries.length === 1;
   if (!isStored && !isUploading) {
     return {
       ageMs: ATTACHMENT_TTL_MS,
@@ -539,7 +569,8 @@ async function attachmentDirectoryActivity(directory, now = Date.now(), retry = 
   const activityPath = path.join(directory, (isStored ? storedFiles : stagedFiles)[0].name);
   try {
     return {
-      ageMs: Math.max(0, now - (await stat(activityPath)).mtimeMs),
+      ageMs: pinned ? 0 : Math.max(0, now - (await stat(activityPath)).mtimeMs),
+      pinned,
       valid: true
     };
   } catch (error) {
@@ -920,6 +951,77 @@ async function renewCodexAttachments(executionRoot, sessionId, attachmentIds = [
   };
 }
 
+async function pinCodexAttachments(
+  executionRoot,
+  sessionId,
+  attachmentIds = [],
+  suggestionId = "",
+  options = {}
+) {
+  const pinName = suggestionPinFileName(suggestionId);
+  const busy = [];
+  const missing = [];
+  const retained = [];
+  for (const candidate of new Set(Array.isArray(attachmentIds) ? attachmentIds : [])) {
+    const attachmentId = assertAttachmentId(candidate);
+    const directory = attachmentHostDirectory(executionRoot, sessionId, attachmentId, options);
+    const pinned = await withAttachmentDirectoryLock(directory, async () => {
+      const entries = (await readdir(directory, { withFileTypes: true }))
+        .filter((entry) => entry.name !== ATTACHMENT_LEASE_LOCK_FILE && !isSuggestionPin(entry));
+      const storedFiles = entries.filter((entry) => entry.isFile() && !entry.name.startsWith(".uploading-"));
+      if (storedFiles.length !== 1 || entries.length !== 1) {
+        return false;
+      }
+      await writeFile(path.join(directory, pinName), `${new Date().toISOString()}\n`, {
+        encoding: "utf8",
+        mode: 0o600
+      });
+      return true;
+    }, {
+      waitMs: attachmentLockWaitMs(options, ATTACHMENT_RENEW_LOCK_WAIT_MS)
+    });
+    if (pinned.busy) {
+      busy.push(attachmentId);
+    } else if (!pinned.exists || pinned.value !== true) {
+      missing.push(attachmentId);
+    } else {
+      retained.push(attachmentId);
+      scheduleAttachmentCleanup(directory);
+    }
+  }
+  return {
+    ...(busy.length > 0 ? { busy } : {}),
+    missing,
+    retained
+  };
+}
+
+async function unpinCodexAttachments(
+  executionRoot,
+  sessionId,
+  attachmentIds = [],
+  suggestionId = "",
+  options = {}
+) {
+  const pinName = suggestionPinFileName(suggestionId);
+  const released = [];
+  for (const candidate of new Set(Array.isArray(attachmentIds) ? attachmentIds : [])) {
+    const attachmentId = assertAttachmentId(candidate);
+    const directory = attachmentHostDirectory(executionRoot, sessionId, attachmentId, options);
+    const unlocked = await withAttachmentDirectoryLock(directory, async () => {
+      await rm(path.join(directory, pinName), { force: true });
+      return true;
+    }, {
+      waitMs: attachmentLockWaitMs(options, ATTACHMENT_RENEW_LOCK_WAIT_MS)
+    });
+    if (unlocked.exists && !unlocked.busy) {
+      released.push(attachmentId);
+      scheduleAttachmentCleanup(directory);
+    }
+  }
+  return { released };
+}
+
 async function storeCodexAttachment({
   beforeCreate = null,
   env = process.env,
@@ -1054,9 +1156,11 @@ export {
   CODEX_ATTACHMENT_REQUEST_BODY_LIMIT_BYTES,
   VIBE64_CODEX_ATTACHMENTS_ROOT_ENV,
   cleanupCodexAttachments,
+  pinCodexAttachments,
   prepareCodexAttachmentStorage,
   prepareCodexAttachmentRoot,
   releaseCodexSessionAttachments,
   renewCodexAttachments,
+  unpinCodexAttachments,
   storeCodexAttachment
 };
