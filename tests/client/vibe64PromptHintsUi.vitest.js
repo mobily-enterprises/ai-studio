@@ -144,7 +144,7 @@ function mountPromptHints(input = {}) {
 }
 
 describe("Vibe64 prompt hints UI", () => {
-  it("uses one stable Base44-style support row with three compact actions", () => {
+  it("uses one compact suggestion rail and removes its hidden footprint", () => {
     const component = hintComponentSource;
 
     expect(component).toContain("mdiLightbulbOnOutline");
@@ -152,29 +152,29 @@ describe("Vibe64 prompt hints UI", () => {
     expect(component).toContain('v-for="suggestion in suggestions"');
     expect(component).toContain(':aria-label="`Use suggestion: ${suggestion}`"');
     expect(component).toContain(':title="suggestion"');
-    expect(component).toContain('variant="text"');
-    expect(component).toContain("grid-template-columns: repeat(3, minmax(0, 1fr));");
-    expect(component).toContain("height: 4.5rem;");
+    expect(component).toContain('aria-orientation="horizontal"');
+    expect(component).toContain('rounded="xl"');
+    expect(component).toContain('variant="tonal"');
+    expect(component).not.toContain("\n          block\n");
+    expect(component).toContain("height: 0;");
+    expect(component).toContain("height: 3.5rem;");
+    expect(component).toContain("display: flex;");
     expect(component).toContain("height: 100%;");
-    expect(component).not.toContain("-webkit-line-clamp");
-    expect(component).toContain("vibe64-prompt-hints__option + .vibe64-prompt-hints__option");
-    expect(component).toContain("@container studio-chat-pane");
-    expect(component).toContain("height: 5.5rem;");
     expect(component).toContain("overflow-x: auto;");
-    expect(component).toContain("flex: 0 0 calc(100% - 1.25rem);");
-    expect(component).toContain("white-space: normal;");
+    expect(component).toContain("flex: 0 0 auto;");
+    expect(component).toContain("text-overflow: ellipsis;");
+    expect(component).toContain("white-space: nowrap;");
     expect(component).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(component).toContain("overflow-wrap: anywhere");
     expect(component).not.toMatch(/v-progress|spinner|circular-progress/iu);
   });
 
-  it("shows a lightweight typing cue without creating a transcript message", () => {
+  it("shows a stable pending label without creating a transcript message", () => {
     const component = hintComponentSource;
     const autopilot = fs.readFileSync(autopilotPath, "utf8");
 
     expect(component).toContain("Thinking of a few ideas");
     expect(component).toContain('aria-live="polite"');
-    expect(component.match(/vibe64-prompt-hints__typing span/gu)?.length).toBeGreaterThan(0);
+    expect(component).not.toContain("vibe64-prompt-hints__typing");
     expect(autopilot).toContain("<Vibe64PromptHints");
     expect(autopilot.indexOf("<Vibe64PromptHints")).toBeGreaterThan(
       autopilot.indexOf("<Vibe64ConversationLog")
