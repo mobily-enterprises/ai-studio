@@ -24,6 +24,7 @@ const EXEC_HELPER_PAYLOAD_SCHEMA_VERSION = 1;
 const ALLOWED_OPERATIONS = new Set([
   "account-auth-terminal",
   "account-status",
+  "codex-app-server",
   "create-system-user",
   "deployment-service",
   "enable-system-user",
@@ -1450,6 +1451,23 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
     operation === "github-api-command"
   ) {
     return resolveAllowedUserHomePath(normalized, targetUser);
+  }
+  if (operation === "codex-app-server") {
+    const resolved = path.resolve(normalized);
+    const runtimeRoot = path.join(
+      "/run/user",
+      String(targetUser.uid),
+      "vibe64",
+      "agent-providers"
+    );
+    const parts = relativePathParts(runtimeRoot, resolved);
+    if (
+      parts.length === 2 &&
+      /^codex-app-server-[a-f0-9]{12}$/u.test(parts[0]) &&
+      parts[1] === "workspace"
+    ) {
+      return resolved;
+    }
   }
   return resolveAllowedProjectPath(normalized, ownerUsername);
 }

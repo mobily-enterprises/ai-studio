@@ -1526,6 +1526,14 @@ test("execution helper operation policy distinguishes account auth from GitHub w
   assert.equal(helperOperationForRequest({
     purpose: "codex"
   }), "vibe64-command");
+  assert.equal(helperOperationForRequest({
+    execution: {
+      kind: "assistant",
+      lifecycle: "service"
+    },
+    mode: "detached",
+    purpose: "codex"
+  }), "codex-app-server");
 });
 
 test("execution helper client sends normalized payloads through sudo helper", async () => {

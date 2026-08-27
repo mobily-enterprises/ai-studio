@@ -7,7 +7,7 @@ const VIBE64_AGENT_WRITE_BUSY_RESULT = Object.freeze({
   retryable: true
 });
 
-async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation) {
+async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation, options = {}) {
   if (typeof operation !== "function") {
     throw new TypeError("Exclusive Vibe64 agent work requires an operation.");
   }
@@ -20,7 +20,8 @@ async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation) 
   const exclusive = await runtime.store.runSessionExclusive(
     sessionId,
     VIBE64_AGENT_WRITE_LOCK,
-    operation
+    operation,
+    options
   );
   return exclusive.acquired
     ? exclusive

@@ -428,18 +428,23 @@ test("session detail exposes renewal advice from the current thread and durable 
 test("assistant messages use the plain message contract", async () => {
   const calls = [];
   const publications = [];
+  const runtimeCreationOptions = [];
+  const sessionReadOptions = [];
   const session = {
     sessionId: "session-1",
     status: "active"
   };
   const runtime = {
-    async getSession() {
+    async getSession(sessionId, options) {
+      assert.equal(sessionId, session.sessionId);
+      sessionReadOptions.push(options);
       return session;
     }
   };
   const service = createService({
     project: {
-      async createRuntime() {
+      async createRuntime(options) {
+        runtimeCreationOptions.push(options);
         return runtime;
       }
     },
@@ -476,6 +481,11 @@ test("assistant messages use the plain message contract", async () => {
   assert.equal(result.messageId, "message:test");
   assert.equal(result.ok, true);
   assert.equal(publications.length, 1);
+  assert.deepEqual(runtimeCreationOptions, [{ inspectSource: false }]);
+  assert.deepEqual(sessionReadOptions, [
+    { inspectSource: false },
+    { inspectSource: false }
+  ]);
 });
 
 test("empty assistant messages fail without starting a provider turn", async () => {

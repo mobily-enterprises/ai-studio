@@ -683,8 +683,30 @@ async function readGithubStoredStatus({
       previousGithub
     });
   }
+  if (authStatus?.status === "not_connected") {
+    const previousGithubIdentity = rememberedGithubIdentity(previousGithub);
+    return accountDisconnected({
+      id: "github",
+      label: "GitHub",
+      message: authStatus.message || "GitHub is not connected for this Vibe64 user.",
+      observed: "GitHub logout was recorded locally.",
+      previousGithub: previousGithubIdentity,
+      previousUsername: previousGithubIdentity?.login || "",
+      scope: USER_CREDENTIAL_SCOPE
+    });
+  }
   if (isUserCredentialContext(githubContext)) {
-    return null;
+    const previousGithubIdentity = rememberedGithubIdentity(previousGithub);
+    return previousGithubIdentity
+      ? accountConnected({
+          id: "github",
+          label: "GitHub",
+          message: `GitHub is connected as @${previousGithubIdentity.login}.`,
+          observed: "Cached Vibe64 user identity.",
+          scope: USER_CREDENTIAL_SCOPE,
+          username: previousGithubIdentity.login
+        })
+      : null;
   }
 
   const toolHomeSource = String(githubContext?.toolHomeSource || "");
@@ -787,31 +809,33 @@ async function readGithubStatus({
 } = {}) {
   await ensureToolHomeSource(githubContext);
   const hostCommandOptions = hostCommandOptionsForCredentialContext(githubContext);
-  const statusResult = await runGithubStatusProbe(
-    runHostToolCommand,
-    ["gh", "auth", "status", "--hostname", "github.com"],
-    hostCommandOptions
-  );
-  const userResult = await runGithubStatusProbe(
-    runHostToolCommand,
-    ["gh", "api", "user", "--jq", ".login"],
-    hostCommandOptions
-  );
-  const gitCredentialResult = await runGithubStatusProbe(
-    runHostToolCommand,
-    ["git", "config", "--global", "--get-urlmatch", "credential.helper", "https://github.com"],
-    hostCommandOptions
-  );
-  const gitNameResult = await runGithubStatusProbe(
-    runHostToolCommand,
-    ["git", "config", "--global", "--get", "user.name"],
-    hostCommandOptions
-  );
-  const gitEmailResult = await runGithubStatusProbe(
-    runHostToolCommand,
-    ["git", "config", "--global", "--get", "user.email"],
-    hostCommandOptions
-  );
+  const [statusResult, userResult, gitCredentialResult, gitNameResult, gitEmailResult] = await Promise.all([
+    runGithubStatusProbe(
+      runHostToolCommand,
+      ["gh", "auth", "status", "--hostname", "github.com"],
+      hostCommandOptions
+    ),
+    runGithubStatusProbe(
+      runHostToolCommand,
+      ["gh", "api", "user", "--jq", ".login"],
+      hostCommandOptions
+    ),
+    runGithubStatusProbe(
+      runHostToolCommand,
+      ["git", "config", "--global", "--get-urlmatch", "credential.helper", "https://github.com"],
+      hostCommandOptions
+    ),
+    runGithubStatusProbe(
+      runHostToolCommand,
+      ["git", "config", "--global", "--get", "user.name"],
+      hostCommandOptions
+    ),
+    runGithubStatusProbe(
+      runHostToolCommand,
+      ["git", "config", "--global", "--get", "user.email"],
+      hostCommandOptions
+    )
+  ]);
   const output = [statusResult.output, userResult.output].filter(Boolean).join("\n");
   const transientFailure = [statusResult, userResult, gitCredentialResult, gitNameResult, gitEmailResult]
     .find((result) => hostCommandResultTransientFailure(result));
@@ -958,26 +982,29 @@ async function clearGithubAuthStatus(input = {}) {
   });
 }
 
-async function markGithubReconnectRequired(input = {}, {
-  reason = "github-command"
-} = {}) {
+async function writeGithubAuthStatus(input = {}, status = {}) {
   const filePath = githubAuthStatusPath(input);
   if (!filePath) {
     return null;
   }
-  await writeJsonFile(filePath, {
+  const value = {
+    ...status,
+    updatedAt: new Date().toISOString(),
+    version: 1
+  };
+  await writeJsonFile(filePath, value);
+  return value;
+}
+
+async function markGithubReconnectRequired(input = {}, {
+  reason = "github-command"
+} = {}) {
+  return writeGithubAuthStatus(input, {
     code: GITHUB_RECONNECT_REQUIRED_CODE,
     message: GITHUB_RECONNECT_REQUIRED_MESSAGE,
     reason: String(reason || "github-command"),
-    status: "reconnect_required",
-    updatedAt: new Date().toISOString(),
-    version: 1
-  });
-  return {
-    code: GITHUB_RECONNECT_REQUIRED_CODE,
-    message: GITHUB_RECONNECT_REQUIRED_MESSAGE,
     status: "reconnect_required"
-  };
+  });
 }
 
 async function recordGithubAuthInvalidState({
@@ -2198,12 +2225,6 @@ function createService({
         }
         const providerContext = accountId === "github" ? githubContext : codexContextForInput();
         await ensureToolHomeSource(providerContext);
-        if (accountId === "github") {
-          await clearGithubAuthStatus({
-            githubContext,
-            systemRoot: resolvedSystemRoot
-          });
-        }
         const result = await accountRunHostCommand(logoutCommandArgs(accountId), {
           ...hostCommandOptionsForCredentialContext(providerContext),
           timeout: 30_000
@@ -2214,11 +2235,28 @@ function createService({
           outputLength: cleanOutput(result.output).length,
           outputTail: sanitizedAuthOutputTail(result.output)
         });
-        const account = await accountStatus(accountId, {
-          codexMarkerReason: accountId === "codex" ? "logout" : "",
-          githubContext,
-          rotateCodexMarker: accountId === "codex"
-        });
+        let account;
+        if (accountId === "github" && result.ok) {
+          await writeGithubAuthStatus({
+            githubContext,
+            systemRoot: resolvedSystemRoot
+          }, {
+            message: "GitHub is not connected for this Vibe64 user.",
+            reason: "logout",
+            status: "not_connected"
+          });
+          account = await readGithubStoredStatus({
+            githubContext,
+            previousGithub: previousGithubForInput(input),
+            systemRoot: resolvedSystemRoot
+          });
+        } else {
+          account = await accountStatus(accountId, {
+            codexMarkerReason: accountId === "codex" ? "logout" : "",
+            githubContext,
+            rotateCodexMarker: accountId === "codex"
+          });
+        }
         authDebug("server.auth.logout.done", {
           account: accountDebugSummary(account),
           accountId,

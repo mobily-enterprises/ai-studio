@@ -9,6 +9,9 @@ import {
   normalizeAgentText
 } from "./agentProviders.js";
 import {
+  vibe64SessionDebugLog
+} from "./sessionDebugLog.js";
+import {
   VIBE64_AGENT_PROVIDER_IDS,
   VIBE64_CODEX_DEFAULT_MODEL,
   VIBE64_CODEX_DEFAULT_THINKING,
@@ -2195,9 +2198,24 @@ async function ensureCodexAppServerThreadForSession({
   workdir = ""
 } = {}) {
   const normalizedWorkdir = normalizeWorkdir(workdir);
-  const appServerRuntime = await provider.ensureRuntime();
+  let stageStartedAt = Date.now();
+  const availability = typeof provider.ensureAvailable === "function"
+    ? await provider.ensureAvailable()
+    : null;
+  const appServerRuntime = availability?.runtime || await provider.ensureRuntime();
+  vibe64SessionDebugLog("server.codexAppServerSessionBridge.thread.stage", {
+    durationMs: Date.now() - stageStartedAt,
+    sessionId: session.sessionId,
+    stage: "runtime"
+  });
   const existingThreadId = codexAppServerThreadIdForSession(session, normalizedWorkdir);
+  stageStartedAt = Date.now();
   const config = await codexAppServerProjectHookTrustConfig(provider, normalizedWorkdir);
+  vibe64SessionDebugLog("server.codexAppServerSessionBridge.thread.stage", {
+    durationMs: Date.now() - stageStartedAt,
+    sessionId: session.sessionId,
+    stage: "hook-config"
+  });
   const threadSettings = codexAppServerThreadSettings({
     agentSettings,
     config,
@@ -2212,6 +2230,7 @@ async function ensureCodexAppServerThreadForSession({
   });
   let replacedThreadError = null;
   let thread = null;
+  stageStartedAt = Date.now();
   if (existingThreadId) {
     try {
       thread = await provider.resumeThread(existingThreadId, threadSettings);
@@ -2228,6 +2247,11 @@ async function ensureCodexAppServerThreadForSession({
   } else {
     thread = await provider.startThread(threadStartSettings);
   }
+  vibe64SessionDebugLog("server.codexAppServerSessionBridge.thread.stage", {
+    durationMs: Date.now() - stageStartedAt,
+    sessionId: session.sessionId,
+    stage: existingThreadId ? "resume" : "start"
+  });
   const threadId = normalizeAgentText(thread.id || (replacedThreadError ? "" : existingThreadId));
   if (!threadId) {
     throw new Error("Codex app-server did not return a thread id.");
@@ -2242,14 +2266,20 @@ async function ensureCodexAppServerThreadForSession({
         sessionId: session.sessionId,
         threadId,
         workdir: normalizedWorkdir
-      })
+    })
     : null;
+  stageStartedAt = Date.now();
   await writeCodexAppServerIdentityMetadata({
     appServerRuntime,
     runtime,
     sessionId: session.sessionId,
     threadId,
     workdir: normalizedWorkdir
+  });
+  vibe64SessionDebugLog("server.codexAppServerSessionBridge.thread.stage", {
+    durationMs: Date.now() - stageStartedAt,
+    sessionId: session.sessionId,
+    stage: "identity-metadata"
   });
   if (replacedThreadError) {
     await writeCodexAppServerReplacementMetadata({

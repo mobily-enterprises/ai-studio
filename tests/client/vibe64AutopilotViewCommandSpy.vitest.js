@@ -248,7 +248,10 @@ describe("Vibe64 direct session view", () => {
     expect(runtimeHost).not.toContain(":rewind-to-step=");
     expect(runtimeHost).not.toContain(":actions=");
     expect(runtimeHostComposable).toContain(
-      'await refreshSessionData({ reason: "agent-message-accepted" }).catch(() => null);'
+      'void refreshSessionData({ reason: "agent-message-accepted" }).catch(() => null);'
+    );
+    expect(runtimeHostComposable).not.toContain(
+      'await refreshSessionData({ reason: "agent-message-accepted" })'
     );
   });
 

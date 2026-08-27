@@ -109,6 +109,8 @@ import {
   createSessionPromptHintsService
 } from "./sessionPromptHints.js";
 
+const MAIN_CHAT_AGENT_WRITE_WAIT_MS = 60_000;
+
 const PROJECT_RUNTIME_DORMANT_CLOSE_AFTER_MS = 30 * 60 * 1000;
 const PROJECT_RUNTIME_DORMANCY_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const PROJECT_RUNTIME_IDLE_TIMEOUT_REASON = "idle-timeout";
@@ -522,7 +524,7 @@ function createService({
     )
   });
 
-  async function runMainAgentWrite(sessionId = "", options = {}, operation) {
+  async function runMainAgentWrite(sessionId = "", options = {}, operation, lockOptions = {}) {
     const runtime = options.runtime || await projectService.createRuntime({
       inspectSource: false
     });
@@ -540,7 +542,8 @@ function createService({
           runtime,
           session
         });
-      }
+      },
+      lockOptions
     );
     return exclusive.value;
   }
@@ -1673,23 +1676,21 @@ function createService({
     },
 
     async checkSessionUpdates(sessionId, input = {}) {
-      return runSessionRepositoryWrite(sessionId, input, {
-        activeCode: "vibe64_session_update_check_agent_active",
-        activeMessage: "Wait for the assistant turn to finish before checking this session for updates."
-      }, async (context) => {
-        const { execution, session } = await sessionWorkExecution(
-          sessionId,
-          context,
-          "session-update-check"
-        );
-        return checkManagedSessionUpdates({
-          commandOptions: execution.commandOptions,
-          operationId: input.operationId,
-          project: await projectService.readCurrentProject(),
-          runCommand: execution.runCommand,
-          runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-          session
-        });
+      // This refreshes canonical authority under the project source lock but
+      // never changes the session worktree. Periodic checks must not occupy
+      // assistant-write admission and reject a foreground chat message.
+      const { execution, session } = await sessionWorkExecution(
+        sessionId,
+        input,
+        "session-update-check"
+      );
+      return checkManagedSessionUpdates({
+        commandOptions: execution.commandOptions,
+        operationId: input.operationId,
+        project: await projectService.readCurrentProject(),
+        runCommand: execution.runCommand,
+        runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
+        session
       });
     },
 
@@ -2099,9 +2100,25 @@ function createService({
       const startedAt = Date.now();
       void sessionPromptHints.cancelSessionPromptHintsForSession(sessionId);
       try {
-        const result = await runMainAgentWrite(sessionId, options, (context) => (
-          sessionAgent.sendMessage(sessionId, input, context)
-        ));
+        const result = await runMainAgentWrite(
+          sessionId,
+          options,
+          async (context) => {
+            vibe64SessionDebugLog("server.terminals.agentMessage.writeAcquired", {
+              durationMs: Date.now() - startedAt,
+              messageId: input.messageId,
+              sessionId
+            });
+            const delivered = await sessionAgent.sendMessage(sessionId, input, context);
+            vibe64SessionDebugLog("server.terminals.agentMessage.providerDone", {
+              durationMs: Date.now() - startedAt,
+              messageId: input.messageId,
+              sessionId
+            });
+            return delivered;
+          },
+          { waitMs: MAIN_CHAT_AGENT_WRITE_WAIT_MS }
+        );
         if (result?.ok === false) {
           logOperationalEvent(logger, "warn", {
             code: result.code,

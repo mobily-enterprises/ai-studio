@@ -183,6 +183,10 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
     async listEconomyThreads() {
       calls.push(["economyThreads"]);
       captures.economyThreadInventories += 1;
+      if (captures.failEconomyThreadInventories > 0) {
+        captures.failEconomyThreadInventories -= 1;
+        throw new Error("economy inventory temporarily unavailable");
+      }
       if (captures.economyThreadInventoryWait) {
         await captures.economyThreadInventoryWait;
       }
@@ -775,6 +779,19 @@ function turnStarted({
   };
 }
 
+function threadStatusChanged({
+  status = "idle",
+  threadId = "conversation-1"
+} = {}) {
+  return {
+    method: "thread/status/changed",
+    params: {
+      status: { type: status },
+      threadId
+    }
+  };
+}
+
 function threadGoalUpdated({
   status = "active",
   threadId = "conversation-1",
@@ -1103,6 +1120,7 @@ async function withConversationController(operation, {
     ensureAvailableWait: null,
     failModelLists: 0,
     failDeletes: 0,
+    failEconomyThreadInventories: 0,
     failInterrupts: 0,
     failThreadStarts: 0,
     hangModelLists: false,
@@ -1245,6 +1263,7 @@ function restartedCaptures(source = {}, overrides = {}) {
     economyThreadInventoryWait: null,
     ensureAvailableWait: null,
     failDeletes: 0,
+    failEconomyThreadInventories: 0,
     failInterrupts: 0,
     hookLists: [],
     interrupts: [],
@@ -1889,7 +1908,7 @@ test("duplicate agent messages with the same message id call the provider once",
   });
 });
 
-test("agent messages reject while a STARTING turn has no provider turn id", async () => {
+test("agent messages release an orphaned STARTING claim before starting the next turn", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
     const started = await controller.sendMessage(sessionId, {
       message: "Start before the provider identity arrives.",
@@ -1897,7 +1916,7 @@ test("agent messages reject while a STARTING turn has no provider turn id", asyn
     });
     assert.equal(started.ok, true, JSON.stringify(started));
 
-    captures.provider.status = "inProgress";
+    captures.provider.status = "completed";
     captures.provider.turnId = "";
     await store.writeAgentRunEvent(sessionId, "codex_app_server", {
       event: {
@@ -1916,14 +1935,212 @@ test("agent messages reject while a STARTING turn has no provider turn id", asyn
     });
 
     const result = await controller.sendMessage(sessionId, {
-      message: "Do not race this starting turn.",
-      messageId: "message-starting-rejected"
+      message: "Continue after the orphaned claim.",
+      messageId: "message-after-orphaned-start"
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.operationOutcome, "active_turn_not_ready");
-    assert.equal(result.retryable, true);
-    assert.equal(captures.turns.length, 1);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.deliveryMode, "new_turn");
+    assert.equal(result.turnId, "turn-2");
+    assert.equal(captures.turns.length, 2);
     assert.equal(captures.steers.length, 0);
+  });
+});
+
+test("startup reconciliation releases a message when the provider only has its completed predecessor", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+
+    const threadId = captures.provider.threadId;
+    const predecessorTurnId = "turn-before-restart";
+    const messageId = "message-interrupted-before-provider-acceptance";
+    captures.provider.status = "completed";
+    captures.provider.turnId = predecessorTurnId;
+    captures.threadSnapshotTurns = [{
+      id: predecessorTurnId,
+      items: [{
+        clientId: "message-before-restart",
+        id: "user-before-restart",
+        type: "userMessage"
+      }, {
+        id: "answer-before-restart",
+        phase: "final_answer",
+        text: "The predecessor completed.",
+        type: "agentMessage"
+      }],
+      status: "completed"
+    }];
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        kind: "codex-app-server-result-processed",
+        providerThreadId: threadId,
+        providerTurnId: predecessorTurnId
+      },
+      patch: {
+        inputSource: "chat",
+        outerTurnId: "message-before-restart",
+        pendingUserMessageClientIds: [],
+        provider: "codex",
+        providerInterface: "codex_app_server",
+        providerStatus: "completed",
+        providerThreadId: threadId,
+        providerTurnId: predecessorTurnId,
+        state: VIBE64_AGENT_RUN_STATE.COMPLETED
+      }
+    });
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        kind: "codex-app-server-user-message-owned",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      },
+      patch: {
+        error: "",
+        inputSource: "chat",
+        outerTurnId: messageId,
+        pendingUserMessageClientIds: [messageId],
+        provider: "codex",
+        providerInterface: "codex_app_server",
+        providerStatus: "starting",
+        providerThreadId: threadId,
+        providerTurnId: "",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      }
+    });
+
+    const reconciliation = await controller.reconcileThreads([{ sessionId }]);
+    assert.equal(reconciliation.ok, true, JSON.stringify(reconciliation));
+    const recoveredRun = await store.readAgentRun(sessionId, "codex_app_server");
+    assert.equal(recoveredRun?.state, VIBE64_AGENT_RUN_STATE.FAILED);
+    assert.equal(recoveredRun?.providerStatus, "delivery_failed");
+    assert.match(recoveredRun?.error || "", /message is safe; retry it/u);
+    assert.deepEqual(recoveredRun?.pendingUserMessageClientIds, [messageId]);
+
+    const retry = await controller.sendMessage(sessionId, {
+      message: "Retry the message after restart recovery.",
+      messageId
+    });
+    assert.equal(retry.ok, true, JSON.stringify(retry));
+    assert.equal(retry.deliveryMode, "new_turn");
+    assert.equal(captures.turns.length, 1);
+    assert.equal(captures.turns[0].settings.clientUserMessageId, messageId);
+  });
+});
+
+test("startup reconciliation resumes only the provider turn that owns the pending message", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+
+    const threadId = captures.provider.threadId;
+    const messageId = "message-accepted-before-restart";
+    const providerTurnId = "turn-accepted-before-restart";
+    captures.provider.status = "inProgress";
+    captures.provider.turnId = providerTurnId;
+    captures.threadSnapshotTurns = [{
+      id: "turn-before-accepted-message",
+      items: [{
+        clientId: "message-before-accepted-message",
+        id: "user-before-accepted-message",
+        type: "userMessage"
+      }],
+      status: "completed"
+    }, {
+      id: providerTurnId,
+      items: [{
+        clientId: messageId,
+        id: "user-accepted-before-restart",
+        type: "userMessage"
+      }],
+      status: "inProgress"
+    }];
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        kind: "codex-app-server-user-message-owned",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      },
+      patch: {
+        error: "",
+        inputSource: "chat",
+        outerTurnId: messageId,
+        pendingUserMessageClientIds: [messageId],
+        provider: "codex",
+        providerInterface: "codex_app_server",
+        providerStatus: "starting",
+        providerThreadId: threadId,
+        providerTurnId: "",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      }
+    });
+
+    const reconciliation = await controller.reconcileThreads([{ sessionId }]);
+    assert.equal(reconciliation.ok, true, JSON.stringify(reconciliation));
+    const recoveredRun = await store.readAgentRun(sessionId, "codex_app_server");
+    assert.equal(recoveredRun?.state, VIBE64_AGENT_RUN_STATE.ACTIVE);
+    assert.equal(recoveredRun?.providerStatus, "inProgress");
+    assert.equal(recoveredRun?.providerThreadId, threadId);
+    assert.equal(recoveredRun?.providerTurnId, providerTurnId);
+    assert.deepEqual(recoveredRun?.pendingUserMessageClientIds, []);
+    assert.equal(captures.turns.length, 0);
+  });
+});
+
+test("thread readiness settles a completed provider turn that owns an interrupted delivery", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+
+    const threadId = captures.provider.threadId;
+    const messageId = "message-completed-before-restart";
+    const providerTurnId = "turn-completed-before-restart";
+    captures.provider.status = "completed";
+    captures.provider.turnId = providerTurnId;
+    captures.threadSnapshotTurns = [{
+      id: providerTurnId,
+      items: [{
+        clientId: messageId,
+        id: "user-completed-before-restart",
+        type: "userMessage"
+      }, {
+        id: "answer-completed-before-restart",
+        phase: "final_answer",
+        text: "The interrupted delivery completed exactly once.",
+        type: "agentMessage"
+      }],
+      status: "completed"
+    }];
+    await store.writeAgentRunEvent(sessionId, "codex_app_server", {
+      event: {
+        clientId: messageId,
+        kind: "codex-app-server-user-message-owned",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      },
+      patch: {
+        error: "",
+        inputSource: "chat",
+        outerTurnId: messageId,
+        pendingUserMessageClientIds: [messageId],
+        provider: "codex",
+        providerInterface: "codex_app_server",
+        providerStatus: "starting",
+        providerThreadId: threadId,
+        providerTurnId: "",
+        state: VIBE64_AGENT_RUN_STATE.STARTING
+      }
+    });
+
+    const ready = await controller.ensureThread(sessionId);
+    assert.equal(ready.ok, true, JSON.stringify(ready));
+    assert.equal(ready.codexAgentTurn.active, false);
+    assert.equal(ready.codexAgentTurn.status, "completed");
+    assert.equal(ready.codexAgentTurn.turnId, providerTurnId);
+    const run = await store.readAgentRun(sessionId, "codex_app_server");
+    assert.equal(run?.state, VIBE64_AGENT_RUN_STATE.COMPLETED);
+    assert.deepEqual(run?.pendingUserMessageClientIds, []);
+    const conversation = await store.readConversationLog(sessionId);
+    assert.equal(
+      conversation.at(-1)?.assistant?.text,
+      "The interrupted delivery completed exactly once."
+    );
   });
 });
 
@@ -1999,6 +2216,127 @@ test("completion during steer starts one ordinary turn with the same message id"
     assert.equal(conversationLog.filter((turn) => (
       turn.user?.text === "Continue as an ordinary turn."
     )).length, 1);
+  });
+});
+
+test("a delayed start notification from a completed turn cannot replace the next chat turn", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    captures.finalText = (turnId) => turnId === "turn-1"
+      ? "First response."
+      : "Second response.";
+    const first = await controller.sendMessage(sessionId, {
+      message: "Complete the first turn.",
+      messageId: "message-before-delayed-start"
+    });
+    assert.equal(first.ok, true, JSON.stringify(first));
+
+    const provider = captures.provider;
+    const threadId = provider.threadId;
+    const firstTurnId = provider.turnId;
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "first-final",
+      phase: "final_answer",
+      text: "First response.",
+      threadId,
+      turnId: firstTurnId
+    }));
+    provider.status = "completed";
+    emitCodexNotification(captures.subscribers, turnCompleted({
+      threadId,
+      turnId: firstTurnId
+    }));
+    await waitForSessionValue(
+      () => store.readConversationLog(sessionId),
+      (conversation) => conversation.some((turn) => turn.assistant?.text === "First response."),
+      "the first response to persist"
+    );
+
+    const second = await controller.sendMessage(sessionId, {
+      message: "Complete the next turn.",
+      messageId: "message-after-delayed-start"
+    });
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(second.turnId, "turn-2");
+
+    const secondTurnId = provider.turnId;
+    emitCodexNotification(captures.subscribers, turnStarted({
+      threadId,
+      turnId: firstTurnId
+    }));
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "second-final",
+      phase: "final_answer",
+      text: "Second response.",
+      threadId,
+      turnId: secondTurnId
+    }));
+    provider.status = "completed";
+    emitCodexNotification(captures.subscribers, turnCompleted({
+      threadId,
+      turnId: secondTurnId
+    }));
+
+    const conversation = await waitForSessionValue(
+      () => store.readConversationLog(sessionId),
+      (value) => value.some((turn) => turn.assistant?.text === "Second response."),
+      "the second response to survive the delayed start notification"
+    );
+    assert.deepEqual(
+      conversation.map((turn) => turn.assistant?.text).filter(Boolean),
+      ["First response.", "Second response."]
+    );
+    const run = await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (value) => value?.providerTurnId === secondTurnId &&
+        value?.state === VIBE64_AGENT_RUN_STATE.COMPLETED,
+      "the second turn to finish without adopting the completed turn"
+    );
+    assert.equal(run?.providerTurnId, secondTurnId);
+    assert.equal(run?.state, VIBE64_AGENT_RUN_STATE.COMPLETED);
+    assert.equal(run?.events.some((event) => (
+      event.kind === "codex-app-server-turn-continued" &&
+      event.providerTurnId === firstTurnId
+    )), false);
+  });
+});
+
+test("an idle thread notification completes its currently owned turn without a provider turn id", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    captures.finalText = "Completed from the idle thread status.";
+    const started = await controller.sendMessage(sessionId, {
+      message: "Complete from the authoritative thread status.",
+      messageId: "message-thread-idle-completion"
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    const provider = captures.provider;
+    const threadId = provider.threadId;
+    const turnId = provider.turnId;
+    emitCodexNotification(captures.subscribers, assistantItemCompleted({
+      itemId: "thread-idle-final",
+      phase: "final_answer",
+      text: "Completed from the idle thread status.",
+      threadId,
+      turnId
+    }));
+    provider.status = "completed";
+    emitCodexNotification(captures.subscribers, threadStatusChanged({ threadId }));
+
+    const conversation = await waitForSessionValue(
+      () => store.readConversationLog(sessionId),
+      (value) => value.some((turn) => (
+        turn.assistant?.text === "Completed from the idle thread status."
+      )),
+      "the thread-status completion to persist its final answer"
+    );
+    assert.equal(conversation.at(-1)?.assistant?.text, "Completed from the idle thread status.");
+    const run = await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (value) => value?.state === VIBE64_AGENT_RUN_STATE.COMPLETED,
+      "the idle thread status to release the owned turn"
+    );
+    assert.equal(run?.providerTurnId, turnId);
+    assert.equal(run?.state, VIBE64_AGENT_RUN_STATE.COMPLETED);
   });
 });
 
@@ -5469,6 +5807,24 @@ test("startup reports an absent economy runtime only when it has no durable owne
       status: "runtimeAbsent"
     });
     assert.equal(captures.economyThreadInventories, 0);
+  });
+});
+
+test("startup economy inventory failures do not block primary assistant reconciliation", async () => {
+  await withConversationController(async ({ captures, controller, session }) => {
+    await controller.executionProfileModelCatalog("session-1");
+    captures.failEconomyThreadInventories = 1;
+
+    const reconciliation = await controller.reconcileThreads([session]);
+
+    assert.equal(reconciliation.ok, false);
+    assert.equal(reconciliation.results[0].ok, true, JSON.stringify(reconciliation));
+    assert.equal(reconciliation.results[0].economyInventory, null);
+    assert.match(
+      reconciliation.results[0].economyFailure?.error || "",
+      /economy inventory temporarily unavailable/u
+    );
+    assert.equal(reconciliation.failed.length, 1);
   });
 });
 

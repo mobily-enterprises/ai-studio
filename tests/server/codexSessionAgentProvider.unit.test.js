@@ -141,6 +141,62 @@ test("Codex adapter reports every active Temporary AI turn", async () => {
   });
 });
 
+test("Codex adapter never presents an unconfirmed delivery claim as active assistant work", async () => {
+  const providerTurn = {
+    active: true,
+    state: "starting",
+    status: "starting",
+    threadId: "thread-1",
+    turnId: ""
+  };
+  const provider = createCodexSessionAgentProvider({
+    controller: {
+      async terminalState() {
+        return { codexAgentTurn: providerTurn, ok: true };
+      }
+    }
+  });
+
+  const unconfirmed = await provider.sessionState({ sessionId: "session-1" });
+  assert.equal(unconfirmed.turn, null);
+
+  providerTurn.state = "active";
+  providerTurn.status = "inProgress";
+  providerTurn.turnId = "turn-1";
+  const confirmed = await provider.sessionState({ sessionId: "session-1" });
+  assert.equal(confirmed.turn?.active, true);
+  assert.equal(confirmed.turn?.id, "turn-1");
+});
+
+test("Codex adapter preserves the hydrated session context when sending a message", async () => {
+  const runtime = { stateRoot: "/runtime/project" };
+  const session = { sessionId: "session-1" };
+  const turnOwnership = { threadId: "thread-1", turnId: "turn-1" };
+  let receivedOptions = null;
+  const provider = createCodexSessionAgentProvider({
+    controller: {
+      async sendMessage(sessionId, _input, options) {
+        assert.equal(sessionId, session.sessionId);
+        receivedOptions = options;
+        return { delivered: true, ok: true };
+      }
+    }
+  });
+
+  await provider.sendMessage({
+    runtime,
+    session,
+    sessionId: session.sessionId,
+    turnOwnership
+  }, {
+    message: "Hello"
+  });
+
+  assert.equal(receivedOptions.runtime, runtime);
+  assert.equal(receivedOptions.session, session);
+  assert.equal(receivedOptions.turnOwnership, turnOwnership);
+});
+
 function catalogModel({
   hidden = false,
   model = "gpt-5.6-luna",

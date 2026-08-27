@@ -45,24 +45,34 @@ function deferred() {
   return { promise, resolve };
 }
 
-function agentWriteLockHarness({ holdFirst = false } = {}) {
+function agentWriteLockHarness({ holdFirst = false, secondValue = null } = {}) {
   let active = false;
   let attemptNumber = 0;
   const attempts = [];
   const firstEntered = deferred();
+  const firstFinished = deferred();
   const releaseFirst = deferred();
 
-  async function runSessionExclusive(sessionId, operationName, operation) {
+  async function runSessionExclusive(sessionId, operationName, operation, options = {}) {
     attemptNumber += 1;
-    attempts.push({ operationName, sessionId });
+    const currentAttempt = attemptNumber;
+    attempts.push({
+      operationName,
+      sessionId,
+      ...(Number(options.waitMs) > 0 ? { waitMs: Number(options.waitMs) } : {})
+    });
     if (active) {
-      return {
-        acquired: false,
-        value: null
-      };
+      if (Number(options.waitMs) > 0) {
+        await firstFinished.promise;
+      } else {
+        return {
+          acquired: false,
+          value: null
+        };
+      }
     }
     active = true;
-    if (attemptNumber === 1) {
+    if (currentAttempt === 1) {
       firstEntered.resolve();
       if (holdFirst) {
         await releaseFirst.promise;
@@ -71,10 +81,15 @@ function agentWriteLockHarness({ holdFirst = false } = {}) {
     try {
       return {
         acquired: true,
-        value: await operation()
+        value: currentAttempt === 2 && secondValue !== null
+          ? secondValue
+          : await operation()
       };
     } finally {
       active = false;
+      if (currentAttempt === 1) {
+        firstFinished.resolve();
+      }
     }
   }
 
@@ -237,6 +252,45 @@ test("workspace setup admission uses the session agent-write lock", async (t) =>
   ]);
 });
 
+test("foreground chat waits for workspace setup admission instead of failing", async (t) => {
+  const lock = agentWriteLockHarness({
+    holdFirst: true,
+    secondValue: {
+      delivered: true,
+      ok: true
+    }
+  });
+  const { service, session } = await terminalServiceFixture(t, lock);
+
+  const preparing = service.prepareWorkspaceSetup(session.sessionId, {
+    retry: true
+  });
+  await lock.firstEntered;
+  let sendSettled = false;
+  const sending = service.sendAgentMessage(session.sessionId, {
+    message: "Send this after setup.",
+    messageId: "message-after-workspace-setup"
+  }).finally(() => {
+    sendSettled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(sendSettled, false);
+  lock.releaseFirst();
+  await preparing;
+  const result = await sending;
+
+  assert.notEqual(result.code, "vibe64_agent_write_mode_busy");
+  assert.deepEqual(lock.attempts, [
+    { operationName: "agent-write-mode", sessionId: session.sessionId },
+    {
+      operationName: "agent-write-mode",
+      sessionId: session.sessionId,
+      waitMs: 60_000
+    }
+  ]);
+});
+
 test("workspace setup reuses an already-held session agent-write lock", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-workspace-nested-lock-"));
   const sourcePath = path.join(root, "managed", "session-1", "source");
@@ -319,6 +373,27 @@ test("workspace setup reuses an already-held session agent-write lock", async (t
   assert.equal(nested.acquired, true);
   assert.equal(typeof nested.value.state.status, "string");
   assert.notEqual(nested.value.code, "vibe64_agent_write_mode_busy");
+});
+
+test("repository update checks do not occupy assistant-write admission", async (t) => {
+  const lock = agentWriteLockHarness({ holdFirst: true });
+  const { runtime, service, session } = await terminalServiceFixture(t, lock);
+  const activeAgent = runVibe64AgentWriteExclusive(
+    runtime,
+    session.sessionId,
+    async () => null
+  );
+  await lock.firstEntered;
+  session.metadata.source_path = "";
+
+  await assert.rejects(
+    () => service.checkSessionUpdates(session.sessionId),
+    { code: "vibe64_codex_git_command_source_missing" }
+  );
+  assert.equal(lock.attempts.length, 1);
+
+  lock.releaseFirst();
+  assert.equal((await activeAgent).acquired, true);
 });
 
 test("renewal workspace setup privately resumes a pending successor while public setup rejects it", async (t) => {

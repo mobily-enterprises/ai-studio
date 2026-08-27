@@ -63,39 +63,36 @@ async function prepareAgentSessionCommandEnvironment({
     throw commandBoundaryError("Git");
   }
   const steps = [{ name: "Git", result: git }];
-  if (agentPreviewCommand) {
-    steps.push({
+  const optionalSteps = await Promise.all([
+    agentPreviewCommand ? preparePreviewCommand({
+      commandService: agentPreviewCommand,
+      env,
+      project: record(project),
+      sessionId: normalizedSessionId,
+      worktreePath,
+      wrapperHostDir: git.hostWrapperDir
+    }).then((result) => ({
       name: "preview",
-      result: await preparePreviewCommand({
-        commandService: agentPreviewCommand,
-        env,
-        project: record(project),
-        sessionId: normalizedSessionId,
-        worktreePath,
-        wrapperHostDir: git.hostWrapperDir
-      })
-    });
-  }
-  if (agentEnvCommand) {
-    steps.push({
+      result
+    })) : null,
+    agentEnvCommand ? prepareEnvironmentCommand({
+      commandService: agentEnvCommand,
+      sessionId: normalizedSessionId,
+      wrapperHostDir: git.hostWrapperDir
+    }).then((result) => ({
       name: "environment",
-      result: await prepareEnvironmentCommand({
-        commandService: agentEnvCommand,
-        sessionId: normalizedSessionId,
-        wrapperHostDir: git.hostWrapperDir
-      })
-    });
-  }
-  if (agentDatabaseCommand) {
-    steps.push({
+      result
+    })) : null,
+    agentDatabaseCommand ? prepareDatabaseCommand({
+      commandService: agentDatabaseCommand,
+      sessionId: normalizedSessionId,
+      wrapperHostDir: git.hostWrapperDir
+    }).then((result) => ({
       name: "database",
-      result: await prepareDatabaseCommand({
-        commandService: agentDatabaseCommand,
-        sessionId: normalizedSessionId,
-        wrapperHostDir: git.hostWrapperDir
-      })
-    });
-  }
+      result
+    })) : null
+  ].filter(Boolean));
+  steps.push(...optionalSteps);
   const unavailable = steps.find((step) => step.result?.ok !== true);
   if (unavailable) {
     throw commandBoundaryError(unavailable.name);

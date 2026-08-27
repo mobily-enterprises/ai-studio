@@ -1,6 +1,7 @@
 <template>
   <section
     class="studio-ai-session-runtime"
+    :data-vibe64-agent-turn-active="selection.selectedSession?.agentSession?.turn?.active === true ? 'true' : 'false'"
     :data-vibe64-session-runtime-id="props.sessionId"
   >
     <Vibe64AutopilotView

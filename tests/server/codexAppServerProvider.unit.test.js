@@ -1322,6 +1322,33 @@ test("codex provider removes a dead managed app-server runtime directory", async
   });
 });
 
+test("codex provider releases verified stopped runtime without stopping expired execution ownership", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-stopped");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeMetadata(runtimeDir, {
+      ...metadataForRuntime(runtimeDir),
+      processExitVerifiedAt: "2026-08-27T00:00:00.000Z",
+      processState: "stopped"
+    });
+    let stopCalls = 0;
+
+    const result = await stopCodexAppServerRuntime({
+      runtimeDir,
+      async stopExecution() {
+        stopCalls += 1;
+        throw new Error("A verified stopped runtime must not stop expired execution ownership.");
+      }
+    });
+
+    assert.equal(stopCalls, 0);
+    assert.equal(result.alreadyStopped, true);
+    assert.equal(result.processExitVerified, true);
+    assert.equal(result.runtimeDirRemoved, true);
+    await assert.rejects(access(runtimeDir), { code: "ENOENT" });
+  });
+});
+
 test("codex provider does not invent exit proof for malformed runtime metadata", async () => {
   await withTemporaryDirectory(async (baseDir) => {
     const runtimeDir = path.join(baseDir, "codex-app-server-malformed");

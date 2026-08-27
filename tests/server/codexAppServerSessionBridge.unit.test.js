@@ -1067,6 +1067,40 @@ test("codex app-server bridge starts a missing session thread and stores identit
   assert.equal(metadataValue(runtime, "agent_workflow_result_transport"), undefined);
 });
 
+test("codex app-server bridge reuses an already-available runtime when ensuring a thread", async () => {
+  const runtime = fakeRuntime();
+  let ensureRuntimeCalls = 0;
+  const provider = {
+    async ensureAvailable() {
+      return {
+        runtime: appServerRuntime()
+      };
+    },
+    async ensureRuntime() {
+      ensureRuntimeCalls += 1;
+      return appServerRuntime();
+    },
+    async startThread() {
+      return {
+        id: "thread-started"
+      };
+    }
+  };
+
+  const result = await ensureCodexAppServerThreadForSession({
+    provider,
+    runtime,
+    session: {
+      metadata: {},
+      sessionId: "session-1"
+    },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.threadId, "thread-started");
+  assert.equal(ensureRuntimeCalls, 0);
+});
+
 test("codex app-server bridge activates exact project hooks for each new thread", async () => {
   const runtime = fakeRuntime();
   const providerCalls = [];

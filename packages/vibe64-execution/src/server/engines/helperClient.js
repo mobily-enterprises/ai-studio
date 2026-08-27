@@ -46,6 +46,14 @@ function helperOperationForRequest(request = {}) {
   if (request.mode === "pty" && request.envPolicy === "auth") {
     return "account-auth-terminal";
   }
+  if (
+    request.purpose === "codex" &&
+    request.mode === "detached" &&
+    request.execution?.kind === "assistant" &&
+    request.execution?.lifecycle === "service"
+  ) {
+    return "codex-app-server";
+  }
   if (request.purpose === "account") {
     return "account-status";
   }

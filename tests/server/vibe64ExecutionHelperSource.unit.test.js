@@ -142,6 +142,17 @@ test("execution helper runs platform health checks from the workspace temp root"
   assert.match(source, /return workspaceTempRoot\(ownerUsername\)/u);
 });
 
+test("execution helper limits Codex service work outside projects to its exact private workspace", async () => {
+  const source = await helperSource();
+
+  assert.match(source, /"codex-app-server"/u);
+  assert.match(source, /operation === "codex-app-server"/u);
+  assert.match(source, /"\/run\/user",\s+String\(targetUser\.uid\),\s+"vibe64",\s+"agent-providers"/u);
+  assert.match(source, /\^codex-app-server-\[a-f0-9\]\{12\}\$/u);
+  assert.match(source, /parts\.length === 2/u);
+  assert.match(source, /parts\[1\] === "workspace"/u);
+});
+
 test("execution helper limits release service paths to deployment release state", async () => {
   const source = await helperSource();
 

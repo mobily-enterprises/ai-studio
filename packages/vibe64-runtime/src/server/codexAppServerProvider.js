@@ -1266,6 +1266,12 @@ async function stopCodexAppServerProcessGroup(metadata = {}, options = {}) {
 }
 
 async function stopOwnedCodexAppServerExecution(metadata = {}, options = {}) {
+  if (
+    metadata.processState === CODEX_APP_SERVER_PROCESS_STATE.STOPPED &&
+    metadata.processExitVerifiedAt
+  ) {
+    return stopCodexAppServerProcessGroup(metadata, options);
+  }
   const executionId = normalizeAgentText(metadata.executionId);
   if (executionId) {
     const stopExecution = typeof options.stopExecution === "function"

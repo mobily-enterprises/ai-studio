@@ -25,6 +25,20 @@ describe("Vibe64 direct session runtime host", () => {
     expect(source).not.toContain("uiSync");
   });
 
+  it("settles message acceptance before background session reconciliation", () => {
+    const source = readFileSync(new URL(
+      "../../src/composables/useVibe64SessionRuntimeHost.js",
+      import.meta.url
+    ), "utf8");
+
+    expect(source).toContain(
+      "void refreshSessionData({ reason: \"agent-message-accepted\" }).catch(() => null);"
+    );
+    expect(source).not.toContain(
+      "await refreshSessionData({ reason: \"agent-message-accepted\" })"
+    );
+  });
+
   it("places focus in the newly selected renewed session after it mounts", async () => {
     const focus = vi.fn();
     const target = { focus };

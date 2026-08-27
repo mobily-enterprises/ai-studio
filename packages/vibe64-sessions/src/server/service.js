@@ -1704,8 +1704,8 @@ function createService({
         };
       }
       await setupRunner.wait(sessionId);
-      const runtime = await project.createRuntime();
-      const session = await runtime.getSession(sessionId);
+      const runtime = await project.createRuntime({ inspectSource: false });
+      const session = await runtime.getSession(sessionId, { inspectSource: false });
       const messageId = text(input.messageId) || crypto.randomUUID();
       try {
         const result = await terminals.sendAgentMessage(sessionId, {

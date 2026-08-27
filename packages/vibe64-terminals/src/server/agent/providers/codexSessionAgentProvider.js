@@ -254,8 +254,8 @@ function resolveCodexEconomyExecutionProfile(request = {}, catalog = null) {
 
 function normalizeCodexTurn(result = {}) {
   const turn = result?.codexAgentTurn || {};
-  const active = turn?.active === true || result?.active === true;
   const id = normalizeText(turn?.turnId || result?.turnId);
+  const active = Boolean(id) && (turn?.active === true || result?.active === true);
   if (!id && !active) {
     return null;
   }
@@ -739,6 +739,8 @@ function createCodexSessionAgentProvider({
         return normalizeCodexSessionResult(attachmentValidation);
       }
       const result = normalizeCodexSessionResult(await controller.sendMessage(context.sessionId, message, {
+        runtime: context.runtime,
+        session: context.session,
         turnOwnership: context.turnOwnership
       }));
       await renewAcceptedCodexAttachments(controller, context.sessionId, message, (

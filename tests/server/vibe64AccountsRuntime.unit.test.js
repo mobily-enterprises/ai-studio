@@ -1040,6 +1040,8 @@ test("accounts service delegates account host commands to runtime override", asy
       systemRoot
     });
     const commands = [];
+    let activeCommands = 0;
+    let maximumActiveCommands = 0;
     const service = createService({
       accountRuntime: {
         ...baseRuntime,
@@ -1051,6 +1053,10 @@ test("accounts service delegates account host commands to runtime override", asy
           });
           assert.equal(options.toolHomeSource, githubHome);
           assert.equal(options.username, "ada");
+          activeCommands += 1;
+          maximumActiveCommands = Math.max(maximumActiveCommands, activeCommands);
+          await new Promise((resolve) => setImmediate(resolve));
+          activeCommands -= 1;
           if (args[0] === "gh" && args[1] === "auth" && args[2] === "status") {
             return {
               ok: true,
@@ -1100,6 +1106,7 @@ test("accounts service delegates account host commands to runtime override", asy
     assert.equal(github.connected, true);
     assert.equal(github.username, "ada-github");
     assert.equal(commands.length, 5);
+    assert.equal(maximumActiveCommands, 5);
   });
 });
 
@@ -1278,11 +1285,16 @@ test("GitHub CLI auth failures are classified as reconnect-required", () => {
   assert.match(failure.message, /Reconnect GitHub/u);
 });
 
-test("proven invalid GitHub auth keeps local status reconnect-required until live auth succeeds", async () => {
+test("cached GitHub status preserves proven invalid and logout states until live auth succeeds", async () => {
   await withTempDir(async (root) => {
     const systemRoot = path.join(root, "system");
     const githubHome = path.join(root, "homes", "local-user");
     const vibe64User = {
+      github: {
+        connectedAt: "2026-07-05T16:11:03.389Z",
+        id: 2128734,
+        login: "local-user"
+      },
       home: githubHome,
       gid: 1002,
       uid: 1002,
@@ -1299,6 +1311,7 @@ test("proven invalid GitHub auth keeps local status reconnect-required until liv
       const service = createService({
         accountRuntime: createAccountsRuntime({
           githubAccountMode: GITHUB_ACCOUNT_MODE_USER,
+          previousGithub: (input = {}) => input.vibe64User?.github || null,
           requireExplicitRoots: true,
           systemRoot
         }),
@@ -1320,6 +1333,12 @@ test("proven invalid GitHub auth keeps local status reconnect-required until liv
             return {
               ok: true,
               output: "Logged in"
+            };
+          }
+          if (args[0] === "gh" && args[1] === "auth" && args[2] === "logout") {
+            return {
+              ok: true,
+              output: "Logged out"
             };
           }
           if (args[0] === "gh" && args[1] === "auth" && args[2] === "status") {
@@ -1362,7 +1381,7 @@ test("proven invalid GitHub auth keeps local status reconnect-required until liv
         vibe64User
       });
       assert.equal(initialStatus.accounts.find((account) => account.id === "github")?.connected, true);
-      assert.equal(commands.length, 5);
+      assert.equal(commands.length, 0);
 
       const invalid = await service.recordGithubAuthInvalid({
         reason: "repository-owners",
@@ -1380,7 +1399,7 @@ test("proven invalid GitHub auth keeps local status reconnect-required until liv
       assert.equal(localGithub.connected, false);
       assert.equal(localGithub.code, GITHUB_RECONNECT_REQUIRED_CODE);
       assert.equal(localGithub.status, "reconnect_required");
-      assert.equal(commands.length, 5);
+      assert.equal(commands.length, 0);
 
       const liveStatus = await service.getStatus({
         providerIds: ["github"],
@@ -1390,14 +1409,29 @@ test("proven invalid GitHub auth keeps local status reconnect-required until liv
       const liveGithub = liveStatus.accounts.find((account) => account.id === "github");
       assert.equal(liveGithub.connected, true);
       assert.equal(liveGithub.username, "local-user");
-      assert.equal(commands.length, 10);
+      assert.equal(commands.length, 5);
 
       const clearedStatus = await service.getStatus({
         providerIds: ["github"],
         vibe64User
       });
       assert.equal(clearedStatus.accounts.find((account) => account.id === "github")?.connected, true);
-      assert.equal(commands.length, 15);
+      assert.equal(commands.length, 5);
+
+      const logout = await service.logout({
+        accountId: "github",
+        vibe64User
+      });
+      assert.equal(logout.ok, true);
+      assert.equal(logout.account.connected, false);
+      assert.equal(commands.length, 6);
+
+      const loggedOutStatus = await service.getStatus({
+        providerIds: ["github"],
+        vibe64User
+      });
+      assert.equal(loggedOutStatus.accounts.find((account) => account.id === "github")?.connected, false);
+      assert.equal(commands.length, 6);
     } finally {
       await chmod(githubHome, 0o700);
     }
