@@ -1086,7 +1086,10 @@ function applyPromptHint(text = "") {
   if (!suggestion) {
     return false;
   }
-  composerDraft.value = suggestion;
+  if (composerDraft.value !== suggestion) {
+    composerInput.value?.preserveHeightForNextModelValue?.();
+    composerDraft.value = suggestion;
+  }
   void nextTick(() => {
     composerInput.value?.focus?.({ preventScroll: true });
   });

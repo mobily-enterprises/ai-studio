@@ -66,6 +66,80 @@ test.describe("direct chat", () => {
     await expect(composer).toHaveValue("");
   });
 
+  test("suggestions preserve composer height while authored input still grows it", async ({ page }) => {
+    await page.setViewportSize({ height: 844, width: 390 });
+    const longPrompt = "Show me the simplest useful first version";
+    await mockDirectChat(page, { includeWorktreePaths: true });
+    await routeApiEndpoint(page, "/vibe64/settings", async (route) => {
+      await fulfillJson(route, {
+        aiPolicy: {
+          promptHints: true,
+          revision: 1,
+          version: 1
+        },
+        aiPolicyCanEdit: true,
+        ok: true
+      });
+    });
+    await routeApiEndpoint(
+      page,
+      `/vibe64/sessions/${SESSION_ID}/assistant-access`,
+      async (route) => {
+        await fulfillJson(route, {
+          accessLabel: "Workspace use",
+          available: true,
+          canRequestMessage: false,
+          canUse: true,
+          ok: true,
+          ownerOnly: false
+        });
+      }
+    );
+    await routeApiEndpoint(
+      page,
+      `/vibe64/sessions/${SESSION_ID}/message-suggestions`,
+      async (route) => {
+        await fulfillJson(route, {
+          canManage: true,
+          ok: true,
+          suggestions: []
+        });
+      }
+    );
+
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+    await page.addStyleTag({
+      content: ".studio-autopilot-prompt-textarea__input { width: 10rem !important; }"
+    });
+
+    const composer = page.getByLabel("Message AI assistant");
+    const suggestion = page.getByRole("button", {
+      name: `Use suggestion: ${longPrompt}`
+    });
+    await expect(suggestion).toBeVisible({ timeout: 15_000 });
+    const composerHeight = () => composer.evaluate((element) => (
+      element.getBoundingClientRect().height
+    ));
+    const initialHeight = await composerHeight();
+
+    await suggestion.click();
+
+    await expect(composer).toHaveValue(longPrompt);
+    await expect.poll(composerHeight).toBe(initialHeight);
+    const constrainedComposer = await composer.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      overflowY: window.getComputedStyle(element).overflowY,
+      scrollHeight: element.scrollHeight
+    }));
+    expect(constrainedComposer.scrollHeight).toBeGreaterThan(constrainedComposer.clientHeight);
+    expect(constrainedComposer.overflowY).toBe("auto");
+
+    await composer.press("End");
+    await composer.type(" Add the focused interaction test too.");
+
+    await expect.poll(composerHeight).toBeGreaterThan(initialHeight);
+  });
+
   test.describe("composer delivery on a phone", () => {
     test.use({
       hasTouch: true,
@@ -727,6 +801,7 @@ async function mockDirectChat(page: Page, {
   agentTurn = null,
   conversationPage = null,
   conversationLog = [],
+  includeWorktreePaths = false,
   onMessage = () => undefined,
   onSave = () => undefined,
   onTemporaryConversation = () => undefined,
@@ -748,6 +823,7 @@ async function mockDirectChat(page: Page, {
     limit: number;
   }) => Record<string, unknown> | Promise<Record<string, unknown>>) | null;
   conversationLog?: Record<string, unknown>[];
+  includeWorktreePaths?: boolean;
   onMessage?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
   onSave?: (body: Record<string, unknown>, sessionId: string) => unknown | Promise<unknown>;
   onTemporaryConversation?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
@@ -758,11 +834,17 @@ async function mockDirectChat(page: Page, {
   workState?: Record<string, unknown>;
 } = {}) {
   await mockProjectGateReady(page);
-  const session = directSession({ agentActive, agentTurn, workspaceSetup });
+  const session = directSession({
+    agentActive,
+    agentTurn,
+    includeWorktreePaths,
+    workspaceSetup
+  });
   const sessions = [
     session,
     ...additionalSessionIds.map((sessionId, index) => directSession({
       agentActive: false,
+      includeWorktreePaths,
       sessionId,
       sessionName: index === 0 ? "Second session" : `Session ${index + 2}`,
       workspaceSetup
@@ -969,19 +1051,23 @@ async function detachConversation(
 function directSession({
   agentActive = false,
   agentTurn = null,
+  includeWorktreePaths = false,
   sessionId = SESSION_ID,
   sessionName = "Direct chat",
   workspaceSetup = null
 }: {
   agentActive?: boolean;
   agentTurn?: Record<string, unknown> | null;
+  includeWorktreePaths?: boolean;
   sessionId?: string;
   sessionName?: string;
   workspaceSetup?: Record<string, unknown> | null;
 } = {}) {
   const createdAt = "2026-08-14T00:00:00.000Z";
   const sessionRoot = sessionRuntimeRoot(sessionId);
-  const sourcePath = `${sessionRoot}/source`;
+  const sourcePath = includeWorktreePaths
+    ? `/workspace/vibe64-sources/sessions/active/${sessionId}/source`
+    : `${sessionRoot}/source`;
   return {
     agentRuns: [],
     agentSession: {
@@ -1009,7 +1095,13 @@ function directSession({
       sessionId: SESSION_ID,
       updatedAt: createdAt
     },
-    metadata: {},
+    metadata: includeWorktreePaths
+      ? {
+          source_kind: "session_clone",
+          source_path: sourcePath,
+          source_path_authority: "managed_session_source"
+        }
+      : {},
     revision: 1,
     sessionId,
     sessionName,

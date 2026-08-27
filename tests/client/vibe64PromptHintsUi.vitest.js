@@ -239,6 +239,11 @@ describe("Vibe64 prompt hints UI", () => {
     expect(autopilot).toContain(':placeholder="composerPromptHintPlaceholder"');
     expect(autopilot).toContain("promptHintPreview.value");
     expect(autopilot).toContain("composerDraft.value = suggestion;");
+    expect(autopilot).toContain(
+      "composerInput.value?.preserveHeightForNextModelValue?.();"
+    );
+    expect(autopilot.indexOf("preserveHeightForNextModelValue"))
+      .toBeLessThan(autopilot.indexOf("composerDraft.value = suggestion;"));
     expect(autopilot).toContain("composerInput.value?.focus?.({ preventScroll: true });");
     expect(autopilot).not.toMatch(/function applyPromptHint[\s\S]{0,500}submitComposerMessage/gu);
     expect(promptTextarea).toContain('"attachment-state-change"');
@@ -246,6 +251,17 @@ describe("Vibe64 prompt hints UI", () => {
     expect(promptTextarea).toContain('@focus="handleTextareaFocus"');
     expect(promptTextarea).toContain('@blur="handleTextareaBlur"');
     expect(promptTextarea).toContain("focus: focusTextarea");
+    expect(promptTextarea).toContain("function preserveHeightForNextModelValue()");
+    expect(promptTextarea).toContain("preserveHeightForNextModelValueChange = false;");
+    expect(promptTextarea).toMatch(
+      /function preserveHeightForNextModelValue\(\)[\s\S]{0,500}cancelAnimationFrame\(resizeFrame\)[\s\S]{0,500}getBoundingClientRect\(\)\.height[\s\S]{0,500}overflowY = "auto"/u
+    );
+    expect(promptTextarea).toMatch(
+      /function handleTextareaInput[\s\S]{0,200}preserveHeightForNextModelValueChange = false;[\s\S]{0,300}queueResizeTextarea\(\)/u
+    );
+    expect(promptTextarea).toMatch(
+      /preserveHeightForNextModelValueChange && modelValueChanged[\s\S]{0,200}return;[\s\S]{0,200}queueResizeTextarea\(\)/u
+    );
     expect(promptTextarea).toMatch(
       /props\.modelValue,\s*props\.placeholder,\s*props\.rows/u
     );

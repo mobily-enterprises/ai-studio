@@ -221,6 +221,7 @@ const fileInput = ref(null);
 const textareaRef = ref(null);
 const textareaId = `studio-autopilot-prompt-${useId()}`;
 let resizeFrame = 0;
+let preserveHeightForNextModelValueChange = false;
 const canUseFilePicker = computed(() => Boolean(
   attachments.canAddFiles.value
 ));
@@ -278,7 +279,23 @@ function queueResizeTextarea() {
   });
 }
 
+function preserveHeightForNextModelValue() {
+  const textarea = textareaRef.value;
+  if (!props.autoGrow || !textarea) {
+    return false;
+  }
+  if (resizeFrame) {
+    window.cancelAnimationFrame(resizeFrame);
+    resizeFrame = 0;
+  }
+  preserveHeightForNextModelValueChange = true;
+  textarea.style.height = `${textarea.getBoundingClientRect().height}px`;
+  textarea.style.overflowY = "auto";
+  return true;
+}
+
 function handleTextareaInput(event = {}) {
+  preserveHeightForNextModelValueChange = false;
   emit("input-activity");
   emit("update:modelValue", String(event?.target?.value || ""));
   queueResizeTextarea();
@@ -406,7 +423,14 @@ watch(() => [
   props.modelValue,
   props.placeholder,
   props.rows
-], queueResizeTextarea);
+], (values, previousValues = []) => {
+  const modelValueChanged = values[1] !== previousValues[1];
+  if (preserveHeightForNextModelValueChange && modelValueChanged) {
+    preserveHeightForNextModelValueChange = false;
+    return;
+  }
+  queueResizeTextarea();
+});
 
 watch(attachmentState, (state) => {
   emit("attachment-state-change", state);
@@ -423,6 +447,7 @@ defineExpose({
   clearAttachments,
   focus: focusTextarea,
   openFilePicker,
+  preserveHeightForNextModelValue,
   queueItems
 });
 </script>
