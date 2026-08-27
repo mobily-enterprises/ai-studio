@@ -110,7 +110,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (lines.length < 2) {
+  if (!lines.length) {
     return inactiveNumberedQuestionSugar();
   }
 
@@ -155,7 +155,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
     index += 1;
   }
 
-  if (!questions.length || (questions.length === 1 && !questions[0].choices.length)) {
+  if (!questions.length) {
     return inactiveNumberedQuestionSugar();
   }
   return {
@@ -208,10 +208,10 @@ function parseInlineNumberedQuestionPrompt(value = "") {
 }
 
 function parseNumberedQuestionPrompt(value = "") {
-  const lineQuestions = parseLineNumberedQuestionPrompt(value);
-  return lineQuestions.questions.length
-    ? lineQuestions
-    : parseInlineNumberedQuestionPrompt(value);
+  const inlineQuestions = parseInlineNumberedQuestionPrompt(value);
+  return inlineQuestions.questions.length
+    ? inlineQuestions
+    : parseLineNumberedQuestionPrompt(value);
 }
 
 function numberedQuestionSugarForInput(interaction = {}, fields = []) {

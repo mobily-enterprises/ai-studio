@@ -75,6 +75,33 @@ describe("vibe64NumberedQuestionSugar", () => {
     ]);
   });
 
+  it("renders one explicitly numbered free-text question", () => {
+    const sugar = sugarForPrompt([
+      "Your message arrived as: “Is this code o,” so it seems incomplete.",
+      "",
+      "[1] Did you mean “Is this code okay?” or “Is this cool?”"
+    ].join("\n"));
+
+    expect(sugar).toEqual({
+      intro: "Your message arrived as: “Is this code o,” so it seems incomplete.",
+      outro: "",
+      questions: [
+        {
+          choices: [],
+          label: "Did you mean “Is this code okay?” or “Is this cool?”",
+          name: "__ui_question_1",
+          number: 1
+        }
+      ]
+    });
+    expect(parseNumberedQuestionPrompt("[1] Should I continue?").questions).toMatchObject([
+      {
+        label: "Should I continue?",
+        number: 1
+      }
+    ]);
+  });
+
   it("accepts a trailing possible-answers hint after numbered questions", () => {
     const sugar = sugarForPrompt([
       "I need confirmations before I start.",
@@ -390,5 +417,6 @@ describe("vibe64NumberedQuestionSugar", () => {
       "Then explain why.",
       "[2] What should it contain?"
     ].join("\n")).questions).toEqual([]);
+    expect(sugarForPrompt("See [1] the linked reference.").questions).toEqual([]);
   });
 });
