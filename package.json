@@ -102,12 +102,12 @@
     "@codemirror/view": "^6.43.4",
     "@fastify/static": "^9.1.1",
     "@fastify/websocket": "^11.2.0",
-    "@jskit-ai/http-runtime": "0.1.171",
-    "@jskit-ai/http-web": "0.1.18",
-    "@jskit-ai/kernel": "0.1.173",
-    "@jskit-ai/realtime": "0.1.170",
-    "@jskit-ai/shell-web": "0.1.177",
-    "@jskit-ai/uploads-runtime": "0.1.148",
+    "@jskit-ai/http-runtime": "0.1.174",
+    "@jskit-ai/http-web": "0.1.21",
+    "@jskit-ai/kernel": "0.1.176",
+    "@jskit-ai/realtime": "0.1.173",
+    "@jskit-ai/shell-web": "0.1.180",
+    "@jskit-ai/uploads-runtime": "0.1.151",
     "@local/current-app": "0.1.0",
     "@local/main": "0.1.0",
     "@local/studio-health": "0.1.0",
@@ -134,7 +134,7 @@
     "execa": "^9.6.1",
     "fastify": "^5.7.4",
     "genesis-compiler": "1.2.19",
-    "genesis-stack": "1.0.4",
+    "genesis-stack": "1.0.5",
     "get-port": "^7.2.0",
     "json-rest-schema": "^1.0.16",
     "node-pty": "^1.1.0",
@@ -150,8 +150,8 @@
     "ws": "^8.20.1"
   },
   "devDependencies": {
-    "@jskit-ai/agent-docs": "0.1.147",
-    "@jskit-ai/config-eslint": "0.1.170",
+    "@jskit-ai/agent-docs": "0.1.148",
+    "@jskit-ai/config-eslint": "0.1.173",
     "@playwright/test": "1.61.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "eslint": "^10.8.0",
@@ -159,7 +159,7 @@
     "vite-plugin-vuetify": "^2.1.3",
     "vitepress": "^1.6.4",
     "vitest": "^4.0.18",
-    "@jskit-ai/jskit-catalog": "0.1.198"
+    "@jskit-ai/jskit-catalog": "0.1.201"
   },
   "overrides": {
     "vitepress": {

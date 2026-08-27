@@ -117,7 +117,7 @@ test("managed projects begin as one canonical JSKIT foundation commit without a 
     "--git-dir", initialized.repositoryPath, "show", "main:package.json"
   ])).stdout);
   assert.equal(packageJson.name, "managed-foundation");
-  assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.200");
+  assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.201");
   assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
   assert.equal(packageJson.scripts["jskit:check"], "jskit check");
   assert.equal(packageJson.workspaces[0], "packages/*");
