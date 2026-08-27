@@ -274,12 +274,18 @@ const socketPath = process.env.${VIBE64_CODEX_GIT_COMMAND_SOCKET_ENV} || "";
 const sessionId = process.env.${VIBE64_CODEX_GIT_COMMAND_SESSION_ID_ENV} || "";
 const token = process.env.${VIBE64_CODEX_GIT_COMMAND_TOKEN_ENV} || "";
 const generationId = process.env.${VIBE64_CODEX_GIT_COMMAND_GENERATION_ENV} || "";
+const noStdinParentPid = Number.parseInt(
+  process.env.VIBE64_CODEX_GIT_COMMAND_NO_STDIN_PARENT_PID || "",
+  10
+);
 
 if (!socketPath || !sessionId || !token || !generationId) {
   fail("vibe64_agent_control_unavailable: Managed Git control identity is unavailable. Reconnect the assistant.");
 }
 
-const inputBase64 = await readStdinBase64();
+const inputBase64 = noStdinParentPid === process.ppid
+  ? ""
+  : await readStdinBase64();
 const response = await requestSocket({
   socketPath,
   body: {

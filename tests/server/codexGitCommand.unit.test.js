@@ -252,6 +252,45 @@ test("Codex Git wrapper transports the complete command request", async () => {
     assert.equal(calls[0].cwd, sourcePath);
     assert.equal(Buffer.from(calls[0].inputBase64, "base64").toString("utf8"), "stdin payload");
     assert.equal(calls[0].sessionId, sessionId);
+
+    const directChild = await new Promise((resolve, reject) => {
+      const child = spawn(path.join(prepared.hostWrapperDir, "git"), ["status", "--short"], {
+        cwd: sourcePath,
+        env: {
+          ...process.env,
+          ...prepared.env,
+          VIBE64_CODEX_GIT_COMMAND_NO_STDIN_PARENT_PID: String(process.pid)
+        },
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      let fallbackEndedInput = false;
+      let stderr = "";
+      let stdout = "";
+      const fallback = setTimeout(() => {
+        fallbackEndedInput = true;
+        child.stdin.end("late input");
+      }, 5000);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.stdin.on("error", () => {});
+      child.once("error", reject);
+      child.once("close", (exitCode, signal) => {
+        clearTimeout(fallback);
+        child.stdin.destroy();
+        resolve({ exitCode, fallbackEndedInput, signal, stderr, stdout });
+      });
+    });
+
+    assert.equal(directChild.exitCode, 0, directChild.stderr);
+    assert.equal(directChild.signal, null);
+    assert.equal(directChild.stdout, "transport-ok\n");
+    assert.equal(directChild.fallbackEndedInput, false);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].inputBase64, "");
   });
 });
 

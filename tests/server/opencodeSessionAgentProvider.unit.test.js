@@ -75,6 +75,14 @@ test("OpenCode provider advertises and audits its helper execution profile on tu
         text: '{"subject":"Add multi-AI sessions"}',
         threadId: "ses_helper"
       };
+    },
+    async streamDetachedChatTurn(...args) {
+      calls.push(args);
+      return {
+        ok: true,
+        text: '{"subject":"Add streamed multi-AI sessions"}',
+        threadId: "ses_streamed_helper"
+      };
     }
   };
   const provider = createOpenCodeSessionAgentProvider({ controller });
@@ -96,14 +104,34 @@ test("OpenCode provider advertises and audits its helper execution profile on tu
     executionProfile: profile,
     prompt: "Name this work"
   });
+  const streamed = await provider.streamDetachedChatTurn({
+    assistantSelection: selection,
+    assistantAccess,
+    onEvent: (event) => events.push(event),
+    runtime: { stateRoot: "/runtime" },
+    session: { sessionId: "session-1" },
+    sessionId: "session-1"
+  }, {
+    executionProfile: profile,
+    prompt: "Name streamed work"
+  });
 
   assert.deepEqual(provider.executionProfiles, [VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY]);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(calls[0][0], "session-1");
   assert.equal(calls[0][1].executionProfile, profile);
-  assert.deepEqual(events, [{
-    executionProfile: profile,
-    type: "execution-profile"
-  }]);
+  assert.equal(calls[1][0], "session-1");
+  assert.equal(calls[1][1].executionProfile, profile);
+  assert.deepEqual(events, [
+    {
+      executionProfile: profile,
+      type: "execution-profile"
+    },
+    {
+      executionProfile: profile,
+      type: "execution-profile"
+    }
+  ]);
   assert.deepEqual(result.executionProfile, profile);
+  assert.deepEqual(streamed.executionProfile, profile);
 });

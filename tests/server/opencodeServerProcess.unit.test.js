@@ -55,6 +55,7 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
     mode: "primary",
     permission: { "*": "deny" }
   });
+  assert.equal(config.snapshot, false);
 });
 
 test("OpenCode forces Z.AI API and Coding Plan through distinct canonical billing routes", () => {
@@ -185,6 +186,11 @@ test("OpenCode servers run and drain through one managed execution id", async (t
   assert.equal(request.execution.ownerId, "session-1");
   assert.equal(request.execution.projectSlug, "catalogue");
   assert.equal(request.execution.sessionId, "session-1");
+  assert.match(
+    request.args[1],
+    /export VIBE64_CODEX_GIT_COMMAND_NO_STDIN_PARENT_PID=\$\$/u
+  );
+  assert.match(request.args[1], /exec "\$@" <\/dev\/null/u);
   assert.equal(request.baseEnv.ANTHROPIC_API_KEY, undefined);
   assert.equal(request.baseEnv.OPENCODE_DB, path.join(root, "state", "opencode.db"));
   assert.equal(request.credentialHome.home, path.join(privateRoot, "home"));

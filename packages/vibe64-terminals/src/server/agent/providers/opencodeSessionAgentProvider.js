@@ -320,12 +320,14 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
       });
     },
     async streamDetachedChatTurn(context, input = {}) {
-      return controller.streamDetachedChatTurn(context.sessionId, input, {
+      const executionProfile = emitOpenCodeExecutionProfile(context, input.executionProfile);
+      const result = await controller.streamDetachedChatTurn(context.sessionId, input, {
         onEvent: context.onEvent,
         runtime: context.runtime,
         session: context.session,
         vibe64User: context.vibe64User
       });
+      return executionProfile ? { ...result, executionProfile } : result;
     },
     async subscribeTerminal() {
       return unsupportedOperation("raw terminal");

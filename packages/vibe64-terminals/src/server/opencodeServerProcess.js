@@ -31,7 +31,8 @@ const OPENCODE_MANAGED_STARTUP_SCRIPT = [
   "shift",
   ": > \"$log_path\"",
   "chmod 600 \"$log_path\"",
-  "exec \"$@\" >>\"$log_path\" 2>&1"
+  "export VIBE64_CODEX_GIT_COMMAND_NO_STDIN_PARENT_PID=$$",
+  "exec \"$@\" </dev/null >>\"$log_path\" 2>&1"
 ].join("\n");
 const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
   agent: {
@@ -43,7 +44,8 @@ const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
         "*": "deny"
       }
     }
-  }
+  },
+  snapshot: false
 });
 
 function text(value = "") {
