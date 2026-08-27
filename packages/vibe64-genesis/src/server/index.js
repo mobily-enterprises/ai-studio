@@ -33,8 +33,10 @@ const {
   indexCodebase,
   initialize,
   inspectDerivedArtifacts,
+  inspectEngineering,
   inspectEnvironment,
-  inspectStackSection
+  inspectStackSection,
+  setEngineeringProfile
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
@@ -199,6 +201,14 @@ function inspectGenesisEnvironment(options = {}) {
   return exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options);
 }
 
+function inspectGenesisEngineering(options = {}) {
+  return exactGenesisInspection(inspectEngineering, GENESIS_CONTRACTS.engineering, options);
+}
+
+function setGenesisEngineeringProfile(options = {}) {
+  return exactGenesisInspection(setEngineeringProfile, GENESIS_CONTRACTS.engineering, options);
+}
+
 async function inspectVibe64Outputs(options = {}) {
   const [section, environment] = await Promise.all([
     inspectGenesisStackSection(VIBE64_OUTPUTS_SECTION, options),
@@ -320,6 +330,7 @@ export {
   genesisPromptTask,
   initializeGenesisProject,
   inspectGenesisDerivedArtifacts,
+  inspectGenesisEngineering,
   inspectGenesisStackSection,
   inspectVibe64Deployment,
   inspectGenesisEnvironment,
@@ -330,6 +341,7 @@ export {
   parseVibe64WorkspaceSetupLines,
   refreshGenesisCities,
   renderGenesisPrompt,
+  setGenesisEngineeringProfile,
   withVibe64ConversationContract,
   withGenesisCommandShim
 };

@@ -17,16 +17,31 @@ const projectSettingsMocks = vi.hoisted(() => ({
   commandOptions: [],
   commands: [],
   dialog: vi.fn(),
-  endpointOptions: null,
+  endpointOptions: [],
+  engineeringResource: null,
   realtimeOptions: [],
   resource: null,
+  route: { query: {} },
+  router: { replace: vi.fn() },
   sessionEventMatches: vi.fn(() => true)
 }));
 
 vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
   useEndpointResource(options) {
-    projectSettingsMocks.endpointOptions = options;
-    return projectSettingsMocks.resource;
+    const index = projectSettingsMocks.endpointOptions.length;
+    projectSettingsMocks.endpointOptions.push(options);
+    return index === 0
+      ? projectSettingsMocks.resource
+      : projectSettingsMocks.engineeringResource;
+  }
+}));
+
+vi.mock("vue-router", () => ({
+  useRoute() {
+    return projectSettingsMocks.route;
+  },
+  useRouter() {
+    return projectSettingsMocks.router;
   }
 }));
 
@@ -183,6 +198,61 @@ function createResource({
   };
 }
 
+function createEngineeringResource({
+  available = true,
+  profile = "focused.v1",
+  sessionId = "session-a",
+  status = "configured"
+} = {}) {
+  const profiles = [
+    {
+      description: "Small, direct changes for ordinary product work.",
+      id: "focused.v1",
+      name: "Focused"
+    },
+    {
+      description: "Long-lived product work with explicit compatibility and operational care.",
+      id: "durable.v1",
+      name: "Durable product"
+    },
+    {
+      description: "Security- or reliability-critical work backed by explicit risks and evidence.",
+      id: "high-assurance.v1",
+      name: "High assurance"
+    }
+  ];
+  const data = ref({
+    engineering: available
+      ? {
+          available: true,
+          profile: profiles.find((candidate) => candidate.id === profile),
+          profiles,
+          source: {
+            rootKind: "session-source",
+            sessionId
+          },
+          status,
+          unavailableReason: ""
+        }
+      : {
+          available: false,
+          profile: null,
+          profiles: [],
+          source: {
+            rootKind: "metadata-only",
+            sessionId: ""
+          },
+          unavailableReason: "Create or select an AI session to choose an engineering profile."
+        }
+  });
+  return {
+    data,
+    isLoading: ref(false),
+    loadError: ref(""),
+    reload: vi.fn(async () => ({ data: data.value }))
+  };
+}
+
 function testRenderer() {
   return createRenderer({
     createComment: (text) => ({ children: [], props: {}, text, type: "comment" }),
@@ -279,11 +349,14 @@ function nodeText(node) {
 describe("ProjectSettingsPanel AI behaviour", () => {
   beforeEach(() => {
     projectSettingsMocks.commandOptions.length = 0;
-    projectSettingsMocks.commands = [createCommand(), createCommand()];
+    projectSettingsMocks.commands = [createCommand(), createCommand(), createCommand()];
     projectSettingsMocks.dialog.mockReset();
-    projectSettingsMocks.endpointOptions = null;
+    projectSettingsMocks.endpointOptions.length = 0;
+    projectSettingsMocks.engineeringResource = createEngineeringResource();
     projectSettingsMocks.realtimeOptions.length = 0;
     projectSettingsMocks.resource = createResource();
+    projectSettingsMocks.route.query = { sessionId: "session-a" };
+    projectSettingsMocks.router.replace.mockReset();
     projectSettingsMocks.sessionEventMatches.mockClear();
   });
 
@@ -308,6 +381,10 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(findField(container, "Anything else (optional)").props.modelValue)
       .toBe("Use Australian English.");
     expect(findField(container, "Suggest useful next prompts").props.modelValue).toBe(false);
+    expect(findField(container, "Engineering profile").props.modelValue).toBe("focused.v1");
+    expect(findField(container, "Engineering profile").props.hint)
+      .toContain("Small, direct changes");
+    expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
     expect(findButton(container, "Save AI behaviour").props.disabled).toBe(true);
 
     app.unmount();
@@ -445,7 +522,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     mounted.app.unmount();
 
     projectSettingsMocks.commandOptions.length = 0;
-    projectSettingsMocks.commands = [createCommand(), createCommand()];
+    projectSettingsMocks.commands = [createCommand(), createCommand(), createCommand()];
     projectSettingsMocks.realtimeOptions.length = 0;
     projectSettingsMocks.resource = createResource({ canEdit: false });
     mounted = mountPanel();
@@ -466,7 +543,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
   it("uses a stable pending label and blocks a duplicate owner submission", async () => {
     const pending = createDeferred();
     const aiCommand = createCommand({ pending });
-    projectSettingsMocks.commands = [createCommand(), aiCommand];
+    projectSettingsMocks.commands = [createCommand(), aiCommand, createCommand()];
     const { app, container } = mountPanel();
 
     findField(container, "Tone").props["onUpdate:modelValue"]("encouraging");
@@ -519,10 +596,84 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     app.unmount();
   });
 
+  it("saves a source-owned engineering profile with stable pending feedback", async () => {
+    const pending = createDeferred();
+    const engineeringCommand = createCommand({ pending });
+    projectSettingsMocks.commands = [createCommand(), createCommand(), engineeringCommand];
+    const { app, container } = mountPanel();
+
+    findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+    await nextTick();
+    expect(findField(container, "Engineering profile").props.hint)
+      .toContain("Long-lived product work");
+    const firstSubmission = findButton(container, "Save engineering approach").props.onClick();
+    const duplicateSubmission = findButton(container, "Save engineering approach").props.onClick();
+    await nextTick();
+
+    expect(findButton(container, "Saving…").props.disabled).toBe(true);
+    expect(engineeringCommand.run).toHaveBeenCalledOnce();
+    expect(projectSettingsMocks.commandOptions[2].buildRawPayload(null, {
+      context: engineeringCommand.run.mock.calls[0][0]
+    })).toEqual({
+      profile: "durable.v1",
+      sessionId: "session-a"
+    });
+
+    pending.resolve();
+    await Promise.all([firstSubmission, duplicateSubmission]);
+    await nextTick();
+    expect(projectSettingsMocks.engineeringResource.reload).toHaveBeenCalledOnce();
+
+    app.unmount();
+  });
+
+  it("keeps an unavailable source error in the engineering section", () => {
+    projectSettingsMocks.engineeringResource = createEngineeringResource({ available: false });
+    const { app, container } = mountPanel();
+
+    expect(findField(container, "Engineering profile")).toBeNull();
+    expect(nodeText(container)).toContain(
+      "Create or select an AI session to choose an engineering profile."
+    );
+
+    app.unmount();
+  });
+
+  it("persists the selected session in the URL and rehydrates from a warm back-navigation cache", async () => {
+    projectSettingsMocks.route.query = {};
+    let mounted = mountPanel();
+    await nextTick();
+    expect(projectSettingsMocks.router.replace).toHaveBeenCalledWith({
+      query: {
+        sessionId: "session-a"
+      }
+    });
+    mounted.app.unmount();
+
+    projectSettingsMocks.commandOptions.length = 0;
+    projectSettingsMocks.commands = [createCommand(), createCommand(), createCommand()];
+    projectSettingsMocks.endpointOptions.length = 0;
+    projectSettingsMocks.engineeringResource = createEngineeringResource({
+      profile: "high-assurance.v1",
+      sessionId: "session-b"
+    });
+    projectSettingsMocks.route.query = { sessionId: "session-b" };
+    projectSettingsMocks.router.replace.mockReset();
+    mounted = mountPanel();
+
+    expect(findField(mounted.container, "Engineering profile").props.modelValue)
+      .toBe("high-assurance.v1");
+    expect(projectSettingsMocks.endpointOptions[1].readQuery.value)
+      .toEqual({ sessionId: "session-b" });
+    expect(projectSettingsMocks.router.replace).not.toHaveBeenCalled();
+
+    mounted.app.unmount();
+  });
+
   it("refreshes manually and through both declared realtime paths", async () => {
     const { app, container } = mountPanel();
 
-    expect(projectSettingsMocks.endpointOptions.realtime).toEqual({
+    expect(projectSettingsMocks.endpointOptions[0].realtime).toEqual({
       event: "vibe64.project.changed"
     });
     const sessionRealtime = projectSettingsMocks.realtimeOptions[0];
@@ -533,6 +684,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     sessionRealtime.onEvent();
     await nextTick();
     expect(projectSettingsMocks.resource.reload).toHaveBeenCalledTimes(2);
+    expect(projectSettingsMocks.engineeringResource.reload).toHaveBeenCalledTimes(2);
 
     projectSettingsMocks.resource.isLoading.value = true;
     await nextTick();

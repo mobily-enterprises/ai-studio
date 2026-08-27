@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   ACTION_CREATE_PROJECT,
+  ACTION_READ_ENGINEERING_SETTINGS,
   ACTION_READ_ENV,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_ENGINEERING_PROFILE,
   ACTION_SAVE_PROJECT_AI_POLICY,
   createProjectActions
 } from "../../packages/vibe64-project/src/server/actions.js";
@@ -55,6 +57,56 @@ test("project settings read action uses the Vibe64 project settings boundary", a
 
   assert.equal(calls, 1);
   assert.equal(result.developmentDatabase.scope, "session");
+});
+
+test("engineering settings actions preserve the selected source context", async () => {
+  const calls = [];
+  const project = {
+    async readEngineeringSettings(input) {
+      calls.push(["read", input]);
+      return {
+        engineering: {
+          available: true,
+          profile: { id: "focused.v1" }
+        },
+        ok: true
+      };
+    },
+    async saveEngineeringProfile(input) {
+      calls.push(["save", input]);
+      return {
+        engineering: {
+          available: true,
+          profile: { id: input.profile }
+        },
+        ok: true,
+        projectSlug: "catalogue"
+      };
+    }
+  };
+  const read = featureAction(project, ACTION_READ_ENGINEERING_SETTINGS);
+  const save = featureAction(project, ACTION_SAVE_ENGINEERING_PROFILE);
+  const input = {
+    profile: "durable.v1",
+    sessionId: "session-a"
+  };
+
+  const readResult = await read.execute({ sessionId: input.sessionId }, {});
+  const saveResult = await save.execute(input, {});
+  const event = await save.events[0]({
+    context: {},
+    input,
+    result: saveResult
+  });
+
+  assert.equal(readResult.engineering.profile.id, "focused.v1");
+  assert.equal(saveResult.engineering.profile.id, "durable.v1");
+  assert.deepEqual(calls, [
+    ["read", { sessionId: "session-a" }],
+    ["save", input]
+  ]);
+  assert.equal(event.realtime.event, "vibe64.project.changed");
+  assert.deepEqual(event.realtime.payload, { projectSlug: "catalogue" });
 });
 
 test("project mutations publish first-class action events", async () => {

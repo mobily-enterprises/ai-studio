@@ -1,11 +1,13 @@
 import {
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
+  ACTION_READ_ENGINEERING_SETTINGS,
   ACTION_READ_ENV,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_ENGINEERING_PROFILE,
   ACTION_SAVE_PROJECT_AI_POLICY,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT
@@ -13,6 +15,8 @@ import {
 import {
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
+  projectEngineeringProfileInputValidator,
+  projectEngineeringSettingsReadInputValidator,
   projectAiPolicyInputValidator,
   projectEnvReadInputValidator,
   projectEnvSecretRevealInputValidator,
@@ -98,6 +102,18 @@ function registerRoutes(http, {
     body: projectDevelopmentDatabaseScopeInputValidator,
     buildInput: routes.requestBody,
     summary: "Choose whether Online manages one development database per session or per project."
+  });
+  routes.actionRoute("GET", "/settings/engineering", {
+    actionId: ACTION_READ_ENGINEERING_SETTINGS,
+    buildInput: routes.requestQuery,
+    query: projectEngineeringSettingsReadInputValidator,
+    summary: "Read the Genesis engineering profile from project source."
+  });
+  routes.actionRoute("PUT", "/settings/engineering", {
+    actionId: ACTION_SAVE_ENGINEERING_PROFILE,
+    body: projectEngineeringProfileInputValidator,
+    buildInput: routes.requestBody,
+    summary: "Save the Genesis engineering profile in project source."
   });
   routes.actionRoute("GET", "/preview-identities", {
     actionId: ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,

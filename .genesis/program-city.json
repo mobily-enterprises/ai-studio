@@ -206,6 +206,35 @@
       "title": "Project catalog"
     },
     {
+      "description": "People can choose how cautiously the AI changes a project without turning that\nchoice into machine-local Vibe64 metadata.",
+      "districtId": "subsystem:projects",
+      "id": "operation:projects/engineering-approach",
+      "implementationMap": "- `inspectGenesisEngineering()` — accepts only the exact pinned Genesis contract.\n- `engineeringProfileState()` — resolves a standalone or session source into the public settings view.\n- `saveEngineeringProfileState()` — serializes the source-owned selection and returns its refreshed state.",
+      "name": "engineering-approach",
+      "path": "genesis/program/projects/engineering-approach.md",
+      "publicContract": "Project settings presents the versioned profile names and descriptions supplied\nby the exact pinned Genesis contract. Vibe64 does not duplicate that catalog or\ninterpret its guidance. A selection changes `genesis/engineering.md` in the\nstandalone source or the chosen hosted session source, so it follows ordinary\nsource history; Genesis preserves any project-specific requirements already in\nthat document.\nWhen a hosted project has no available source, the setting stays visibly\nunavailable instead of treating the project metadata namespace as source. An\nactive session is selected automatically when needed, then recorded in the URL\nso navigation retains the same source context. Writes share the existing agent\nand project-source exclusion boundaries, preventing a profile change from\nracing renewal or another source mutation.\nEvery profile retains Genesis's universal simplicity gate: changes remain easy\nto reason about, minimal, and targeted, and the AI asks before a concrete need\nforces materially greater complexity.",
+      "sourceFileIds": [
+        "file:packages/vibe64-genesis/src/server/index.js",
+        "file:packages/vibe64-project/src/server/actions.js",
+        "file:packages/vibe64-project/src/server/inputSchemas.js",
+        "file:packages/vibe64-project/src/server/registerRoutes.js",
+        "file:packages/vibe64-project/src/server/service.js",
+        "file:src/components/studio/ProjectSettingsPanel.vue",
+        "file:src/lib/studioGateApi.js"
+      ],
+      "sources": [
+        "packages/vibe64-genesis/src/server/index.js",
+        "packages/vibe64-project/src/server/actions.js",
+        "packages/vibe64-project/src/server/inputSchemas.js",
+        "packages/vibe64-project/src/server/registerRoutes.js",
+        "packages/vibe64-project/src/server/service.js",
+        "src/components/studio/ProjectSettingsPanel.vue",
+        "src/lib/studioGateApi.js"
+      ],
+      "subsystem": "projects",
+      "title": "Choose an engineering approach"
+    },
+    {
       "description": "Each coding task can use a recoverable source workspace that is isolated from\nthe canonical project and from other sessions.",
       "districtId": "subsystem:sessions",
       "id": "operation:sessions/workspaces",
@@ -526,6 +555,41 @@
       "toId": "file:src/composables/useVibe64ProjectsResource.js"
     },
     {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-genesis/src/server/index.js"
+    },
+    {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/actions.js"
+    },
+    {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/inputSchemas.js"
+    },
+    {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/registerRoutes.js"
+    },
+    {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-project/src/server/service.js"
+    },
+    {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/ProjectSettingsPanel.vue"
+    },
+    {
+      "fromId": "operation:projects/engineering-approach",
+      "kind": "implemented-by",
+      "toId": "file:src/lib/studioGateApi.js"
+    },
+    {
       "fromId": "operation:sessions/workspaces",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-sessions/src/server/service.js"
@@ -591,7 +655,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:5d7026ddea0a9963fde72562964a6912ce195d56fadc78ef651fee6a728ca7f7",
+  "programHash": "sha256:a5125602d96357900f928159dbd1faeae587b801a6fba229e5d677b91cc3de85",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

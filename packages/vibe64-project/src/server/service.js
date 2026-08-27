@@ -58,7 +58,9 @@ import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
-  inspectGenesisEnvironment
+  inspectGenesisEngineering,
+  inspectGenesisEnvironment,
+  setGenesisEngineeringProfile
 } from "@local/vibe64-genesis/server";
 import {
   readPreviewApplicationIdentities as readStoredPreviewApplicationIdentities,
@@ -237,8 +239,10 @@ function genesisEnvironmentIsUnconfigured(error) {
 
 function createService({
   env = process.env,
+  inspectEngineering = inspectGenesisEngineering,
   inspectEnvironment = inspectGenesisEnvironment,
   projectContext = null,
+  setEngineeringProfile = setGenesisEngineeringProfile,
   targetRoot = ""
 } = {}) {
   let resourceEnvironmentProvider = null;
@@ -831,6 +835,100 @@ function createService({
     return (await resolvedProjectEnvironment({}, await userEnvRecords())).effectiveEnvironment;
   }
 
+  async function engineeringSourceForInput(input = {}) {
+    const source = await sourceForInput(input);
+    if (source.sourceRoot || source.sessionId) {
+      return source;
+    }
+    const session = await sessionStore().readCurrentSession();
+    return session
+      ? sourceForInput({
+          ...input,
+          session,
+          sessionId: session.sessionId
+        })
+      : source;
+  }
+
+  async function engineeringProfileState(input = {}) {
+    const source = await engineeringSourceForInput(input);
+    const publicSource = {
+      rootKind: source.rootKind,
+      sessionId: source.sessionId
+    };
+    if (!source.sourceRoot) {
+      return {
+        available: false,
+        profile: null,
+        profiles: [],
+        source: publicSource,
+        unavailableReason: source.sessionId
+          ? "This session does not have an available project source yet."
+          : "Create or select an AI session to choose an engineering profile."
+      };
+    }
+    await assertProjectDirectoryUsable(source.sourceRoot);
+    const inspection = await inspectEngineering({
+      projectRoot: source.sourceRoot
+    });
+    return {
+      available: true,
+      profile: {
+        description: inspection.profile.description,
+        id: inspection.profile.id,
+        name: inspection.profile.name
+      },
+      profiles: inspection.profiles.map((profile) => ({
+        description: profile.description,
+        id: profile.id,
+        name: profile.name
+      })),
+      source: publicSource,
+      status: inspection.status,
+      unavailableReason: ""
+    };
+  }
+
+  async function saveEngineeringProfileState(input = {}) {
+    let sourceInput = input;
+    if (!String(input.sessionId || "").trim() && !selectedSourceRoot()) {
+      const session = await sessionStore().readCurrentSession();
+      if (session?.sessionId) {
+        sourceInput = {
+          ...input,
+          sessionId: session.sessionId
+        };
+      }
+    }
+    return runSessionSourceWorkExclusive(sourceInput, async () => {
+      const source = await engineeringSourceForInput(sourceInput);
+      if (!source.sourceRoot) {
+        throw vibe64Error(
+          "Engineering profiles require an available project source. Create or select an AI session first.",
+          "vibe64_engineering_source_required"
+        );
+      }
+      await assertProjectDirectoryUsable(source.sourceRoot);
+      return runProjectSourceMutationExclusive(
+        selectedProjectRuntimeRoot(),
+        async () => {
+          await setEngineeringProfile({
+            profile: input.profile,
+            projectRoot: source.sourceRoot
+          });
+          return {
+            engineering: await engineeringProfileState(sourceInput),
+            ok: true,
+            projectSlug: path.basename(requireSelectedTargetRoot())
+          };
+        },
+        {
+          operation: "save-engineering-profile"
+        }
+      );
+    });
+  }
+
   async function previewApplicationIdentitySource(input = {}) {
     const source = await sourceForInput(input);
     if (!source.sourceRoot) {
@@ -997,6 +1095,13 @@ function createService({
       return projectResult(() => readEnvState(input));
     },
 
+    async readEngineeringSettings(input = {}) {
+      return projectResult(async () => ({
+        engineering: await engineeringProfileState(input),
+        ok: true
+      }));
+    },
+
     async revealEnvSecret(input = {}) {
       return projectResult(() => revealEnvSecretState(input));
     },
@@ -1078,6 +1183,10 @@ function createService({
 
     async saveDevelopmentDatabaseScope(input = {}) {
       return projectResult(() => saveDevelopmentDatabaseScopeState(input));
+    },
+
+    async saveEngineeringProfile(input = {}) {
+      return projectResult(() => saveEngineeringProfileState(input));
     },
 
     async saveProjectAiPolicy(input = {}) {

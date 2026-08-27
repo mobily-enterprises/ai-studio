@@ -39,3 +39,7 @@ transports other named Stack sections without interpreting them. Vibe64 owns
 the strict mechanical contracts for workspace setup, launch, preview identity,
 and application deployment, then executes them under its host policy without
 inventing commands from a framework or project shape.
+
+People can choose how cautiously the AI engineers a project. The choice follows
+the project's source, always keeps ordinary work simple and targeted, and makes
+the AI ask before a real requirement forces materially greater complexity.

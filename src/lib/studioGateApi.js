@@ -10,6 +10,7 @@ const VIBE64_PROJECT_CREATE_API_SUFFIX = "/vibe64/projects";
 const VIBE64_ENV_API_SUFFIX = "/vibe64/env";
 const VIBE64_ENV_SECRET_REVEAL_API_SUFFIX = "/vibe64/env/reveal";
 const VIBE64_DEVELOPMENT_DATABASE_API_SUFFIX = "/vibe64/settings/development-database";
+const VIBE64_ENGINEERING_API_SUFFIX = "/vibe64/settings/engineering";
 const VIBE64_AI_POLICY_API_SUFFIX = "/vibe64/settings/ai-policy";
 const VIBE64_ENV_USER_VALUES_API_SUFFIX = "/vibe64/env/user-values";
 const VIBE64_PREVIEW_IDENTITIES_API_SUFFIX = "/vibe64/preview-identities";
@@ -25,6 +26,7 @@ const ENV_ENDPOINT = `${VIBE64_ENDPOINT}/env`;
 const ENV_SECRET_REVEAL_ENDPOINT = `${ENV_ENDPOINT}/reveal`;
 const PROJECT_SETTINGS_ENDPOINT = `${VIBE64_ENDPOINT}/settings`;
 const DEVELOPMENT_DATABASE_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/development-database`;
+const ENGINEERING_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/engineering`;
 const AI_POLICY_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/ai-policy`;
 const ENV_USER_VALUES_ENDPOINT = `${ENV_ENDPOINT}/user-values`;
 const PREVIEW_IDENTITIES_ENDPOINT = `${VIBE64_ENDPOINT}/preview-identities`;
@@ -39,6 +41,17 @@ function envQueryKey(surfaceId, ownershipFilter, projectSlug) {
 
 function projectSettingsQueryKey(surfaceId, ownershipFilter, projectSlug) {
   return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "settings"];
+}
+
+function engineeringSettingsQueryKey(surfaceId, ownershipFilter, projectSlug, sessionId = "") {
+  return [
+    "vibe64",
+    ...vibe64ProjectQueryScope(projectSlug),
+    surfaceId,
+    ownershipFilter,
+    "engineering",
+    String(sessionId || "").trim() || "selected-source"
+  ];
 }
 
 function previewIdentitiesQueryKey(surfaceId, ownershipFilter, projectSlug) {
@@ -56,6 +69,7 @@ function studioHealthQueryKey(surfaceId, ownershipFilter) {
 export {
   VIBE64_AI_POLICY_API_SUFFIX,
   VIBE64_DEVELOPMENT_DATABASE_API_SUFFIX,
+  VIBE64_ENGINEERING_API_SUFFIX,
   VIBE64_CONNECTIONS_CHANGED_EVENT,
   VIBE64_PROJECT_CREATE_API_SUFFIX,
   VIBE64_PROJECT_CHANGED_EVENT,
@@ -68,6 +82,7 @@ export {
   ENV_ENDPOINT,
   ENV_SECRET_REVEAL_ENDPOINT,
   DEVELOPMENT_DATABASE_ENDPOINT,
+  ENGINEERING_ENDPOINT,
   AI_POLICY_ENDPOINT,
   ENV_USER_VALUES_ENDPOINT,
   PROJECT_SETTINGS_ENDPOINT,
@@ -77,6 +92,7 @@ export {
   STUDIO_HEALTH_ENDPOINT,
   projectSelectionQueryKey,
   envQueryKey,
+  engineeringSettingsQueryKey,
   projectSettingsQueryKey,
   previewIdentitiesQueryKey,
   targetProjectQueryKey,

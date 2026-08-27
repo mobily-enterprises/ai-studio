@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTION_READ_ENGINEERING_SETTINGS,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_ENGINEERING_PROFILE,
   ACTION_SAVE_PROJECT_AI_POLICY,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES
 } from "../../packages/vibe64-project/src/server/actions.js";
@@ -86,6 +88,84 @@ test("project settings routes own the development database choice outside Env", 
           actionId: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
           input: {
             scope: "project"
+          }
+        }
+      ]);
+    });
+  });
+});
+
+test("engineering settings routes carry the profile and session source identity", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const app = testRouteApp();
+      registerRoutes(routeHttp(app), {
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app"
+      });
+      const readRoute = findRegisteredRoute(app, {
+        method: "GET",
+        path: `${apiRouteBase}/vibe64/settings/engineering`
+      });
+      const saveRoute = findRegisteredRoute(app, {
+        method: "PUT",
+        path: `${apiRouteBase}/vibe64/settings/engineering`
+      });
+      assert.ok(readRoute);
+      assert.ok(saveRoute);
+      assert.deepEqual(readRoute.options.query.schema.patch({ sessionId: "session-a" }), {
+        errors: {},
+        validatedObject: { sessionId: "session-a" }
+      });
+      assert.deepEqual(saveRoute.options.body.schema.patch({
+        profile: "durable.v1",
+        sessionId: "session-a"
+      }), {
+        errors: {},
+        validatedObject: {
+          profile: "durable.v1",
+          sessionId: "session-a"
+        }
+      });
+      const calls = [];
+      const executeAction = async (action) => {
+        calls.push(action);
+        return { ok: true };
+      };
+      await readRoute.handler({
+        input: {
+          query: { sessionId: "session-a" }
+        },
+        params: routeProjectParams(),
+        query: { sessionId: "session-a" },
+        executeAction
+      }, testReply());
+      await saveRoute.handler({
+        body: {
+          profile: "durable.v1",
+          sessionId: "session-a"
+        },
+        input: {
+          body: {
+            profile: "durable.v1",
+            sessionId: "session-a"
+          }
+        },
+        params: routeProjectParams(),
+        executeAction
+      }, testReply());
+
+      assert.deepEqual(calls, [
+        {
+          actionId: ACTION_READ_ENGINEERING_SETTINGS,
+          input: { sessionId: "session-a" }
+        },
+        {
+          actionId: ACTION_SAVE_ENGINEERING_PROFILE,
+          input: {
+            profile: "durable.v1",
+            sessionId: "session-a"
           }
         }
       ]);

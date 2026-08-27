@@ -33,6 +33,25 @@ const projectSettingsReadInputValidator = patchSchema({
   ...optionalUser
 });
 
+const projectEngineeringSettingsReadInputValidator = patchSchema({
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
+});
+
+const projectEngineeringProfileInputValidator = patchSchema({
+  profile: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
+});
+
 const projectAiPolicyInputValidator = patchSchema({
   ...optionalUser,
   customNote: {
@@ -163,6 +182,8 @@ const previewApplicationIdentitiesInputValidator = patchSchema({
 export {
   projectAiPolicyInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
+  projectEngineeringProfileInputValidator,
+  projectEngineeringSettingsReadInputValidator,
   projectCreateInputValidator,
   projectEnvReadInputValidator,
   projectEnvSecretRevealInputValidator,

@@ -3,7 +3,7 @@
     <header class="project-settings__header">
       <div>
         <h1>Project settings</h1>
-        <p>Vibe64 behavior for this project, stored outside its source repository.</p>
+        <p>Project-wide Vibe64 behavior and source-owned engineering choices.</p>
       </div>
       <v-btn
         class="project-settings__refresh"
@@ -28,6 +28,55 @@
     />
 
     <template v-else>
+      <section class="project-settings__section" aria-labelledby="engineering-approach-title">
+        <div class="project-settings__section-copy">
+          <p v-if="engineeringAvailable" class="project-settings__scope">
+            {{ engineeringSourceLabel }}
+          </p>
+          <h2 id="engineering-approach-title">Engineering approach</h2>
+          <p>
+            Choose how cautiously the AI changes this software. Every profile still requires
+            simple, targeted code and a question before necessary complexity is added.
+          </p>
+        </div>
+
+        <template v-if="engineeringAvailable">
+          <div class="project-settings__engineering-field">
+            <v-select
+              v-model="engineeringProfileDraft"
+              :disabled="engineeringSaving"
+              density="comfortable"
+              hide-details="auto"
+              :hint="selectedEngineeringDescription"
+              item-title="name"
+              item-value="id"
+              :items="engineeringProfiles"
+              label="Engineering profile"
+              persistent-hint
+              variant="outlined"
+            />
+          </div>
+
+          <div class="project-settings__action">
+            <p>{{ engineeringStatusText }}</p>
+            <v-btn
+              :disabled="!engineeringChanged || engineeringSaving"
+              color="primary"
+              size="small"
+              type="button"
+              variant="flat"
+              @click="saveEngineeringProfile"
+            >
+              {{ engineeringSaving ? "Saving…" : "Save engineering approach" }}
+            </v-btn>
+          </div>
+        </template>
+
+        <div v-else class="project-settings__action">
+          <p>{{ engineeringUnavailableReason }}</p>
+        </div>
+      </section>
+
       <section class="project-settings__section" aria-labelledby="development-database-title">
         <div class="project-settings__section-copy">
           <h2 id="development-database-title">Development database</h2>
@@ -214,6 +263,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
@@ -231,10 +281,13 @@ import {
 import {
   AI_POLICY_ENDPOINT,
   DEVELOPMENT_DATABASE_ENDPOINT,
+  ENGINEERING_ENDPOINT,
   PROJECT_SETTINGS_ENDPOINT,
   VIBE64_AI_POLICY_API_SUFFIX,
   VIBE64_DEVELOPMENT_DATABASE_API_SUFFIX,
+  VIBE64_ENGINEERING_API_SUFFIX,
   VIBE64_PROJECT_CHANGED_EVENT,
+  engineeringSettingsQueryKey,
   projectSettingsQueryKey
 } from "@/lib/studioGateApi.js";
 import {
@@ -245,10 +298,15 @@ import {
 } from "@/lib/vibe64SessionRequestConfig.js";
 
 const projectSlug = useVibe64ProjectSlug();
+const route = useRoute();
+const router = useRouter();
 const AI_POLICY_CUSTOM_NOTE_MAX_LENGTH = 500;
 const scopeDraft = ref("session");
 const aiPolicyDraft = ref(normalizeAiPolicyDraft());
 const savedAiPolicy = ref(normalizeAiPolicyDraft());
+const engineeringProfileDraft = ref("");
+const savedEngineeringProfile = ref("");
+const routeSessionId = computed(() => String(route.query.sessionId || "").trim());
 
 const toneOptions = Object.freeze([
   { label: "Encouraging", value: "encouraging" },
@@ -286,6 +344,25 @@ const resource = useEndpointResource({
   },
   refreshOnPull: true,
   requestRecoveryLabel: "Project settings"
+});
+
+const engineeringResource = useEndpointResource({
+  fallbackLoadError: "Engineering approach could not load.",
+  path: ENGINEERING_ENDPOINT,
+  queryKey: computed(() => engineeringSettingsQueryKey(
+    VIBE64_SURFACE_ID,
+    ROUTE_VISIBILITY_PUBLIC,
+    projectSlug.value,
+    routeSessionId.value
+  )),
+  readQuery: computed(() => (
+    routeSessionId.value ? { sessionId: routeSessionId.value } : {}
+  )),
+  realtime: {
+    event: VIBE64_PROJECT_CHANGED_EVENT
+  },
+  refreshOnPull: true,
+  requestRecoveryLabel: "Engineering approach"
 });
 
 const databaseSaveCommand = useCommand({
@@ -330,6 +407,28 @@ const aiPolicySaveCommand = useCommand({
   writeMethod: "PUT"
 });
 
+const engineeringSaveCommand = useCommand({
+  access: "never",
+  apiSuffix: VIBE64_ENGINEERING_API_SUFFIX,
+  buildCommandOptions: () => ({
+    method: "PUT",
+    path: ENGINEERING_ENDPOINT
+  }),
+  buildRawPayload: (_model, { context }) => ({
+    profile: context.profile,
+    ...(context.sessionId ? { sessionId: context.sessionId } : {})
+  }),
+  fallbackRunError: "Engineering approach could not be saved.",
+  messages: {
+    error: "Engineering approach could not be saved.",
+    success: "Engineering approach saved."
+  },
+  ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+  placementSource: "vibe64.engineering.profile.save",
+  surfaceId: VIBE64_SURFACE_ID,
+  writeMethod: "PUT"
+});
+
 const developmentDatabase = computed(() => resource.data.value?.developmentDatabase || {});
 const managed = computed(() => developmentDatabase.value.managed === true);
 const canChange = computed(() => developmentDatabase.value.canChange === true);
@@ -345,16 +444,49 @@ const scopeDraftAvailable = computed(() => (
 ));
 const aiPolicy = computed(() => resource.data.value?.aiPolicy || {});
 const aiPolicyCanEdit = computed(() => resource.data.value?.aiPolicyCanEdit === true);
-const loading = computed(() => resource.isLoading.value === true);
-const initialLoading = computed(() => loading.value && !resource.data.value);
-const loadError = computed(() => String(resource.loadError.value || ""));
+const engineering = computed(() => engineeringResource.data.value?.engineering || {});
+const engineeringAvailable = computed(() => engineering.value.available === true);
+const engineeringProfiles = computed(() => (
+  Array.isArray(engineering.value.profiles) ? engineering.value.profiles : []
+));
+const engineeringSourceLabel = computed(() => (
+  engineering.value.source?.rootKind === "session-source"
+    ? "This session's project source"
+    : "This project source"
+));
+const engineeringUnavailableReason = computed(() => String(
+  engineering.value.unavailableReason || "An engineering profile is not available for this source."
+));
+const selectedEngineeringDescription = computed(() => String(
+  engineeringProfiles.value.find((profile) => profile.id === engineeringProfileDraft.value)?.description || ""
+));
+const engineeringStatusText = computed(() => (
+  engineering.value.status === "defaulted"
+    ? "The focused default is active. Saving records the choice in genesis/engineering.md."
+    : "This choice is stored in genesis/engineering.md and follows the source."
+));
+const loading = computed(() => (
+  resource.isLoading.value === true || engineeringResource.isLoading.value === true
+));
+const initialLoading = computed(() => loading.value && (
+  !resource.data.value || !engineeringResource.data.value
+));
+const loadError = computed(() => String(
+  resource.loadError.value || engineeringResource.loadError.value || ""
+));
 const databaseSaving = computed(() => databaseSaveCommand.isRunning === true);
 const aiPolicySaving = computed(() => aiPolicySaveCommand.isRunning === true);
+const engineeringSaving = computed(() => engineeringSaveCommand.isRunning === true);
 const databaseChanged = computed(() => (
   managed.value && scopeDraft.value !== developmentDatabase.value.scope
 ));
 const aiPolicyChanged = computed(() => (
   JSON.stringify(aiPolicyDraft.value) !== JSON.stringify(savedAiPolicy.value)
+));
+const engineeringChanged = computed(() => (
+  engineeringAvailable.value &&
+  Boolean(engineeringProfileDraft.value) &&
+  engineeringProfileDraft.value !== savedEngineeringProfile.value
 ));
 const aiPolicyCustomNoteLength = computed(() => (
   Array.from(String(aiPolicyDraft.value.customNote || "")).length
@@ -381,16 +513,37 @@ watch(aiPolicy, (value) => {
   immediate: true
 });
 
+watch(engineering, (value) => {
+  const profile = String(value.profile?.id || "").trim();
+  engineeringProfileDraft.value = profile;
+  savedEngineeringProfile.value = profile;
+  const sourceSessionId = String(value.source?.sessionId || "").trim();
+  if (!routeSessionId.value && sourceSessionId) {
+    void router.replace({
+      query: {
+        ...route.query,
+        sessionId: sourceSessionId
+      }
+    });
+  }
+}, {
+  immediate: true
+});
+
 useRealtimeEvent({
   event: VIBE64_SESSION_CHANGED_EVENT,
   matches: sessionListRealtimeShouldRefresh,
   onEvent() {
     void resource.reload();
+    void engineeringResource.reload();
   }
 });
 
 async function refresh() {
-  await resource.reload();
+  await Promise.all([
+    resource.reload(),
+    engineeringResource.reload()
+  ]);
 }
 
 function normalizeAiPolicyDraft(value = {}) {
@@ -432,6 +585,17 @@ async function saveAiPolicy() {
     aiPolicy: normalizeAiPolicyDraft(aiPolicyDraft.value)
   });
   await resource.reload();
+}
+
+async function saveEngineeringProfile() {
+  if (!engineeringChanged.value || engineeringSaving.value) {
+    return;
+  }
+  await engineeringSaveCommand.run({
+    profile: engineeringProfileDraft.value,
+    sessionId: routeSessionId.value || String(engineering.value.source?.sessionId || "").trim()
+  });
+  await engineeringResource.reload();
 }
 
 function openPersonalSettings() {
@@ -497,6 +661,7 @@ function reloadPage() {
 }
 
 .project-settings__section-copy,
+.project-settings__engineering-field,
 .project-settings__action {
   display: grid;
   gap: 0.4rem;
@@ -508,6 +673,7 @@ function reloadPage() {
 }
 
 .project-settings__section-copy p,
+.project-settings__engineering-field p,
 .project-settings__action p {
   font-size: 0.875rem;
 }
@@ -546,6 +712,10 @@ function reloadPage() {
 .project-settings__account-link {
   justify-self: start;
   margin-inline-start: -0.75rem;
+}
+
+.project-settings__engineering-field {
+  align-self: center;
 }
 
 .project-settings__ai-fields {

@@ -146,6 +146,96 @@ test("repository identities require a real project source", async () => {
   });
 });
 
+test("hosted engineering settings follow the selected session source and save through Genesis", async () => {
+  await withTemporaryRoot(async (temporaryRoot) => {
+    const projectContext = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(temporaryRoot, "managed-source"),
+      explicitProjectsRoot: path.join(temporaryRoot, "projects"),
+      explicitSystemRoot: path.join(temporaryRoot, "system"),
+      home: temporaryRoot
+    });
+    const inspections = [];
+    const selections = [];
+    let selectedProfile = "focused.v1";
+    const profiles = [
+      {
+        description: "Small, direct changes for ordinary product work.",
+        id: "focused.v1",
+        name: "Focused"
+      },
+      {
+        description: "Long-lived product work with explicit compatibility and operational care.",
+        id: "durable.v1",
+        name: "Durable product"
+      }
+    ];
+    const service = createService({
+      env: {},
+      async inspectEngineering({ projectRoot }) {
+        inspections.push(projectRoot);
+        return {
+          profile: profiles.find((profile) => profile.id === selectedProfile),
+          profiles,
+          status: "configured"
+        };
+      },
+      projectContext,
+      async setEngineeringProfile(input) {
+        selections.push(input);
+        selectedProfile = input.profile;
+        return { status: "updated" };
+      }
+    });
+    await service.createProject({ name: "Engineering catalogue" });
+
+    const unavailable = await service.readEngineeringSettings();
+    assert.equal(unavailable.ok, true);
+    assert.equal(unavailable.engineering.available, false);
+    assert.match(unavailable.engineering.unavailableReason, /Create or select an AI session/u);
+    assert.deepEqual(inspections, []);
+
+    const sessionId = "engineering-session";
+    const sessionSource = path.join(
+      temporaryRoot,
+      "managed-source",
+      "sessions",
+      "active",
+      sessionId,
+      "source"
+    );
+    await mkdir(sessionSource, { recursive: true });
+    const store = await service.createSessionStore();
+    await store.createSession({
+      metadata: {
+        source_kind: "session_clone",
+        source_path: sessionSource,
+        source_path_authority: SESSION_SOURCE_PATH_AUTHORITY_MANAGED
+      },
+      runtimeKind: "genesis",
+      sessionId
+    });
+    await store.updateCurrentSession(sessionId);
+
+    const initial = await service.readEngineeringSettings();
+    assert.equal(initial.engineering.available, true);
+    assert.equal(initial.engineering.profile.id, "focused.v1");
+    assert.equal(initial.engineering.source.sessionId, sessionId);
+    assert.deepEqual(inspections, [sessionSource]);
+
+    const saved = await service.saveEngineeringProfile({
+      profile: "durable.v1",
+      sessionId
+    });
+    assert.equal(saved.ok, true);
+    assert.equal(saved.engineering.profile.id, "durable.v1");
+    assert.deepEqual(selections, [{
+      profile: "durable.v1",
+      projectRoot: sessionSource
+    }]);
+    assert.equal(saved.projectSlug, "engineering-catalogue");
+  });
+});
+
 test("managed database defaults persist an explicit shared scope and provider-owned name", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
     const projectsRoot = path.join(temporaryRoot, "projects");

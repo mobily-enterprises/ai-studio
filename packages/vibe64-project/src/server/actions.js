@@ -4,6 +4,8 @@ import {
   projectAiPolicyInputValidator,
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
+  projectEngineeringProfileInputValidator,
+  projectEngineeringSettingsReadInputValidator,
   projectEnvReadInputValidator,
   projectEnvUserValuesInputValidator,
   projectsReadInputValidator,
@@ -19,7 +21,9 @@ const ACTION_SELECT_PROJECT = "vibe64.project.projects.select";
 const ACTION_READ_ENV = "vibe64.project.env.read";
 const ACTION_SAVE_ENV_USER_VALUES = "vibe64.project.env.user-values.save";
 const ACTION_READ_PROJECT_SETTINGS = "vibe64.project.settings.read";
+const ACTION_READ_ENGINEERING_SETTINGS = "vibe64.project.engineering.read";
 const ACTION_SAVE_PROJECT_AI_POLICY = "vibe64.project.ai-policy.save";
+const ACTION_SAVE_ENGINEERING_PROFILE = "vibe64.project.engineering.profile.save";
 const ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE = "vibe64.project.development-database.scope.save";
 const ACTION_READ_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.read";
 const ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.save";
@@ -135,11 +139,24 @@ function createProjectActions({ project } = {}) {
       execute: (input) => project.readSettings(input)
     }),
     action({
+      id: ACTION_READ_ENGINEERING_SETTINGS,
+      kind: "query",
+      input: projectEngineeringSettingsReadInputValidator,
+      execute: (input) => project.readEngineeringSettings(input)
+    }),
+    action({
       id: ACTION_SAVE_PROJECT_AI_POLICY,
       kind: "command",
       input: projectAiPolicyInputValidator,
       events: [projectChangedEvent()],
       execute: (input) => project.saveProjectAiPolicy(input)
+    }),
+    action({
+      id: ACTION_SAVE_ENGINEERING_PROFILE,
+      kind: "command",
+      input: projectEngineeringProfileInputValidator,
+      events: [projectChangedEvent()],
+      execute: (input) => project.saveEngineeringProfile(input)
     }),
     action({
       id: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
@@ -168,9 +185,11 @@ export {
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
   ACTION_READ_ENV,
+  ACTION_READ_ENGINEERING_SETTINGS,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_ENGINEERING_PROFILE,
   ACTION_SAVE_PROJECT_AI_POLICY,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,

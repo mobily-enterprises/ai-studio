@@ -18,6 +18,7 @@ import {
   genesisPromptTask,
   initializeGenesisProject,
   inspectGenesisDerivedArtifacts,
+  inspectGenesisEngineering,
   inspectGenesisEnvironment,
   inspectVibe64Outputs,
   inspectVibe64WorkspaceSetup,
@@ -26,6 +27,7 @@ import {
   parseVibe64OutputsLines,
   parseVibe64WorkspaceSetupLines,
   renderGenesisPrompt,
+  setGenesisEngineeringProfile,
   withVibe64ConversationContract,
   withGenesisCommandShim
 } from "../../packages/vibe64-genesis/src/server/index.js";
@@ -94,6 +96,37 @@ test("Genesis initialization creates its complete technology-neutral project", a
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".codex", "hooks.json"), "utf8")));
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".genesis", "machine-city.json"), "utf8")));
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".genesis", "program-city.json"), "utf8")));
+  });
+});
+
+test("the exact Genesis boundary inspects and selects source-owned engineering profiles", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await writeFile(
+      path.join(projectRoot, "genesis", "engineering.md"),
+      "# Engineering approach\n\n## Profile\n\n- `focused.v1`\n\n## Project requirements\n\n- Preserve offline support.\n",
+      "utf8"
+    );
+
+    const initial = await inspectGenesisEngineering({ projectRoot });
+    const selected = await setGenesisEngineeringProfile({
+      profile: "durable.v1",
+      projectRoot
+    });
+    const updated = await inspectGenesisEngineering({ projectRoot });
+
+    assert.equal(initial.contract, "genesis.engineering.v1");
+    assert.equal(initial.profile.id, "focused.v1");
+    assert.deepEqual(initial.profiles.map((profile) => profile.id), [
+      "focused.v1",
+      "durable.v1",
+      "high-assurance.v1"
+    ]);
+    assert.equal(selected.contract, "genesis.engineering.v1");
+    assert.equal(selected.profile.id, "durable.v1");
+    assert.equal(updated.profile.id, "durable.v1");
+    assert.match(updated.requirements, /Preserve offline support/u);
   });
 });
 
