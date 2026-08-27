@@ -12,6 +12,37 @@ import {
 } from "../../packages/vibe64-system-graph/src/client/world/worldLayout.js";
 
 describe("Genesis City world projection", () => {
+  it("keeps City exploration local and introduces the real navigation controls once", () => {
+    const component = readFileSync(
+      "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue",
+      "utf8"
+    );
+    const renderer = readFileSync(
+      "packages/vibe64-system-graph/src/client/world/createSystemWorld.js",
+      "utf8"
+    );
+    const host = readFileSync(
+      "src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
+      "utf8"
+    );
+
+    expect(component).not.toContain("Explain in Chat");
+    expect(component).not.toContain("ask-in-chat");
+    expect(component).not.toContain("system-world__orientation");
+    expect(component).not.toContain("orientationText");
+    expect(host).not.toContain("@ask-in-chat=\"askCodexAboutSystemContext\"");
+    expect(host).not.toContain(":ask-chat-available=\"sourceEditorAskCodexAvailable\"");
+
+    expect(component).toContain("Moving around the City");
+    expect(component).toContain("Swipe horizontally with two fingers to rotate");
+    expect(component).toContain("vibe64:city-controls-introduction:v1");
+    expect(renderer).toContain("Math.abs(event.deltaX) > Math.abs(event.deltaY)");
+    expect(renderer).toContain("controls.mouseButtons.right = CameraControls.ACTION.ROTATE");
+    expect(renderer).toContain("controls.mouseButtons.left = CameraControls.ACTION.NONE");
+    expect(component).not.toContain(":loading=\"refreshing\"");
+    expect(component).not.toContain("system-world__state-orbit");
+  });
+
   it("keeps the Machine City navigator at region scale", () => {
     const source = readFileSync(
       "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue",

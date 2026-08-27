@@ -1521,6 +1521,9 @@ test("execution helper operation policy distinguishes account auth from GitHub w
     purpose: "github-api"
   }), "github-api-command");
   assert.equal(helperOperationForRequest({
+    purpose: "health"
+  }), "health-status");
+  assert.equal(helperOperationForRequest({
     purpose: "codex"
   }), "vibe64-command");
 });

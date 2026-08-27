@@ -1532,10 +1532,6 @@ function useVibe64AutopilotView(props, emit, {
       : false;
   }
 
-  function askCodexAboutSystemContext(input = {}) {
-    return prefillComposer(input?.prompt || input?.text);
-  }
-
   function updateAgentSetting(parameterId = "", value = "") {
     agentSettings.update({
       [String(parameterId || "")]: String(value || "")
@@ -1628,7 +1624,6 @@ function useVibe64AutopilotView(props, emit, {
     agentStopVisible,
     answerChoices,
     askCodexAboutSourceEditorFile,
-    askCodexAboutSystemContext,
     askCodexToFixPreviewIdentity,
     askCodexToFixWorkspaceSetup,
     attachPreviewDiagnostics,

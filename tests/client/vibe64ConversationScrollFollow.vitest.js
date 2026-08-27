@@ -221,6 +221,27 @@ function loadOlderButton(container) {
   ));
 }
 
+function nodeHasClass(node, className) {
+  return String(node?.props?.class || "").split(" ").includes(className);
+}
+
+function userPromptContent(container) {
+  return findNode(container, (node) => nodeHasClass(node, "studio-conversation-log__user-content"));
+}
+
+function renderedUserPromptBlocks(container) {
+  return findNode(
+    userPromptContent(container),
+    (node) => Array.isArray(node.props?.blocks)
+  )?.props.blocks || [];
+}
+
+function userPromptToggle(container) {
+  return findNode(container, (node) => (
+    node.type === "button" && nodeHasClass(node, "studio-conversation-log__user-content-toggle")
+  ));
+}
+
 describe("Vibe64 conversation scroll following", () => {
   let animationFrames;
   let nextAnimationFrameId;
@@ -268,6 +289,41 @@ describe("Vibe64 conversation scroll following", () => {
     vi.runAllTimers();
     await nextTick();
   }
+
+  it("collapses only long user prompts and expands them in place", async () => {
+    const longPrompt = [
+      "First line of the request.",
+      "Second line adds context.",
+      "Third line explains the constraint.",
+      "Fourth line completes the preview.",
+      "Fifth line should initially remain below the visual guard."
+    ].join("\n");
+    const { app, container } = mountConversation({
+      turns: [userTurn("long-prompt", longPrompt)]
+    });
+    await flushScrollWork();
+
+    expect(JSON.stringify(renderedUserPromptBlocks(container))).toContain("Fourth line completes the preview.…");
+    expect(JSON.stringify(renderedUserPromptBlocks(container))).not.toContain("Fifth line");
+    expect(nodeText(userPromptToggle(container))).toBe("Read more");
+    expect(userPromptToggle(container).props["aria-expanded"]).toBe(false);
+
+    userPromptToggle(container).props.onClick();
+    await nextTick();
+
+    expect(JSON.stringify(renderedUserPromptBlocks(container))).toContain("Fifth line");
+    expect(nodeText(userPromptToggle(container))).toBe("Show less");
+    expect(userPromptToggle(container).props["aria-expanded"]).toBe(true);
+
+    app.unmount();
+
+    const shortConversation = mountConversation({
+      turns: [userTurn("short-prompt", "A short request stays fully visible.")]
+    });
+    await flushScrollWork();
+    expect(userPromptToggle(shortConversation.container)).toBeNull();
+    shortConversation.app.unmount();
+  });
 
   it("follows only while at the bottom and lets an accepted local send resume follow", async () => {
     const { app, container, state } = mountConversation();

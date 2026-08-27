@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  DASHBOARD_PATH,
   DEVELOPMENT_PATH,
   directChatSessionId,
   directChatSessionPayload
@@ -16,6 +15,22 @@ import {
 } from "./support/base-shell/http";
 
 const sessionApi = `/vibe64/system-graph/sessions/${directChatSessionId}`;
+const systemWorldSourcePath = `/var/lib/vibe64/test/projects/example/sessions/active/${directChatSessionId}/source`;
+const systemWorldSessionPayload = {
+  ...directChatSessionPayload,
+  agentSession: {
+    ...directChatSessionPayload.agentSession,
+    workdir: systemWorldSourcePath
+  },
+  metadata: {
+    ...directChatSessionPayload.metadata,
+    source_kind: "session_clone",
+    source_path: systemWorldSourcePath,
+    source_path_authority: "managed_session_source"
+  },
+  sourcePath: systemWorldSourcePath,
+  sourceReady: true
+};
 
 const machineCity = {
   schema: "genesis.machine-city.v1",
@@ -109,6 +124,7 @@ test("System switches between native Genesis Machine and Program Cities", async 
   test.setTimeout(60_000);
   await mockDirectChatSession(page);
   await page.unroute(apiEndpointPattern("/vibe64/sessions"));
+  await page.unroute(apiEndpointPattern(`/vibe64/sessions/${directChatSessionId}`));
   await routeApiEndpoint(page, "/vibe64/sessions", async (route) => {
     await fulfillJson(route, {
       creation: {
@@ -119,8 +135,11 @@ test("System switches between native Genesis Machine and Program Cities", async 
         openSessionCount: 1
       },
       ok: true,
-      sessions: [directChatSessionPayload]
+      sessions: [systemWorldSessionPayload]
     });
+  });
+  await routeApiEndpoint(page, `/vibe64/sessions/${directChatSessionId}`, async (route) => {
+    await fulfillJson(route, systemWorldSessionPayload);
   });
 
   let refreshCount = 0;
@@ -182,22 +201,24 @@ test("System switches between native Genesis Machine and Program Cities", async 
   });
 
   await page.goto(DEVELOPMENT_PATH);
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible({ timeout: 15_000 });
-  await page.goto(`${DASHBOARD_PATH}/system`);
+  await expect(page.getByRole("region", { name: "Session chat" })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("tab", { name: "Dashboard" }).click();
+  await page.getByRole("link", { exact: true, name: "Cities" }).click();
 
-  await expect(page.getByText("Genesis City · 056")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Genesis City · \d+/u)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("button", { exact: true, name: "Machine" })).toBeVisible();
   await expect(page.getByRole("button", { exact: true, name: "Program" })).toBeVisible();
   await expect(page.locator("canvas[aria-label^='Interactive 3D Genesis City']")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Machine City buildings" })).toBeVisible();
+  await expect(page.getByText("Moving around the City", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Got it" }).click();
+  await expect(page.getByRole("navigation", { name: "Machine City explorer" })).toBeVisible();
 
-  await page.getByRole("button", { name: /catalog\.js.*src\/catalog\.js/iu }).click();
-  await expect(page.getByRole("heading", { level: 2, name: "catalog.js" })).toBeVisible();
-  await expect(page.getByText("1,800", { exact: true })).toBeVisible();
-  await expect(page.getByText("listBooks", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /catalog.*1 operation.*1 file/iu }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "catalog" })).toBeVisible();
+  await expect(page.getByText("1 exact files", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { exact: true, name: "Program" }).click();
-  await expect(page.getByRole("navigation", { name: "Program City buildings" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Program City explorer" })).toBeVisible();
   await page.getByRole("button", { name: /List books.*catalog/iu }).click();
   await expect(page.getByRole("heading", { level: 2, name: "List books" })).toBeVisible();
   await expect(page.getByText("Returns every current book in catalogue order.", { exact: true })).toBeVisible();

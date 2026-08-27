@@ -587,12 +587,10 @@
         <Vibe64SystemWorldView
           v-if="rightPaneTabMounted('system')"
           :active="props.projectPane === 'dashboard' && rightPaneTab === 'system'"
-          :ask-chat-available="sourceEditorAskCodexAvailable"
           class="studio-autopilot__session-tool-content"
           :resolve-request-url="resolveStudioRequestUrl"
           :restore-request="systemRestoreRequest"
           :session-id="sessionId"
-          @ask-in-chat="askCodexAboutSystemContext"
           @open-source-file-immersive="openSourceEditorFile"
           @open-source-file="openSourceEditorFile"
         />
@@ -781,7 +779,6 @@ const {
   agentStopVisible,
   answerChoices,
   askCodexAboutSourceEditorFile,
-  askCodexAboutSystemContext,
   askCodexToFixPreviewIdentity,
   askCodexToFixWorkspaceSetup,
   attachPreviewDiagnostics,

@@ -55,6 +55,9 @@ function helperOperationForRequest(request = {}) {
   if (request.purpose === "github-api") {
     return "github-api-command";
   }
+  if (request.purpose === "health") {
+    return "health-status";
+  }
   return "vibe64-command";
 }
 

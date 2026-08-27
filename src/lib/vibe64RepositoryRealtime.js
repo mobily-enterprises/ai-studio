@@ -1,6 +1,8 @@
 const REPOSITORY_STATUS_SESSION_REASONS = new Set([
+  "codex-app-server-turn-idle",
   "codex-turn-checkpoint-failed",
   "codex-turn-checkpoint-updated",
+  "opencode-server-turn-idle",
   "repository-canonical-changed",
   "session-repository-checked",
   "session-save-completed",

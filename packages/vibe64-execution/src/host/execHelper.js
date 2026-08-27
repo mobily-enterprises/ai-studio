@@ -30,6 +30,7 @@ const ALLOWED_OPERATIONS = new Set([
   "github-api-command",
   "github-toolchain",
   "github-workflow-command",
+  "health-status",
   "managed-execution",
   "managed-service",
   "vibe64-command"
@@ -1436,6 +1437,9 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
   operation = "",
   targetUser = {}
 } = {}) {
+  if (operation === "health-status") {
+    return workspaceTempRoot(ownerUsername);
+  }
   const normalized = String(cwd || "").trim();
   if (!normalized) {
     return "/";

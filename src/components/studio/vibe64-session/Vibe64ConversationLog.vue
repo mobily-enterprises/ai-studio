@@ -7,13 +7,12 @@
   >
     <v-btn
       v-if="reloadable"
-      aria-label="Reload chat"
+      :aria-label="reloading ? 'Reloading chat' : 'Reload chat'"
       class="studio-conversation-log__reload"
       :disabled="reloading"
       :icon="mdiRefresh"
-      :loading="reloading"
       size="x-small"
-      title="Reload chat"
+      :title="reloading ? 'Reloading chat' : 'Reload chat'"
       type="button"
       variant="text"
       @click="emit('reload')"
@@ -83,13 +82,12 @@
         <v-btn
           color="primary"
           :disabled="loadingMore || !hasMoreBefore"
-          :loading="loadingMore"
           size="x-small"
           type="button"
           variant="tonal"
           @click="requestLoadMore"
         >
-          Load older messages
+          {{ loadingMore ? "Loading older messages…" : "Load older messages" }}
         </v-btn>
         <div
           v-if="loadMoreError"
@@ -131,10 +129,23 @@
           class="studio-conversation-log__message-row studio-conversation-log__message-row--user"
         >
           <div class="studio-conversation-log__message studio-conversation-log__message--user">
-            <LongTextPreviewBlocks
-              :blocks="turn.user.blocks"
-              @link-click="handleLongTextLinkClick"
-            />
+            <div
+              class="studio-conversation-log__user-content"
+            >
+              <LongTextPreviewBlocks
+                :blocks="userMessageExpanded(turn) ? turn.user.blocks : (turn.user.previewBlocks || turn.user.blocks)"
+                @link-click="handleLongTextLinkClick"
+              />
+            </div>
+            <button
+              v-if="userMessageCollapsible(turn.user)"
+              :aria-expanded="userMessageExpanded(turn)"
+              class="studio-conversation-log__user-content-toggle"
+              type="button"
+              @click="toggleUserMessage(turn)"
+            >
+              {{ userMessageExpanded(turn) ? "Show less" : "Read more" }}
+            </button>
             <div
               v-if="turn.user.displayAt"
               class="studio-conversation-log__message-footer studio-conversation-log__message-footer--user"
@@ -359,10 +370,14 @@ const props = defineProps({
 const emit = defineEmits(["cancel-turn", "edit-turn", "load-more", "open-source-file", "reload", "resend-turn"]);
 
 const THINKING_PREVIEW_LIMIT = 2;
+const USER_MESSAGE_COLLAPSE_MIN_CHARACTERS = 360;
+const USER_MESSAGE_PREVIEW_MAX_CHARACTERS = 280;
+const USER_MESSAGE_PREVIEW_MAX_LINES = 4;
 const DISPLAY_MESSAGE_CACHE_LIMIT = 500;
 const bodyElement = ref(null);
 const bottomElement = ref(null);
 const expandedThinkingGroups = ref(new Set());
+const expandedUserMessages = ref(new Set());
 const followingLatest = ref(true);
 const initialScrollSettled = ref(false);
 const userScrollIntent = ref(false);
@@ -397,9 +412,28 @@ function displayTime(value = "") {
   return timeFormatter.format(date);
 }
 
+function userMessagePreviewText(value = "") {
+  const text = String(value || "");
+  const characters = [...text];
+  const lines = text.split(/\r\n?|\n/u);
+  if (
+    characters.length <= USER_MESSAGE_COLLAPSE_MIN_CHARACTERS &&
+    lines.length <= USER_MESSAGE_PREVIEW_MAX_LINES
+  ) {
+    return "";
+  }
+  const firstLines = lines.slice(0, USER_MESSAGE_PREVIEW_MAX_LINES).join("\n");
+  const preview = [...firstLines]
+    .slice(0, USER_MESSAGE_PREVIEW_MAX_CHARACTERS)
+    .join("")
+    .trimEnd();
+  return preview ? `${preview}…` : "";
+}
+
 function displayMessage(message = null, {
   allowNumberedQuestions = false,
-  preserveParagraphLineBreaks = false
+  preserveParagraphLineBreaks = false,
+  previewUserMessage = false
 } = {}, cacheKey = "") {
   if (!message) {
     return null;
@@ -412,6 +446,7 @@ function displayMessage(message = null, {
     cached.at === message.at &&
     cached.messageId === message.messageId &&
     cached.preserveParagraphLineBreaks === preserveParagraphLineBreaks &&
+    cached.previewUserMessage === previewUserMessage &&
     cached.role === message.role &&
     cached.text === message.text
   ) {
@@ -425,6 +460,7 @@ function displayMessage(message = null, {
         questions: []
       };
   const hasQuestions = questionInput.questions.length > 0;
+  const previewText = previewUserMessage ? userMessagePreviewText(message.text) : "";
   const value = {
     ...message,
     blocks: parseLongTextReviewBlocks(hasQuestions ? questionInput.intro : message.text, {
@@ -433,6 +469,9 @@ function displayMessage(message = null, {
     outroBlocks: parseLongTextReviewBlocks(hasQuestions ? questionInput.outro : "", {
       preserveParagraphLineBreaks
     }),
+    previewBlocks: previewText
+      ? parseLongTextReviewBlocks(previewText, { preserveParagraphLineBreaks: true })
+      : null,
     questions: hasQuestions ? questionInput.questions : [],
     displayAt: displayTime(message.at)
   };
@@ -448,6 +487,7 @@ function displayMessage(message = null, {
       at: message.at,
       messageId: message.messageId,
       preserveParagraphLineBreaks,
+      previewUserMessage,
       role: message.role,
       text: message.text,
       value
@@ -554,11 +594,38 @@ const displayTurns = computed(() => (Array.isArray(props.turns) ? props.turns : 
       system: displayMessage(turn.system, {}, `${turnId}:system`),
       turnId,
       user: displayMessage(turn.user, {
-        preserveParagraphLineBreaks: true
+        preserveParagraphLineBreaks: true,
+        previewUserMessage: true
       }, `${turnId}:user`)
     };
   })
   .filter((turn) => turn.system || turn.user || turn.agentTimeline.length));
+
+function userMessageCollapsible(message = null) {
+  return Array.isArray(message?.previewBlocks);
+}
+
+function userMessageExpanded(turn = {}) {
+  return expandedUserMessages.value.has(String(turn.turnId || ""));
+}
+
+function toggleExpandedKey(expandedKeys, key) {
+  const next = new Set(expandedKeys.value);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  expandedKeys.value = next;
+}
+
+function toggleUserMessage(turn = {}) {
+  const key = String(turn.turnId || "");
+  if (!key) {
+    return;
+  }
+  toggleExpandedKey(expandedUserMessages, key);
+}
 
 function thinkingGroupKey(turn = {}, entry = {}) {
   return `${turn.turnId}:${turn.pending ? "active" : "completed"}:${entry.key}`;
@@ -594,13 +661,7 @@ function thinkingGroupToggleLabel(turn = {}, entry = {}) {
 
 function toggleThinkingGroup(turn = {}, entry = {}) {
   const key = thinkingGroupKey(turn, entry);
-  const next = new Set(expandedThinkingGroups.value);
-  if (next.has(key)) {
-    next.delete(key);
-  } else {
-    next.add(key);
-  }
-  expandedThinkingGroups.value = next;
+  toggleExpandedKey(expandedThinkingGroups, key);
 }
 
 const loadingIndicatorVisible = computed(() => Boolean(
@@ -1118,15 +1179,19 @@ watch(timelineScrollTrigger, () => {
   white-space: pre-wrap;
 }
 
-.studio-conversation-log__thinking-toggle {
+.studio-conversation-log__thinking-toggle,
+.studio-conversation-log__user-content-toggle {
   background: transparent;
   border: 0;
   color: rgb(var(--v-theme-primary));
   cursor: pointer;
   font: inherit;
+  text-align: left;
+}
+
+.studio-conversation-log__thinking-toggle {
   justify-self: start;
   padding: 0.12rem 0;
-  text-align: left;
 }
 
 .studio-conversation-log__thinking-toggle:hover {
@@ -1247,6 +1312,22 @@ watch(timelineScrollTrigger, () => {
 
 .studio-conversation-log__message--user :deep(.studio-long-text-review__paragraph) {
   white-space: pre-wrap;
+}
+
+.studio-conversation-log__user-content {
+  min-width: 0;
+}
+
+.studio-conversation-log__user-content-toggle {
+  align-self: flex-start;
+  font-size: 0.78rem;
+  font-weight: 650;
+  padding: 0;
+}
+
+.studio-conversation-log__user-content-toggle:hover,
+.studio-conversation-log__user-content-toggle:focus-visible {
+  text-decoration: underline;
 }
 
 .studio-conversation-log__message--assistant :deep(.studio-long-text-review__paragraph code),

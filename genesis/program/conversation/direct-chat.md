@@ -18,3 +18,5 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+Long user messages remain available in full but initially use a compact preview
+that each reader can expand or collapse.

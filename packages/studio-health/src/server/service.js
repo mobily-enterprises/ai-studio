@@ -69,7 +69,7 @@ async function commandCheck({
     command,
     cwd: studioRoot,
     mode: "capture",
-    purpose: "terminal",
+    purpose: "health",
     runtimes,
     timeout: COMMAND_TIMEOUT_MS
   });

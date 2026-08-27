@@ -1098,14 +1098,11 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(router.replace).toHaveBeenCalledWith("/app/project/chat-test/dashboard/env");
   });
 
-  it("prefills chat from source and City tools", async () => {
+  it("prefills chat from source tools", async () => {
     const view = await createView();
 
     expect(view.askCodexAboutSourceEditorFile("src/main.js")).toBe(true);
     expect(view.composerDraft.value).toBe("Please look at `src/main.js` and help me with this file.");
-
-    expect(view.askCodexAboutSystemContext({ prompt: "Explain this subsystem." })).toBe(true);
-    expect(view.composerDraft.value).toBe("Explain this subsystem.");
   });
 
   it("keeps structured numbered questions in ordinary chat", async () => {

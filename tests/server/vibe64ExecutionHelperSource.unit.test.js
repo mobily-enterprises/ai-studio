@@ -36,6 +36,7 @@ test("execution helper source is the real host helper, not the package stub", as
   assert.match(source, /const ALLOWED_OPERATIONS = new Set/u);
   assert.match(source, /"github-api-command"/u);
   assert.match(source, /"github-workflow-command"/u);
+  assert.match(source, /"health-status"/u);
   assert.match(source, /"vibe64-command"/u);
   assert.doesNotMatch(source, /has not been installed from this source package/u);
 });
@@ -132,6 +133,13 @@ test("execution helper lets account and GitHub API commands run from the target 
 
   assert.match(source, /operation === "account-auth-terminal" \|\|\s+operation === "account-status" \|\|\s+operation === "github-api-command"/u);
   assert.match(source, /return resolveAllowedUserHomePath\(normalized, targetUser\)/u);
+});
+
+test("execution helper runs platform health checks from the workspace temp root", async () => {
+  const source = await helperSource();
+
+  assert.match(source, /operation === "health-status"/u);
+  assert.match(source, /return workspaceTempRoot\(ownerUsername\)/u);
 });
 
 test("execution helper limits release service paths to deployment release state", async () => {

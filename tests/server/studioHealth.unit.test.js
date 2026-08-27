@@ -93,7 +93,7 @@ test("Studio Health reports explicit platform checks without repairs", async () 
   ]);
   assert.equal(commandCalls.length, 8);
   assert.equal(commandCalls.every((call) => call.mode === "capture"), true);
-  assert.equal(commandCalls.every((call) => call.purpose === "terminal"), true);
+  assert.equal(commandCalls.every((call) => call.purpose === "health"), true);
 });
 
 test("Studio Health reports unavailable checks without inventing readiness", async () => {

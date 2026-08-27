@@ -83,14 +83,14 @@
         />
         <v-btn
           color="primary"
-          :loading="refreshing"
+          :disabled="refreshing"
           :prepend-icon="mdiRefresh"
           size="small"
           type="button"
           variant="tonal"
           @click="refreshCities"
         >
-          Refresh Cities
+          {{ refreshing ? "Refreshing Cities…" : "Refresh Cities" }}
         </v-btn>
       </div>
     </header>
@@ -98,7 +98,7 @@
     <div class="system-world__stage">
       <canvas
         ref="canvasElement"
-        aria-label="Interactive 3D Genesis City. Drag or use arrow keys to move, scroll or use W and S to zoom, click a file, operation, district, or subsystem to inspect it, and double-click a building to open its source."
+        aria-label="Interactive 3D Genesis City. Left-drag or use arrow keys to move. Right-drag or swipe horizontally with two fingers to rotate. Use the mouse wheel, a vertical two-finger scroll, or W and S to zoom. Click an item to inspect it and double-click a building to open its source."
         class="system-world__canvas"
         tabindex="0"
       />
@@ -145,9 +145,11 @@
       </div>
 
       <div v-if="loading && !currentCity" class="system-world__state-card" role="status">
-        <span class="system-world__state-orbit" aria-hidden="true" />
-        <strong>Loading {{ cityTitle }}…</strong>
-        <span>Reading the native Genesis City document.</span>
+        <v-skeleton-loader
+          :aria-label="`Loading ${cityTitle}`"
+          class="system-world__state-skeleton"
+          type="avatar, heading, text"
+        />
       </div>
 
       <div v-else-if="worldError || error || cityAvailability.state === 'invalid'" class="system-world__state-card system-world__state-card--error">
@@ -163,13 +165,13 @@
         <span>Genesis can refresh both Cities from the current project.</span>
         <v-btn
           color="primary"
-          :loading="refreshing"
+          :disabled="refreshing"
           :prepend-icon="mdiRefresh"
           size="small"
           type="button"
           @click="refreshCities"
         >
-          Generate Cities
+          {{ refreshing ? "Generating Cities…" : "Generate Cities" }}
         </v-btn>
       </div>
 
@@ -353,16 +355,6 @@
           >
             Open Program operation
           </v-btn>
-          <v-btn
-            v-if="askChatAvailable"
-            :prepend-icon="mdiMessageOutline"
-            size="small"
-            type="button"
-            variant="text"
-            @click="askAboutSemanticSelection"
-          >
-            Explain in Chat
-          </v-btn>
         </div>
       </aside>
 
@@ -409,16 +401,6 @@
             @click="focusCurrentSelection"
           >
             Focus
-          </v-btn>
-          <v-btn
-            v-if="askChatAvailable"
-            :prepend-icon="mdiMessageOutline"
-            size="small"
-            type="button"
-            variant="text"
-            @click="askAboutSemanticSelection"
-          >
-            Explain in Chat
           </v-btn>
         </div>
       </aside>
@@ -503,16 +485,6 @@
           >
             Open {{ cityKind === 'machine' ? 'file' : 'Program module' }}
           </v-btn>
-          <v-btn
-            v-if="askChatAvailable"
-            :prepend-icon="mdiMessageOutline"
-            size="small"
-            type="button"
-            variant="text"
-            @click="askAboutSelection"
-          >
-            Explain in Chat
-          </v-btn>
         </div>
       </aside>
 
@@ -537,16 +509,11 @@
         </div>
       </aside>
 
-      <aside v-else-if="currentCity" class="system-world__orientation">
-        <span class="system-world__eyebrow">{{ cityTitle }}</span>
-        <strong>{{ cityKind === 'machine' ? 'The implementation as Genesis can prove it.' : 'The public Program, grouped by subsystem.' }}</strong>
-        <span>{{ orientationText }}</span>
-      </aside>
-
       <div v-if="currentCity" class="system-world__controls-hint" aria-label="Genesis City controls">
-        <span><v-icon :icon="mdiMouse" size="14" /> Drag / arrows to move</span>
-        <span><v-icon :icon="mdiMouseScrollWheel" size="14" /> Scroll / W S to zoom</span>
-        <span><v-icon :icon="mdiMouseRightClickOutline" size="14" /> Right-drag to orbit</span>
+        <span><v-icon :icon="mdiMouse" size="14" /> Left-drag / arrows: move</span>
+        <span><v-icon :icon="mdiGestureSwipeHorizontal" size="14" /> Two-finger horizontal: rotate</span>
+        <span><v-icon :icon="mdiMouseScrollWheel" size="14" /> Wheel / two-finger vertical: zoom</span>
+        <span><v-icon :icon="mdiMouseRightClickOutline" size="14" /> Right-drag: rotate</span>
       </div>
 
       <div v-if="currentCity" class="system-world__legend">
@@ -554,6 +521,45 @@
         <span>{{ cityKind === 'machine' ? 'Directory' : 'Subsystem' }} terraces follow native Genesis districts</span>
       </div>
     </div>
+
+    <v-dialog
+      :model-value="controlsIntroductionOpen"
+      max-width="34rem"
+      @update:model-value="setControlsIntroductionOpen"
+    >
+      <v-card rounded="xl">
+        <v-card-title>Moving around the City</v-card-title>
+        <v-card-text>
+          <p class="system-world__controls-introduction-copy">
+            Explore with a trackpad, mouse, or keyboard. Selecting an item inspects it without moving the camera.
+          </p>
+          <dl class="system-world__controls-introduction-list">
+            <div>
+              <dt><v-icon :icon="mdiGestureSwipeHorizontal" size="20" /> Trackpad</dt>
+              <dd>Swipe horizontally with two fingers to rotate. Scroll vertically with two fingers to zoom.</dd>
+            </div>
+            <div>
+              <dt><v-icon :icon="mdiMouse" size="20" /> Mouse</dt>
+              <dd>Left-drag to move, right-drag to rotate, and use the wheel to zoom.</dd>
+            </div>
+            <div>
+              <dt><v-icon :icon="mdiKeyboardOutline" size="20" /> Keyboard</dt>
+              <dd>Use the arrow keys to move and W or S to zoom.</dd>
+            </div>
+          </dl>
+        </v-card-text>
+        <v-card-actions class="system-world__controls-introduction-actions">
+          <v-btn
+            color="primary"
+            type="button"
+            variant="flat"
+            @click="setControlsIntroductionOpen(false)"
+          >
+            Got it
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </section>
 </template>
 
@@ -575,11 +581,12 @@ import {
   mdiCrosshairsGps,
   mdiFileCodeOutline,
   mdiFolderOutline,
+  mdiGestureSwipeHorizontal,
   mdiInformationOutline,
+  mdiKeyboardOutline,
   mdiLayersTripleOutline,
   mdiMapMarkerPath,
   mdiMapOutline,
-  mdiMessageOutline,
   mdiMouse,
   mdiMouseRightClickOutline,
   mdiMouseScrollWheel,
@@ -610,15 +617,12 @@ import {
 } from "../world/worldViewHistory.js";
 
 const rendererRevision = "062";
+const CITY_CONTROLS_INTRODUCTION_STORAGE_KEY = "vibe64:city-controls-introduction:v1";
 
 const props = defineProps({
   active: {
     type: Boolean,
     default: false
-  },
-  askChatAvailable: {
-    type: Boolean,
-    default: true
   },
   restoreRequest: {
     type: Object,
@@ -635,13 +639,13 @@ const props = defineProps({
 });
 
 const emit = defineEmits([
-  "ask-in-chat",
   "open-source-file-immersive",
   "open-source-file"
 ]);
 
 const canvasElement = ref(null);
 const cityKind = ref(GENESIS_MACHINE_CITY_KIND);
+const controlsIntroductionOpen = ref(props.active && !cityControlsIntroductionSeen());
 const chosenPresentationRegionId = ref("");
 const hoveredImplementationBundle = ref(null);
 const selectedBuildingId = ref("");
@@ -772,17 +776,33 @@ const emptyCityMessage = computed(() => (
     ? "Add Stack pieces with a code indexer, then refresh the Cities."
     : "Add explanatory Program modules, then refresh the Cities."
 ));
-const orientationText = computed(() => (
-  cityKind.value === GENESIS_MACHINE_CITY_KIND
-    ? "Files and functions come directly from .genesis/machine-city.json. No imports, routes, or architectural meaning are inferred here."
-    : "Subsystems, public contracts, implementation maps, and source links come directly from .genesis/program-city.json."
-));
 const machineBuildingsByPath = computed(() => new Map(
   (machineCity.value?.buildings || []).map((building) => [building.path, building])
 ));
 const programBuildingsByPath = computed(() => new Map(
   (programCity.value?.buildings || []).map((building) => [building.path, building])
 ));
+
+function cityControlsIntroductionSeen() {
+  try {
+    return typeof window !== "undefined" &&
+      window.localStorage?.getItem(CITY_CONTROLS_INTRODUCTION_STORAGE_KEY) === "seen";
+  } catch {
+    return false;
+  }
+}
+
+function setControlsIntroductionOpen(open) {
+  controlsIntroductionOpen.value = open === true;
+  if (controlsIntroductionOpen.value) {
+    return;
+  }
+  try {
+    window.localStorage?.setItem(CITY_CONTROLS_INTRODUCTION_STORAGE_KEY, "seen");
+  } catch {
+    // Browser storage may be unavailable in private or constrained contexts.
+  }
+}
 
 function formatCount(value = 0, singular = "item", plural = `${singular}s`) {
   const count = Math.max(0, Number(value) || 0);
@@ -1195,55 +1215,6 @@ async function refreshCities() {
   }
 }
 
-function askAboutSelection() {
-  if (!selectedBuilding.value || !props.askChatAvailable) {
-    return;
-  }
-  const prompt = cityKind.value === GENESIS_MACHINE_CITY_KIND
-    ? [
-        "Please explain this file using the code and its Genesis explanatory layer. Do not change code unless I ask.",
-        `File: ${selectedBuilding.value.path}`,
-        `Language: ${selectedBuilding.value.language}`,
-        `Indexed functions: ${selectedFunctions.value.map((entry) => entry.qualifiedName).join(", ") || "none"}`
-      ].join("\n")
-    : [
-        "Please explain this public Program operation and how its listed sources implement it. Do not change code unless I ask.",
-        `Program module: ${selectedBuilding.value.path}`,
-        `Subsystem: ${selectedBuilding.value.subsystem}`,
-        `Operation: ${selectedBuilding.value.title}`,
-        `Sources: ${selectedBuilding.value.sources.join(", ")}`
-      ].join("\n");
-  emit("ask-in-chat", { prompt });
-}
-
-function askAboutSemanticSelection() {
-  if (!props.askChatAvailable) {
-    return;
-  }
-  if (selectedSemanticOperation.value) {
-    emit("ask-in-chat", {
-      prompt: [
-        "Please explain this Genesis Program operation and how its declared implementation files realize it. Do not change code unless I ask.",
-        `Program module: ${selectedSemanticOperation.value.path}`,
-        `Subsystem: ${selectedSemanticOperation.value.subsystem}`,
-        `Operation: ${selectedSemanticOperation.value.title}`,
-        `Implementation files: ${selectedSemanticOperation.value.implementationLinks.map((link) => link.file.path).join(", ") || "none declared"}`
-      ].join("\n")
-    });
-    return;
-  }
-  if (selectedSemanticSubsystem.value) {
-    emit("ask-in-chat", {
-      prompt: [
-        "Please explain this Genesis Program subsystem using its public operations and declared implementation files. Do not change code unless I ask.",
-        `Subsystem: ${selectedSemanticSubsystem.value.title}`,
-        `Operations: ${selectedSemanticSubsystem.value.operations.map((operation) => operation.title).join(", ") || "none"}`,
-        `Implementation files: ${selectedSemanticSubsystem.value.files.map((file) => file.path).join(", ") || "none declared"}`
-      ].join("\n")
-    });
-  }
-}
-
 async function navigateWorldHistory(direction) {
   if (!world || !worldOverview.value || worldHistoryBusy.value) {
     return;
@@ -1398,6 +1369,9 @@ watch(worldOverview, (nextOverview) => {
 watch(() => props.active, (active) => {
   world?.setActive(active);
   if (active) {
+    if (!cityControlsIntroductionSeen()) {
+      controlsIntroductionOpen.value = true;
+    }
     resizeWorld();
     startRenderLoop();
   } else {
@@ -1539,8 +1513,7 @@ defineExpose({
 }
 .system-world__state-card > span { color: rgba(223, 234, 255, 0.64); font-size: 0.79rem; }
 .system-world__state-card--error { border-color: rgba(255, 93, 120, 0.46); }
-.system-world__state-orbit { animation: system-orbit 1.3s linear infinite; border: 2px solid rgba(53, 208, 255, 0.16); border-right-color: var(--city-blue); border-radius: 50%; height: 2.5rem; width: 2.5rem; }
-@keyframes system-orbit { to { transform: rotate(1turn); } }
+.system-world__state-skeleton { background: transparent; width: min(18rem, 70vw); }
 
 .system-world__progress {
   align-items: center;
@@ -1596,8 +1569,7 @@ defineExpose({
 .system-world__navigator button strong { font-size: 0.65rem; }
 .system-world__navigator button small { color: rgba(201, 218, 242, 0.48); font-size: 0.53rem; }
 
-.system-world__inspector,
-.system-world__orientation {
+.system-world__inspector {
   backdrop-filter: blur(22px);
   background: linear-gradient(155deg, rgba(11, 20, 40, 0.96), rgba(6, 10, 23, 0.92));
   border: 1px solid rgba(141, 176, 230, 0.21);
@@ -1610,11 +1582,9 @@ defineExpose({
   z-index: 10;
 }
 .system-world__inspector { max-height: calc(100% - 6rem); overflow-y: auto; padding: 1rem; }
-.system-world__orientation { display: grid; gap: 0.38rem; padding: 0.9rem 1rem; }
 .system-world__eyebrow { color: var(--city-blue); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; }
 .system-world__inspector h2 { font-size: 1.08rem; line-height: 1.22; margin: 0.3rem 0 0.42rem; }
-.system-world__inspector p,
-.system-world__orientation span { color: rgba(225, 235, 255, 0.7); font-size: 0.72rem; line-height: 1.48; }
+.system-world__inspector p { color: rgba(225, 235, 255, 0.7); font-size: 0.72rem; line-height: 1.48; }
 .system-world__path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .system-world__chips,
 .system-world__metrics,
@@ -1650,15 +1620,21 @@ defineExpose({
 
 .system-world__controls-hint,
 .system-world__legend { backdrop-filter: blur(12px); background: rgba(5, 10, 21, 0.72); border: 1px solid rgba(128, 170, 222, 0.13); border-radius: 0.55rem; bottom: 0.55rem; color: rgba(210, 226, 247, 0.55); font-size: 0.55rem; gap: 0.65rem; padding: 0.35rem 0.55rem; position: absolute; }
-.system-world__controls-hint { left: 0.65rem; }
+.system-world__controls-hint { flex-wrap: wrap; left: 0.65rem; max-width: calc(100% - 1.3rem); }
 .system-world__legend { right: 0.65rem; }
+
+.system-world__controls-introduction-copy { line-height: 1.55; margin: 0 0 1rem; }
+.system-world__controls-introduction-list { display: grid; gap: 0.85rem; margin: 0; }
+.system-world__controls-introduction-list > div { display: grid; gap: 0.2rem; }
+.system-world__controls-introduction-list dt { align-items: center; display: flex; font-weight: 650; gap: 0.5rem; }
+.system-world__controls-introduction-list dd { color: rgba(var(--v-theme-on-surface), 0.72); line-height: 1.5; margin: 0 0 0 1.75rem; }
+.system-world__controls-introduction-actions { justify-content: flex-end; padding: 0 1.5rem 1.25rem; }
 
 @media (max-width: 920px) {
   .system-world__toolbar { grid-template-columns: 1fr auto; }
   .system-world__city-switch { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
   .system-world__navigator { width: min(14rem, 38%); }
-  .system-world__inspector,
-  .system-world__orientation { width: min(20rem, 48%); }
+  .system-world__inspector { width: min(20rem, 48%); }
   .system-world__legend { display: none; }
 }
 </style>
