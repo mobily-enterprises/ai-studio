@@ -24,10 +24,12 @@
     </div>
 
     <template v-else-if="mode !== 'hidden'">
-      <div class="vibe64-prompt-hints__label" aria-hidden="true">
-        <v-icon :icon="mdiLightbulbOnOutline" size="16" />
-        <span>Suggestions</span>
-      </div>
+      <v-icon
+        aria-hidden="true"
+        class="vibe64-prompt-hints__marker"
+        :icon="mdiLightbulbOnOutline"
+        size="16"
+      />
 
       <div
         v-if="mode === 'loading'"
@@ -46,17 +48,21 @@
       >
         <v-btn
           v-for="suggestion in suggestions"
-          :key="suggestion"
-          :aria-label="`Use suggestion: ${suggestion}`"
+          :key="suggestion.prompt"
+          :aria-label="`Use suggestion: ${suggestion.prompt}`"
           class="vibe64-prompt-hints__option"
           rounded="xl"
-          :title="suggestion"
+          size="small"
           type="button"
           variant="tonal"
+          @blur="$emit('preview', null)"
           @mousedown.prevent
+          @focus="$emit('preview', suggestion)"
+          @mouseenter="$emit('preview', suggestion)"
+          @mouseleave="$emit('preview', null)"
           @click="$emit('select', suggestion)"
         >
-          <span>{{ suggestion }}</span>
+          <span>{{ suggestion.label }}</span>
         </v-btn>
       </div>
     </template>
@@ -67,7 +73,7 @@
 import { computed } from "vue";
 import { mdiLightbulbOnOutline } from "@mdi/js";
 
-defineEmits(["dismiss", "focusout", "select"]);
+defineEmits(["dismiss", "focusout", "preview", "select"]);
 const props = defineProps({
   assistantLabel: {
     default: "",
@@ -117,20 +123,22 @@ const statusAnnouncement = computed(() => {
   color: rgba(var(--v-theme-on-surface), 0.68);
   display: grid;
   grid-row: 4;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: 1.25rem minmax(0, 1fr);
   height: 0;
+  max-width: 100%;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
   padding-inline: 0;
+  width: 100%;
 }
 
 .vibe64-prompt-hints--assistant,
 .vibe64-prompt-hints--loading,
 .vibe64-prompt-hints--ready {
-  height: 3.5rem;
-  min-height: 3.5rem;
-  padding-inline: 0.3rem;
+  height: 2.25rem;
+  min-height: 2.25rem;
+  padding-inline: 0.2rem;
 }
 
 .vibe64-prompt-hints__sr-status {
@@ -142,19 +150,14 @@ const statusAnnouncement = computed(() => {
   white-space: nowrap;
 }
 
-.vibe64-prompt-hints__label,
+.vibe64-prompt-hints__marker {
+  justify-self: center;
+}
+
 .vibe64-prompt-hints__assistant-status,
 .vibe64-prompt-hints__loading {
   align-items: center;
   display: flex;
-}
-
-.vibe64-prompt-hints__label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  gap: 0.28rem;
-  padding-inline: 0.4rem 0.55rem;
-  white-space: nowrap;
 }
 
 .vibe64-prompt-hints__assistant-status {
@@ -177,6 +180,7 @@ const statusAnnouncement = computed(() => {
 
 .vibe64-prompt-hints__loading {
   font-size: 0.76rem;
+  grid-column: 2;
   min-width: 0;
   padding-inline: 0.5rem;
 }
@@ -186,13 +190,16 @@ const statusAnnouncement = computed(() => {
   box-sizing: border-box;
   display: flex;
   gap: 0.35rem;
+  grid-column: 2;
   height: 100%;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior-inline: contain;
-  padding: 0.25rem;
+  padding: 0.1rem 0.2rem;
   scroll-snap-type: inline proximity;
   scrollbar-width: none;
+  width: 100%;
 }
 
 .vibe64-prompt-hints__options::-webkit-scrollbar {
@@ -202,25 +209,17 @@ const statusAnnouncement = computed(() => {
 .vibe64-prompt-hints__option {
   color: rgb(var(--v-theme-on-surface));
   flex: 0 0 auto;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  height: 3rem;
   letter-spacing: 0;
   line-height: 1.25;
-  min-height: 3rem;
   min-width: 0;
-  max-width: 14rem;
-  padding-inline: 0.75rem;
+  padding-inline: 0.65rem;
   scroll-snap-align: start;
   text-transform: none;
 }
 
 .vibe64-prompt-hints__option span {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-align: start;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

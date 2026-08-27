@@ -404,6 +404,7 @@ onBeforeUnmount(() => {
 watch(() => [
   props.autoGrow,
   props.modelValue,
+  props.placeholder,
   props.rows
 ], queueResizeTextarea);
 

@@ -164,11 +164,15 @@ function testProjectContext(slug = "project-alpha") {
   };
 }
 
+function promptHint(label, prompt) {
+  return { label, prompt };
+}
+
 function readyAgentResult({
   suggestions = [
-    "Add task assignments and due dates",
-    "Create an invitation flow for teammates",
-    "Show overdue work on the dashboard"
+    promptHint("Add task fields", "Add task assignments and due dates"),
+    promptHint("Create invitation flow", "Create an invitation flow for teammates"),
+    promptHint("Show overdue work", "Show overdue work on the dashboard")
   ],
   threadId = "thread-hints-1",
   turnId = "turn-hints-1"
@@ -535,7 +539,7 @@ test("prompt hints stop at project policy and blank-session static starters with
   assert.equal(blankResult.status, "static");
   assert.equal(blankResult.cached, false);
   assert.equal(blankResult.suggestions.length, 3);
-  assert.equal(blankResult.suggestions.every((suggestion) => suggestion.length > 0), true);
+  assert.equal(blankResult.suggestions.every(({ label, prompt }) => label && prompt), true);
   assert.equal(blank.calls.describe.length, 0);
   assert.equal(blank.calls.access.length, 0);
   assert.equal(blank.calls.resolve.length, 0);
@@ -598,9 +602,9 @@ test("prompt hints use only the selected account's prompt_hint economy profile a
   assert.equal(result.status, "ready");
   assert.equal(result.cached, false);
   assert.deepEqual(result.suggestions, [
-    "Add task assignments and due dates",
-    "Create an invitation flow for teammates",
-    "Show overdue work on the dashboard"
+    promptHint("Add task fields", "Add task assignments and due dates"),
+    promptHint("Create invitation flow", "Create an invitation flow for teammates"),
+    promptHint("Show overdue work", "Show overdue work on the dashboard")
   ]);
   assert.equal(typeof result.basis.conversationRevision, "string");
   assert.equal(result.basis.conversationRevision.length > 0, true);
@@ -633,7 +637,20 @@ test("prompt hints use only the selected account's prompt_hint economy profile a
   assert.equal(agentCall.input.outputSchema.additionalProperties, false);
   assert.equal(agentCall.input.outputSchema.properties.suggestions.minItems, 3);
   assert.equal(agentCall.input.outputSchema.properties.suggestions.maxItems, 3);
-  assert.equal(agentCall.input.outputSchema.properties.suggestions.items.maxLength, 120);
+  assert.equal(agentCall.input.outputSchema.properties.suggestions.items.type, "object");
+  assert.equal(agentCall.input.outputSchema.properties.suggestions.items.additionalProperties, false);
+  assert.deepEqual(agentCall.input.outputSchema.properties.suggestions.items.required, [
+    "label",
+    "prompt"
+  ]);
+  assert.equal(
+    agentCall.input.outputSchema.properties.suggestions.items.properties.label.maxLength,
+    24
+  );
+  assert.equal(
+    agentCall.input.outputSchema.properties.suggestions.items.properties.prompt.maxLength,
+    108
+  );
   assert.match(agentCall.input.prompt, /Build a shared team task tracker\./u);
   assert.match(agentCall.input.prompt, /The task list is now visible\./u);
   assert.doesNotMatch(agentCall.input.prompt, /SECRET SYSTEM|SECRET COMMENTARY|SECRET REASONING/u);
@@ -654,6 +671,11 @@ test("prompt hints use only the selected account's prompt_hint economy profile a
 });
 
 test("prompt hints reject malformed, duplicate, multiline, and overlong model suggestions without caching partial output", async (t) => {
+  const validSuggestions = [
+    promptHint("Review current plan", "Review the current plan with me"),
+    promptHint("Check next step", "Check the safest useful next step"),
+    promptHint("Explain recent work", "Explain the most recent project work")
+  ];
   const invalidOutputs = [
     {
       name: "not JSON",
@@ -663,24 +685,52 @@ test("prompt hints reject malformed, duplicate, multiline, and overlong model su
       name: "extra property",
       rawText: JSON.stringify({
         explanation: "Not allowed",
-        suggestions: ["One", "Two", "Three"]
+        suggestions: validSuggestions
       })
     },
     {
       name: "wrong count",
-      suggestions: ["One", "Two"]
+      suggestions: validSuggestions.slice(0, 2)
     },
     {
-      name: "duplicates",
-      suggestions: ["Same", "Same", "Different"]
+      name: "duplicate labels",
+      suggestions: [
+        validSuggestions[0],
+        promptHint(validSuggestions[0].label, "Use a different full prompt"),
+        validSuggestions[2]
+      ]
     },
     {
       name: "multiline",
-      suggestions: ["One", "Two\ncontinued", "Three"]
+      suggestions: [
+        validSuggestions[0],
+        promptHint("Check next step", "Check the next\nstep"),
+        validSuggestions[2]
+      ]
     },
     {
-      name: "overlong",
-      suggestions: ["x".repeat(121), "Two", "Three"]
+      name: "overlong prompt",
+      suggestions: [
+        promptHint("Review current plan", "x".repeat(109)),
+        validSuggestions[1],
+        validSuggestions[2]
+      ]
+    },
+    {
+      name: "verbose label",
+      suggestions: [
+        promptHint("This label has too many words", "Review the current plan with me"),
+        validSuggestions[1],
+        validSuggestions[2]
+      ]
+    },
+    {
+      name: "extra suggestion property",
+      suggestions: [
+        { ...validSuggestions[0], icon: "not allowed" },
+        validSuggestions[1],
+        validSuggestions[2]
+      ]
     }
   ];
 
@@ -1362,7 +1412,11 @@ test("prompt hints reject a result that does not prove the resolved economy prof
       return {
         ok: true,
         text: JSON.stringify({
-          suggestions: ["One useful next step", "A second useful step", "A third useful step"]
+          suggestions: [
+            promptHint("Review current plan", "Review the current plan with me"),
+            promptHint("Check next step", "Check the safest useful next step"),
+            promptHint("Explain recent work", "Explain the most recent project work")
+          ]
         }),
         threadId,
         turnId: `turn-profile-unverified-${agentCalls}`
@@ -1409,9 +1463,9 @@ test("the same client operation id remains isolated between sessions", async () 
       }
       return readyAgentResult({
         suggestions: [
-          `First suggestion for ${sessionId}`,
-          `Second suggestion for ${sessionId}`,
-          `Third suggestion for ${sessionId}`
+          promptHint(`First ${sessionId} step`, `First suggestion for ${sessionId}`),
+          promptHint(`Second ${sessionId} step`, `Second suggestion for ${sessionId}`),
+          promptHint(`Third ${sessionId} step`, `Third suggestion for ${sessionId}`)
         ],
         threadId,
         turnId: `${sessionId}-turn-hints`
@@ -1427,8 +1481,8 @@ test("the same client operation id remains isolated between sessions", async () 
   assert.deepEqual(agentSessions, ["session-1", "session-2"]);
   releaseSessionOne.resolve();
   const [firstResult, secondResult] = await Promise.all([first, second]);
-  assert.match(firstResult.suggestions[0], /session-1/u);
-  assert.match(secondResult.suggestions[0], /session-2/u);
+  assert.match(firstResult.suggestions[0].prompt, /session-1/u);
+  assert.match(secondResult.suggestions[0].prompt, /session-2/u);
 });
 
 test("equal session and operation ids stay isolated by canonical project scope and actor", async () => {
@@ -1458,9 +1512,9 @@ test("equal session and operation ids stay isolated by canonical project scope a
       await release.promise;
       return readyAgentResult({
         suggestions: [
-          `First suggestion for ${identity}`,
-          `Second suggestion for ${identity}`,
-          `Third suggestion for ${identity}`
+          promptHint("Review first scope", `First suggestion for ${identity}`),
+          promptHint("Review second scope", `Second suggestion for ${identity}`),
+          promptHint("Review third scope", `Third suggestion for ${identity}`)
         ],
         threadId,
         turnId: `turn-${identity}`

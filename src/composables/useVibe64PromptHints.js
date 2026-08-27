@@ -1,6 +1,8 @@
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import {
+  VIBE64_PROMPT_HINT_LABEL_MAX_CHARACTERS,
+  VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS,
   VIBE64_PROMPT_HINT_STATIC_STARTERS
 } from "@local/vibe64-runtime/shared";
 import {
@@ -37,11 +39,49 @@ function promptHintConversationFingerprint(turns = []) {
   })));
 }
 
+function normalizedPromptHintSuggestion(suggestion = {}) {
+  if (
+    !suggestion ||
+    typeof suggestion !== "object" ||
+    Array.isArray(suggestion) ||
+    Object.keys(suggestion).length !== 2 ||
+    !Object.hasOwn(suggestion, "label") ||
+    !Object.hasOwn(suggestion, "prompt") ||
+    typeof suggestion.label !== "string" ||
+    typeof suggestion.prompt !== "string" ||
+    [suggestion.label, suggestion.prompt].some((text) => (
+      Array.from(text).some((character) => {
+        const codePoint = character.codePointAt(0);
+        return codePoint <= 0x1f || codePoint === 0x7f;
+      })
+    ))
+  ) {
+    return null;
+  }
+  const label = normalizedPromptHintText(suggestion.label).replace(/[\t ]+/gu, " ");
+  const prompt = normalizedPromptHintText(suggestion.prompt).replace(/[\t ]+/gu, " ");
+  const labelWordCount = label ? label.split(/\s+/u).length : 0;
+  return (
+    label &&
+    prompt &&
+    Array.from(label).length <= VIBE64_PROMPT_HINT_LABEL_MAX_CHARACTERS &&
+    Array.from(prompt).length <= VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS &&
+    labelWordCount >= 2 &&
+    labelWordCount <= 4
+  )
+    ? { label, prompt }
+    : null;
+}
+
 function normalizedPromptHintSuggestions(value = []) {
   const suggestions = (Array.isArray(value) ? value : [])
-    .map(normalizedPromptHintText)
+    .map(normalizedPromptHintSuggestion)
     .filter(Boolean);
-  return suggestions.length === 3 && new Set(suggestions).size === 3
+  return (
+    suggestions.length === 3 &&
+    new Set(suggestions.map(({ label }) => label.toLocaleLowerCase())).size === 3 &&
+    new Set(suggestions.map(({ prompt }) => prompt.toLocaleLowerCase())).size === 3
+  )
     ? suggestions
     : [];
 }
@@ -62,8 +102,9 @@ function useVibe64PromptHints({
   request = (path, options) => getHttpWebClient().request(path, options)
 } = {}) {
   const composerFocused = ref(false);
-  const dismissedForFocus = ref(false);
+  const dismissedRequestKey = ref("");
   const loading = ref(false);
+  const preview = ref("");
   const suggestions = ref([]);
   const status = ref("idle");
   const originId = vibe64BrowserTabOriginId();
@@ -85,17 +126,6 @@ function useVibe64PromptHints({
     Number(currentPolicy.value.revision || 0),
     Number(currentPolicy.value.version || 0)
   ].join(":"));
-  const eligible = computed(() => Boolean(
-    readRefOrGetterValue(active) !== false &&
-    readRefOrGetterValue(canRequest) !== false &&
-    currentPolicy.value.enabled !== false &&
-    currentPolicy.value.ready === true &&
-    currentSessionId.value &&
-    currentSessionsApiPath.value &&
-    composerFocused.value &&
-    !dismissedForFocus.value &&
-    !normalizedPromptHintText(readRefOrGetterValue(draft))
-  ));
   const requestKey = computed(() => [
     currentSessionId.value,
     normalizedPromptHintText(readRefOrGetterValue(conversationKey)),
@@ -103,6 +133,15 @@ function useVibe64PromptHints({
     readRefOrGetterValue(blankConversation) === true ? "blank" : "history",
     readRefOrGetterValue(existingProject) === true ? "existing" : "greenfield"
   ].join("\0"));
+  const eligible = computed(() => Boolean(
+    readRefOrGetterValue(active) !== false &&
+    readRefOrGetterValue(canRequest) !== false &&
+    currentPolicy.value.enabled !== false &&
+    currentPolicy.value.ready === true &&
+    currentSessionId.value &&
+    currentSessionsApiPath.value &&
+    dismissedRequestKey.value !== requestKey.value
+  ));
   const visible = computed(() => Boolean(
     eligible.value && (loading.value || suggestions.value.length === 3)
   ));
@@ -145,6 +184,7 @@ function useVibe64PromptHints({
 
   function clearPromptHints({ notify = true } = {}) {
     cancelCurrentPromptHints({ notify });
+    preview.value = "";
     suggestions.value = [];
     status.value = "idle";
   }
@@ -211,11 +251,11 @@ function useVibe64PromptHints({
     const key = requestKey.value;
     scheduledKey = key;
     if (readRefOrGetterValue(blankConversation) === true) {
-      suggestions.value = [
-        ...(readRefOrGetterValue(existingProject) === true
+      suggestions.value = normalizedPromptHintSuggestions(
+        readRefOrGetterValue(existingProject) === true
           ? VIBE64_PROMPT_HINT_STATIC_STARTERS.existingProject
-          : VIBE64_PROMPT_HINT_STATIC_STARTERS.greenfield)
-      ];
+          : VIBE64_PROMPT_HINT_STATIC_STARTERS.greenfield
+      );
       status.value = "static";
       return;
     }
@@ -231,26 +271,50 @@ function useVibe64PromptHints({
     if (readRefOrGetterValue(active) === false || composerFocused.value) {
       return;
     }
-    dismissedForFocus.value = false;
+    dismissedRequestKey.value = "";
     composerFocused.value = true;
   }
 
   function blurComposer() {
+    preview.value = "";
     composerFocused.value = false;
   }
 
   function dismissPromptHints() {
-    dismissedForFocus.value = true;
+    preview.value = "";
+    dismissedRequestKey.value = requestKey.value;
   }
 
-  function selectPromptHint(suggestion = "") {
-    const text = normalizedPromptHintText(suggestion);
-    if (!text || !suggestions.value.includes(text)) {
+  function currentPromptHintSuggestion(suggestion = null) {
+    const normalized = normalizedPromptHintSuggestion(suggestion);
+    if (!normalized) {
+      return null;
+    }
+    return suggestions.value.find(({ label, prompt }) => (
+      label === normalized.label && prompt === normalized.prompt
+    )) || null;
+  }
+
+  function previewPromptHint(suggestion = null) {
+    preview.value = "";
+    if (normalizedPromptHintText(readRefOrGetterValue(draft))) {
       return false;
     }
-    dismissedForFocus.value = true;
-    clearPromptHints();
-    return onSelect(text) !== false;
+    const current = currentPromptHintSuggestion(suggestion);
+    if (!current) {
+      return false;
+    }
+    preview.value = current.prompt;
+    return true;
+  }
+
+  function selectPromptHint(suggestion = null) {
+    const current = currentPromptHintSuggestion(suggestion);
+    if (!current) {
+      return false;
+    }
+    preview.value = "";
+    return onSelect(current.prompt) !== false;
   }
 
   watch(() => readRefOrGetterValue(active) !== false, (isActive) => {
@@ -258,20 +322,19 @@ function useVibe64PromptHints({
       return;
     }
     composerFocused.value = false;
-    dismissedForFocus.value = false;
+    dismissedRequestKey.value = "";
   }, { flush: "sync" });
 
   watch(() => normalizedPromptHintText(readRefOrGetterValue(draft)), (value) => {
-    if (value && composerFocused.value) {
-      dismissedForFocus.value = true;
+    if (value) {
+      preview.value = "";
     }
   }, { flush: "sync" });
 
   watch(() => [
     eligible.value ? "eligible" : "blocked",
     requestKey.value,
-    composerFocused.value ? "focused" : "blurred",
-    dismissedForFocus.value ? "dismissed" : "available"
+    dismissedRequestKey.value === requestKey.value ? "dismissed" : "available"
   ].join("\0"), () => {
     if (!eligible.value) {
       scheduledKey = "";
@@ -296,6 +359,8 @@ function useVibe64PromptHints({
     dismissPromptHints,
     focusComposer,
     loading,
+    preview,
+    previewPromptHint,
     selectPromptHint,
     status,
     suggestions,

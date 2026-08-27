@@ -67,7 +67,11 @@ test("prompt-hint actions delegate generation and cancellation to their exact se
           cached: false,
           ok: true,
           status: "ready",
-          suggestions: ["One", "Two", "Three"]
+          suggestions: [
+            { label: "Review current plan", prompt: "Review the current plan with me" },
+            { label: "Check next step", prompt: "Check the safest useful next step" },
+            { label: "Explain recent work", prompt: "Explain the most recent project work" }
+          ]
         };
       }
     }

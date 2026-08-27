@@ -122,6 +122,7 @@ function mountPromptHints(input = {}) {
   const events = {
     dismiss: vi.fn(),
     focusout: vi.fn(),
+    preview: vi.fn(),
     select: vi.fn()
   };
   const Root = defineComponent({
@@ -130,6 +131,7 @@ function mountPromptHints(input = {}) {
         ...state,
         onDismiss: events.dismiss,
         onFocusout: events.focusout,
+        onPreview: events.preview,
         onSelect: events.select
       });
     }
@@ -144,25 +146,30 @@ function mountPromptHints(input = {}) {
 }
 
 describe("Vibe64 prompt hints UI", () => {
-  it("uses one compact suggestion rail and removes its hidden footprint", () => {
+  it("uses one minimal icon-led short-label rail and removes its hidden footprint", () => {
     const component = hintComponentSource;
 
     expect(component).toContain("mdiLightbulbOnOutline");
-    expect(component).toContain("Suggestions");
+    expect(component).not.toContain("vibe64-prompt-hints__label");
+    expect(component).not.toContain("<span>Suggestions</span>");
     expect(component).toContain('v-for="suggestion in suggestions"');
-    expect(component).toContain(':aria-label="`Use suggestion: ${suggestion}`"');
-    expect(component).toContain(':title="suggestion"');
+    expect(component).toContain(':aria-label="`Use suggestion: ${suggestion.prompt}`"');
+    expect(component).toContain("{{ suggestion.label }}");
+    expect(component).not.toContain(':title="suggestion"');
     expect(component).toContain('aria-orientation="horizontal"');
     expect(component).toContain('rounded="xl"');
+    expect(component).toContain('size="small"');
     expect(component).toContain('variant="tonal"');
     expect(component).not.toContain("\n          block\n");
     expect(component).toContain("height: 0;");
-    expect(component).toContain("height: 3.5rem;");
+    expect(component).toContain("height: 2.25rem;");
+    expect(component).toContain("grid-template-columns: 1.25rem minmax(0, 1fr);");
     expect(component).toContain("display: flex;");
     expect(component).toContain("height: 100%;");
     expect(component).toContain("overflow-x: auto;");
+    expect(component).toContain("overflow-y: hidden;");
     expect(component).toContain("flex: 0 0 auto;");
-    expect(component).toContain("text-overflow: ellipsis;");
+    expect(component).not.toContain(":deep(.v-btn__content)");
     expect(component).toContain("white-space: nowrap;");
     expect(component).toContain("@media (prefers-reduced-motion: reduce)");
     expect(component).not.toMatch(/v-progress|spinner|circular-progress/iu);
@@ -228,6 +235,9 @@ describe("Vibe64 prompt hints UI", () => {
     const promptTextarea = fs.readFileSync(promptTextareaPath, "utf8");
 
     expect(autopilot).toContain('@select="selectPromptHint"');
+    expect(autopilot).toContain('@preview="previewPromptHint"');
+    expect(autopilot).toContain(':placeholder="composerPromptHintPlaceholder"');
+    expect(autopilot).toContain("promptHintPreview.value");
     expect(autopilot).toContain("composerDraft.value = suggestion;");
     expect(autopilot).toContain("composerInput.value?.focus?.({ preventScroll: true });");
     expect(autopilot).not.toMatch(/function applyPromptHint[\s\S]{0,500}submitComposerMessage/gu);
@@ -236,6 +246,9 @@ describe("Vibe64 prompt hints UI", () => {
     expect(promptTextarea).toContain('@focus="handleTextareaFocus"');
     expect(promptTextarea).toContain('@blur="handleTextareaBlur"');
     expect(promptTextarea).toContain("focus: focusTextarea");
+    expect(promptTextarea).toMatch(
+      /props\.modelValue,\s*props\.placeholder,\s*props\.rows/u
+    );
     expect(autopilot).toContain('@blur="handleComposerBlur"');
     expect(autopilot).toContain('@focusout="handleComposerRegionFocusOut"');
     expect(autopilot).toContain('@dismiss="dismissPromptHintsAndFocus"');
@@ -252,12 +265,21 @@ describe("Vibe64 prompt hints UI", () => {
     expect(nodeText(statuses[0])).toBe("Thinking of a few ideas.");
 
     mounted.state.loading = false;
-    const maximumLengthSuggestion = "Review the latest changes and suggest the safest useful next improvement, including how we can verify it together today.";
-    expect(maximumLengthSuggestion).toHaveLength(120);
+    const maximumLengthPrompt = "Set up a dashboard on the home page so I can see all my tracked projects and their status at a quick glance.";
+    expect(maximumLengthPrompt).toHaveLength(108);
     mounted.state.suggestions = [
-      maximumLengthSuggestion,
-      "Explain the current project in plain language before we decide what to change",
-      "Help me plan one small improvement that we can verify together"
+      {
+        label: "Create dashboard view",
+        prompt: maximumLengthPrompt
+      },
+      {
+        label: "Explain current project",
+        prompt: "Explain the current project in plain language before we decide what to change"
+      },
+      {
+        label: "Plan small improvement",
+        prompt: "Help me plan one small improvement that we can verify together"
+      }
     ];
     await nextTick();
 
@@ -271,8 +293,16 @@ describe("Vibe64 prompt hints UI", () => {
     expect(groups[0].props["aria-label"]).toBe("Suggested prompts");
     const buttons = findNodes(groups[0], (node) => node.type === "button");
     expect(buttons).toHaveLength(3);
-    expect(buttons[0].props["aria-label"]).toContain(mounted.state.suggestions[0]);
-    expect(nodeText(buttons[0])).toBe(maximumLengthSuggestion);
+    expect(buttons[0].props["aria-label"]).toContain(maximumLengthPrompt);
+    expect(nodeText(buttons[0])).toBe("Create dashboard view");
+    buttons[0].props.onMouseenter();
+    expect(mounted.events.preview).toHaveBeenLastCalledWith(mounted.state.suggestions[0]);
+    buttons[0].props.onMouseleave();
+    expect(mounted.events.preview).toHaveBeenLastCalledWith(null);
+    buttons[0].props.onFocus();
+    expect(mounted.events.preview).toHaveBeenLastCalledWith(mounted.state.suggestions[0]);
+    buttons[0].props.onBlur();
+    expect(mounted.events.preview).toHaveBeenLastCalledWith(null);
     buttons[0].props.onClick();
     expect(mounted.events.select).toHaveBeenCalledWith(mounted.state.suggestions[0]);
 

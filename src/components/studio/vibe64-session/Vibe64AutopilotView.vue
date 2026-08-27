@@ -260,6 +260,7 @@
         :suggestions="!composerAssistantLabel && promptHintsVisible ? promptHintSuggestions : []"
         @dismiss="dismissPromptHintsAndFocus"
         @focusout="handlePromptHintsFocusOut"
+        @preview="previewPromptHint"
         @select="selectPromptHint"
       />
 
@@ -277,7 +278,7 @@
           :error-messages="composerError"
           :hint="composerAccessHint"
           persistent-hint
-          :placeholder="composerPlaceholder"
+          :placeholder="composerPromptHintPlaceholder"
           :rows="numberedQuestions.length ? 1 : 2"
           :session-id="sessionId"
           :submit-enabled="composerCanSubmit"
@@ -971,6 +972,8 @@ const {
   dismissPromptHints,
   focusComposer: focusPromptHints,
   loading: promptHintsLoading,
+  preview: promptHintPreview,
+  previewPromptHint,
   selectPromptHint,
   suggestions: promptHintSuggestions,
   visible: promptHintsVisible
@@ -986,6 +989,13 @@ const {
   sessionId,
   sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
 });
+const composerPromptHintPlaceholder = computed(() => (
+  promptHintsVisible.value &&
+  !String(composerDraft.value || "").trim() &&
+  promptHintPreview.value
+    ? promptHintPreview.value
+    : composerPlaceholder.value
+));
 const composerSupportStatusVisible = computed(() => Boolean(
   composerAssistantLabel.value || promptHintsVisible.value
 ));

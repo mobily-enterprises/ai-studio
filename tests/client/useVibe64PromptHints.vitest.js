@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PROMPT_HINT_DEBOUNCE_MS,
   PROMPT_HINT_RECENT_VISIBLE_TURN_LIMIT,
+  normalizedPromptHintSuggestions,
   promptHintConversationFingerprint,
   useVibe64PromptHints
 } from "../../src/composables/useVibe64PromptHints.js";
@@ -14,6 +15,10 @@ function deferredResult() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+function promptHint(label, prompt) {
+  return { label, prompt };
 }
 
 function createHints(overrides = {}, dependencies = {}) {
@@ -53,13 +58,11 @@ describe("useVibe64PromptHints", () => {
     const request = vi.fn();
     const greenfield = createHints({ blankConversation: ref(true) }, { request });
 
-    greenfield.hints.focusComposer();
-
     expect(greenfield.hints.status.value).toBe("static");
     expect(greenfield.hints.suggestions.value).toEqual([
-      "Help me shape my app idea",
-      "Show me the simplest useful first version",
-      "What should we decide first?"
+      promptHint("Shape app idea", "Help me shape my app idea"),
+      promptHint("Plan first version", "Show me the simplest useful first version"),
+      promptHint("Decide first steps", "What should we decide first?")
     ]);
     expect(greenfield.hints.visible.value).toBe(true);
     expect(request).not.toHaveBeenCalled();
@@ -69,23 +72,21 @@ describe("useVibe64PromptHints", () => {
       blankConversation: ref(true),
       existingProject: ref(true)
     }, { request });
-    existing.hints.focusComposer();
     expect(existing.hints.suggestions.value).toEqual([
-      "Give me a quick tour of this project",
-      "What should I improve first?",
-      "Help me plan a small safe change"
+      promptHint("Tour this project", "Give me a quick tour of this project"),
+      promptHint("Find first improvement", "What should I improve first?"),
+      promptHint("Plan safe change", "Help me plan a small safe change")
     ]);
     expect(request).not.toHaveBeenCalled();
     existing.scope.stop();
   });
 
-  it("waits for the enabled project policy and every composer gate", () => {
+  it("waits for the enabled project policy and request availability", () => {
     const request = vi.fn();
     const policy = ref({ enabled: true, ready: false, revision: 0, version: 1 });
     const canRequest = ref(true);
     const { hints, scope } = createHints({ canRequest, policy }, { request });
 
-    hints.focusComposer();
     expect(hints.visible.value).toBe(false);
 
     policy.value = { enabled: false, ready: true, revision: 1, version: 1 };
@@ -102,15 +103,18 @@ describe("useVibe64PromptHints", () => {
     scope.stop();
   });
 
-  it("debounces generation and accepts only exactly three valid suggestions", async () => {
+  it("generates on session load and keeps ready suggestions visible across blur", async () => {
     const request = vi.fn(async () => ({
       ok: true,
       status: "ready",
-      suggestions: ["Inspect the failing test", "Plan the smallest fix", "Review recent changes"]
+      suggestions: [
+        promptHint("Inspect failing test", "Please inspect the failing test"),
+        promptHint("Plan smallest fix", "Please plan the smallest safe fix"),
+        promptHint("Review recent changes", "Please review the recent changes")
+      ]
     }));
     const { hints, scope } = createHints({}, { request });
 
-    hints.focusComposer();
     expect(hints.loading.value).toBe(true);
     expect(request).not.toHaveBeenCalled();
 
@@ -131,14 +135,48 @@ describe("useVibe64PromptHints", () => {
     expect(hints.suggestions.value).toHaveLength(3);
 
     hints.blurComposer();
-    expect(hints.visible.value).toBe(false);
+    expect(hints.visible.value).toBe(true);
     hints.focusComposer();
     await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS);
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(1);
     scope.stop();
   });
 
-  it("cancels and ignores an in-flight result as soon as the person types", async () => {
+  it("regenerates after each completed turn without waiting for composer focus", async () => {
+    const canRequest = ref(true);
+    const conversationKey = ref("conversation-1");
+    const request = vi.fn(async () => ({
+      ok: true,
+      status: "ready",
+      suggestions: [
+        promptHint("Review current plan", "Review the current plan with me"),
+        promptHint("Check next step", "Check the safest useful next step"),
+        promptHint("Explain recent work", "Explain the most recent project work")
+      ]
+    }));
+    const { hints, scope } = createHints({ canRequest, conversationKey }, { request });
+
+    await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(hints.status.value).toBe("ready");
+
+    hints.blurComposer();
+    canRequest.value = false;
+    conversationKey.value = "conversation-2";
+    expect(hints.visible.value).toBe(false);
+
+    canRequest.value = true;
+    expect(hints.loading.value).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(hints.status.value).toBe("ready");
+    expect(hints.visible.value).toBe(true);
+    scope.stop();
+  });
+
+  it("keeps suggestions available while the person types and suppresses hover preview", async () => {
     const generated = deferredResult();
     const request = vi.fn((path) => (
       path.endsWith("/cancel")
@@ -148,41 +186,34 @@ describe("useVibe64PromptHints", () => {
     const draft = ref("");
     const { hints, scope } = createHints({ draft }, { request });
 
-    hints.focusComposer();
     await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS);
     expect(request).toHaveBeenCalledTimes(1);
 
     draft.value = "I already know what to ask";
     await nextTick();
 
-    expect(hints.visible.value).toBe(false);
-    expect(request).toHaveBeenCalledTimes(2);
-    expect(request.mock.calls[1][0]).toBe("/api/vibe64/sessions/session-1/prompt-hints/cancel");
-    expect(request.mock.calls[1][1].body.operationId).toBe(
-      request.mock.calls[0][1].body.operationId
-    );
+    expect(hints.visible.value).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
 
     generated.resolve({
       ok: true,
       status: "ready",
-      suggestions: ["Stale one", "Stale two", "Stale three"]
+      suggestions: [
+        promptHint("Review current plan", "Review the current plan with me"),
+        promptHint("Check next step", "Check the safest useful next step"),
+        promptHint("Explain recent work", "Explain the most recent project work")
+      ]
     });
     await Promise.resolve();
     await Promise.resolve();
-    expect(hints.suggestions.value).toEqual([]);
-
-    draft.value = "";
-    await nextTick();
-    vi.advanceTimersByTime(PROMPT_HINT_DEBOUNCE_MS + 1);
-    expect(request).toHaveBeenCalledTimes(2);
-
-    hints.blurComposer();
-    hints.focusComposer();
-    expect(hints.loading.value).toBe(true);
+    expect(hints.suggestions.value).toHaveLength(3);
+    expect(hints.previewPromptHint(hints.suggestions.value[0])).toBe(false);
+    expect(hints.preview.value).toBe("");
+    expect(hints.visible.value).toBe(true);
     scope.stop();
   });
 
-  it("fills without sending and keeps the current focus cycle dismissed", () => {
+  it("previews only an empty composer and replaces its draft on every selection", () => {
     const draft = ref("");
     const onSelect = vi.fn((text) => {
       draft.value = text;
@@ -194,17 +225,44 @@ describe("useVibe64PromptHints", () => {
       onSelect
     });
 
-    hints.focusComposer();
     const selected = hints.suggestions.value[1];
+    expect(hints.previewPromptHint(selected)).toBe(true);
+    expect(hints.preview.value).toBe(selected.prompt);
     expect(hints.selectPromptHint(selected)).toBe(true);
-    expect(onSelect).toHaveBeenCalledWith(selected);
-    expect(draft.value).toBe(selected);
-    expect(hints.suggestions.value).toEqual([]);
-    expect(hints.visible.value).toBe(false);
+    expect(onSelect).toHaveBeenCalledWith(selected.prompt);
+    expect(draft.value).toBe(selected.prompt);
+    expect(hints.preview.value).toBe("");
+    expect(hints.suggestions.value).toHaveLength(3);
+    expect(hints.visible.value).toBe(true);
+
+    const replacement = hints.suggestions.value[2];
+    expect(hints.previewPromptHint(replacement)).toBe(false);
+    expect(hints.selectPromptHint(replacement)).toBe(true);
+    expect(draft.value).toBe(replacement.prompt);
+    expect(onSelect).toHaveBeenLastCalledWith(replacement.prompt);
+    expect(hints.visible.value).toBe(true);
     scope.stop();
   });
 
-  it("dismisses on Escape and refreshes only after blur and a new focus", () => {
+  it("accepts only three unique short-label and full-prompt pairs", () => {
+    const valid = [
+      promptHint("Review current plan", "Review the current plan with me"),
+      promptHint("Check next step", "Check the safest useful next step"),
+      promptHint("Explain recent work", "Explain the most recent project work")
+    ];
+    expect(normalizedPromptHintSuggestions(valid)).toEqual(valid);
+    expect(normalizedPromptHintSuggestions([
+      ...valid.slice(0, 2),
+      promptHint("This label has too many words", "Explain the most recent project work")
+    ])).toEqual([]);
+    expect(normalizedPromptHintSuggestions([
+      valid[0],
+      promptHint(valid[0].label, "Use a different full prompt"),
+      valid[2]
+    ])).toEqual([]);
+  });
+
+  it("dismisses on Escape until a new focus cycle or completed turn", () => {
     const { hints, scope } = createHints({ blankConversation: ref(true) });
 
     hints.focusComposer();
@@ -217,16 +275,34 @@ describe("useVibe64PromptHints", () => {
     hints.blurComposer();
     hints.focusComposer();
     expect(hints.visible.value).toBe(true);
+
+    hints.dismissPromptHints();
+    expect(hints.visible.value).toBe(false);
     scope.stop();
+
+    const conversationKey = ref("conversation-1");
+    const refreshed = createHints({
+      blankConversation: ref(true),
+      conversationKey
+    });
+    refreshed.hints.focusComposer();
+    refreshed.hints.dismissPromptHints();
+    conversationKey.value = "conversation-2";
+    expect(refreshed.hints.visible.value).toBe(true);
+    refreshed.scope.stop();
   });
 
-  it("ends an inactive session's focus cycle and accepts cached hints after a fresh focus", async () => {
+  it("ends an inactive session's focus cycle and regenerates when it becomes active", async () => {
     const active = ref(true);
     const request = vi.fn(async () => ({
       cached: true,
       ok: true,
       status: "ready",
-      suggestions: ["First", "Second", "Third"]
+      suggestions: [
+        promptHint("Review current plan", "Review the current plan with me"),
+        promptHint("Check next step", "Check the safest useful next step"),
+        promptHint("Explain recent work", "Explain the most recent project work")
+      ]
     }));
     const { hints, scope } = createHints({ active }, { request });
 
@@ -239,14 +315,14 @@ describe("useVibe64PromptHints", () => {
 
     active.value = true;
     await nextTick();
-    await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS + 1);
-    expect(request).not.toHaveBeenCalled();
-
-    hints.focusComposer();
     await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS);
     expect(request).toHaveBeenCalledTimes(1);
     expect(hints.status.value).toBe("ready");
-    expect(hints.suggestions.value).toEqual(["First", "Second", "Third"]);
+    expect(hints.suggestions.value).toEqual([
+      promptHint("Review current plan", "Review the current plan with me"),
+      promptHint("Check next step", "Check the safest useful next step"),
+      promptHint("Explain recent work", "Explain the most recent project work")
+    ]);
     scope.stop();
   });
 
