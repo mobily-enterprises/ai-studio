@@ -786,7 +786,7 @@ test("agent preview wrapper forwards command input over the private session sock
     assert.equal(prepared.env[VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID_ENV], "wrapper-session");
     assert.match(prepared.env[VIBE64_AGENT_PREVIEW_COMMAND_SOCKET_ENV], /preview-command\.sock$/u);
     assert.match(prepared.env[VIBE64_AGENT_PREVIEW_COMMAND_TOKEN_ENV], /^[a-f0-9]{16}$/u);
-    assert.equal(prepared.env[VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV], "8");
+    assert.equal(prepared.env[VIBE64_AGENT_PREVIEW_COMMAND_CONTRACT_VERSION_ENV], "9");
 
     const executed = await execFileAsync(prepared.hostWrapperPath, [
       "status",

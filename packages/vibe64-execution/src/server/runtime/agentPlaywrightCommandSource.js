@@ -1,17 +1,15 @@
 function agentPlaywrightCommandSource({
   managedNodePath = "",
-  managedNpmPath = "",
   managedPreviewPath = "",
   runtimeRoot = ""
 } = {}) {
   return `#!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 const managedNodePath = ${JSON.stringify(String(managedNodePath || ""))};
-const managedNpmPath = ${JSON.stringify(String(managedNpmPath || ""))};
 const managedPreviewPath = ${JSON.stringify(String(managedPreviewPath || ""))};
 const runtimeRoot = ${JSON.stringify(String(runtimeRoot || ""))};
 
@@ -236,7 +234,7 @@ function childEnv(runtime = {}, preview = {}, authentication = null) {
   };
 }
 
-function run(command = "", args = [], options = {}) {
+function runManaged(runner = "", args = [], options = {}) {
   const cleanup = () => {
     if (options.cleanupRoot) {
       rmSync(options.cleanupRoot, {
@@ -245,23 +243,32 @@ function run(command = "", args = [], options = {}) {
       });
     }
   };
-  const child = spawn(command, args, {
+  if (!path.isAbsolute(managedPreviewPath) || !existsSync(managedPreviewPath)) {
+    cleanup();
+    fail(
+      "Vibe64 could not start the isolated browser-test execution. " +
+      "The session's vibe64-preview command is unavailable."
+    );
+  }
+  const result = spawnSync(managedNodePath, [
+    managedPreviewPath,
+    "playwright-run",
+    runner,
+    ...args
+  ], {
     cwd: options.cwd,
     env: options.env,
     stdio: "inherit"
   });
-  child.once("error", (error) => {
-    cleanup();
-    fail(error?.message || error);
-  });
-  child.once("close", (code, signal) => {
-    cleanup();
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exit(Number.isInteger(code) ? code : 1);
-  });
+  cleanup();
+  if (result.error) {
+    fail(result.error?.message || result.error);
+  }
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+    return;
+  }
+  process.exit(Number.isInteger(result.status) ? result.status : 1);
 }
 
 function managedExecution(runtime = {}, applicationRoot = "", {
@@ -367,7 +374,7 @@ if (command === "test") {
     identity,
     identityExplicit
   });
-  run(managedNodePath, [project.cliPath, "test", ...args], {
+  runManaged("node", [project.cliPath, "test", ...args], {
     cleanupRoot: execution.cleanupRoot,
     cwd: applicationRoot,
     env: execution.env
@@ -381,7 +388,7 @@ if (command === "test") {
     identity,
     identityExplicit
   });
-  run(managedNpmPath, ["run", script, ...args], {
+  runManaged("npm", ["run", script, ...args], {
     cleanupRoot: execution.cleanupRoot,
     cwd: applicationRoot,
     env: execution.env

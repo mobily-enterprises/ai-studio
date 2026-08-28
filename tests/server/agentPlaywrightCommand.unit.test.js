@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -86,12 +86,19 @@ function authenticatedStorageState(identity = "default") {
   };
 }
 
-async function writeAuthenticatedPreviewWrapper(wrapperPath, previewUrl) {
+async function writeAuthenticatedPreviewWrapper(wrapperPath, previewUrl, managedNpmPath) {
   await writeExecutable(wrapperPath, [
     "#!/usr/bin/env node",
+    "const { spawnSync } = require(\"node:child_process\");",
     "const { writeFileSync } = require(\"node:fs\");",
     `const previewUrl = ${JSON.stringify(previewUrl)};`,
+    `const managedNpmPath = ${JSON.stringify(managedNpmPath)};`,
     "const args = process.argv.slice(2);",
+    "if (args[0] === \"playwright-run\" && [\"node\", \"npm\"].includes(args[1])) {",
+    "  const command = args[1] === \"node\" ? process.execPath : managedNpmPath;",
+    "  const result = spawnSync(command, args.slice(2), { cwd: process.cwd(), env: process.env, stdio: \"inherit\" });",
+    "  process.exit(Number.isInteger(result.status) ? result.status : 1);",
+    "}",
     "if (args[0] === \"ensure\") {",
     "  process.stdout.write(JSON.stringify({",
     "    endpoints: { agent: { url: previewUrl } },",
@@ -179,18 +186,61 @@ async function prepareFixture(root, projectVersion, runtimeVersion = projectVers
         };
       }
     },
-    readSessionUiState: () => null
+    readSessionUiState: () => null,
+    runManagedCommand(input = {}) {
+      managedCommands.push(input);
+      return new Promise((resolve, reject) => {
+        const child = spawn(input.command, input.args, {
+          cwd: input.cwd,
+          env: {
+            ...process.env,
+            ...input.env
+          },
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+          stdout += chunk;
+          input.onOutput?.(chunk);
+        });
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
+          input.onOutput?.(chunk);
+        });
+        child.once("error", reject);
+        child.once("close", (exitCode, signal) => resolve({
+          error: exitCode === 0 ? "" : stderr,
+          execution: input.execution,
+          exitCode: Number.isInteger(exitCode) ? exitCode : 1,
+          ok: exitCode === 0 && !signal,
+          output: stdout + stderr,
+          signal,
+          stderr,
+          stdout
+        }));
+      });
+    }
   });
+  const managedCommands = [];
   const prepared = await prepareAgentPreviewCommand({
     commandService,
     env: {
       VIBE64_RUNTIME_PACK_ROOT: runtimeRoot
     },
+    project: {
+      slug: "example"
+    },
     sessionId: `playwright-${projectVersion}`,
+    worktreePath: projectRoot,
     wrapperHostDir: path.join(root, "commands")
   });
+  prepared.env.VIBE64_EXECUTION_ID = "assistant-execution";
   return {
     commandService,
+    managedCommands,
     prepared,
     projectRoot,
     runtimeRoot
@@ -260,10 +310,16 @@ test("managed Playwright test command uses the exact versioned browser runtime w
     assert.deepEqual(npmRun.args, ["run", "e2e", "--", "--grep", "settings"]);
     assert.equal(npmRun.baseUrl, "http://127.0.0.1:4104");
 
-    await writeExecutable(
-      fixture.prepared.hostWrapperPath,
-      "This is deliberately not executable JavaScript because an explicit PLAYWRIGHT_BASE_URL must bypass it.\n"
-    );
+    assert.equal(fixture.managedCommands.length, 2);
+    for (const request of fixture.managedCommands) {
+      assert.equal(request.execution.kind, "browser");
+      assert.equal(request.execution.label, "Browser testing");
+      assert.equal(request.execution.lifecycle, "finite");
+      assert.equal(request.execution.parentExecutionId, "assistant-execution");
+      assert.equal(request.execution.projectSlug, "example");
+      assert.equal(request.execution.sessionId, "playwright-1.61.1");
+      assert.equal(request.timeout, 30 * 60 * 1000);
+    }
     const explicit = JSON.parse((await execFileAsync(
       fixture.prepared.hostPlaywrightWrapperPath,
       ["test", "--grep", "override"],
@@ -271,6 +327,7 @@ test("managed Playwright test command uses the exact versioned browser runtime w
         cwd: fixture.projectRoot,
         env: {
           ...process.env,
+          ...fixture.prepared.env,
           PLAYWRIGHT_BASE_URL: "http://127.0.0.1:6200/custom",
           VIBE64_PLAYWRIGHT_STORAGE_STATE: "/tmp/explicit-state.json"
         }
@@ -309,7 +366,8 @@ test("managed Playwright supplies and removes authenticated browser state", asyn
     fixture = await prepareFixture(root, "1.61.1");
     await writeAuthenticatedPreviewWrapper(
       fixture.prepared.hostWrapperPath,
-      "http://127.0.0.1:4104/home"
+      "http://127.0.0.1:4104/home",
+      path.join(fixture.runtimeRoot, "node26", "bin", "npm")
     );
     const expectedState = authenticatedStorageState("default");
 

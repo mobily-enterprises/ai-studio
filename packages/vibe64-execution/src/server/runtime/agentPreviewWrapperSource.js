@@ -128,6 +128,76 @@ async function controlRequest(requestPath, input = {}) {
   return parsedResponse(response);
 }
 
+async function streamingControlRequest(requestPath, input = {}) {
+  const requestBody = JSON.stringify({
+    ...input,
+    generationId: controlGeneration,
+    sessionId,
+    token: controlToken
+  });
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    let finalPayload = null;
+    let receivedOutput = false;
+    const handleLine = (line = "") => {
+      const value = String(line || "").trim();
+      if (!value) {
+        return;
+      }
+      const payload = JSON.parse(value);
+      if (payload.type === "output" && payload.data) {
+        receivedOutput = true;
+        process.stdout.write(Buffer.from(String(payload.data), "base64"));
+        return;
+      }
+      if (payload.type === "result") {
+        finalPayload = payload;
+      }
+    };
+    const request = http.request({
+      headers: {
+        "Content-Length": Buffer.byteLength(requestBody),
+        "Content-Type": "application/json"
+      },
+      method: "POST",
+      path: requestPath,
+      socketPath: controlSocketPath
+    }, (response) => {
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split("\\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          handleLine(line);
+        }
+      });
+      response.once("end", () => {
+        try {
+          handleLine(buffer);
+          if (!finalPayload) {
+            throw new Error("Vibe64 browser-test execution returned an incomplete response.");
+          }
+          if (finalPayload.ok === false && !receivedOutput && finalPayload.error) {
+            process.stderr.write(errorText(finalPayload.error) + "\\n");
+          }
+          resolve(payloadExitCode(finalPayload));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.once("error", (error) => {
+      if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
+        reject(new Error("vibe64_agent_control_unavailable: Managed preview control is unavailable. Reconnect the assistant."));
+        return;
+      }
+      reject(error);
+    });
+    request.end(requestBody);
+  });
+}
+
 async function remoteCommand(args = []) {
   return controlRequest("/agent-preview-command/run", {
     args,
@@ -320,6 +390,29 @@ if (!controlSocketPath || !controlToken || !controlGeneration || !sessionId || !
 
 const args = process.argv.slice(2);
 try {
+  if (args[0] === "playwright-run") {
+    const runner = String(args[1] || "").trim();
+    if (!["node", "npm"].includes(runner)) {
+      fail("Vibe64 browser-test execution requires a managed node or npm runner.", 64);
+    }
+    const exitCode = await streamingControlRequest("/agent-preview-command/playwright-run", {
+      args: args.slice(2),
+      browserSocketPath,
+      cwd: process.cwd(),
+      managedNodePath,
+      parentExecutionId: String(process.env.VIBE64_EXECUTION_ID || "").trim(),
+      playwrightEnv: Object.fromEntries([
+        "PLAYWRIGHT_BASE_URL",
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD",
+        "VIBE64_MANAGED_PLAYWRIGHT_TEST",
+        "VIBE64_PLAYWRIGHT_STORAGE_STATE"
+      ].filter((name) => Object.hasOwn(process.env, name)).map((name) => [name, process.env[name]])),
+      runner,
+      workerScriptPath
+    });
+    process.exit(exitCode);
+  }
   if (args[0] === "browser") {
     const browserCommand = String(args[1] || "").trim();
     const browserArgs = args.slice(2);

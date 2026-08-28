@@ -43,15 +43,17 @@ const AGENT_PREVIEW_BROWSER_WORKER_NAME = "vibe64-preview-browser-worker";
 const AGENT_PREVIEW_BROWSER_SOCKET_NAME = "preview-browser.sock";
 const AGENT_PREVIEW_BROWSER_METADATA_NAME = "preview-browser.json";
 const AGENT_PREVIEW_COMMAND_SOCKET_NAME = "preview-command.sock";
-const AGENT_PREVIEW_COMMAND_CONTRACT_VERSION = "8";
+const AGENT_PREVIEW_COMMAND_CONTRACT_VERSION = "9";
 const AGENT_PREVIEW_COMMAND_REQUEST_MAX_BYTES = 1024 * 1024;
 const AGENT_PREVIEW_COMMAND_ROUTES = new Set([
   "/agent-preview-command/browser-start",
   "/agent-preview-command/browser-stop",
   "/agent-preview-command/health",
   "/agent-preview-command/identity",
+  "/agent-preview-command/playwright-run",
   "/agent-preview-command/run"
 ]);
+const DEFAULT_PLAYWRIGHT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_PREVIEW_BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_PREVIEW_LOG_LINES = 200;
 const DEFAULT_PREVIEW_WAIT_TIMEOUT_MS = 90_000;
@@ -808,6 +810,11 @@ function createAgentPreviewCommandService({
       stopExecution: stopManagedExecution
     }),
     closeAllForSession,
+    playwrightRun: (sessionId, input, options = {}) => runRegisteredPlaywrightCommand(sessionId, input, {
+      browserWorkers,
+      onOutput: options.onOutput,
+      runCommand: runManagedCommand
+    }),
     registerBrowserWorker,
     releaseControlForSession,
     run
@@ -1121,6 +1128,145 @@ function registeredBrowserWorkerForInput(sessionId = "", input = {}, browserWork
     };
   }
   return { cwd, descriptor };
+}
+
+async function runRegisteredPlaywrightCommand(sessionId = "", input = {}, {
+  browserWorkers = new Map(),
+  onOutput = null,
+  runCommand = runVibe64Command
+} = {}) {
+  const registered = registeredBrowserWorkerForInput(sessionId, input, browserWorkers);
+  if (registered.error) {
+    return registered.error;
+  }
+  const { cwd, descriptor } = registered;
+  const parentExecutionId = normalizeText(input.parentExecutionId);
+  if (!parentExecutionId) {
+    return responseError(
+      "Browser testing requires a live assistant execution owner.",
+      "vibe64_managed_browser_parent_required"
+    );
+  }
+  const runner = normalizeText(input.runner);
+  const args = Array.isArray(input.args)
+    ? input.args.map((value) => String(value ?? ""))
+    : [];
+  let command = "";
+  if (runner === "node") {
+    const cliPath = path.resolve(normalizeText(args[0]));
+    const relativeCliPath = path.relative(path.resolve(descriptor.worktreePath), cliPath);
+    if (
+      !normalizeText(args[0]) ||
+      relativeCliPath === ".." ||
+      relativeCliPath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeCliPath) ||
+      !/node_modules\/(?:@playwright\/test|playwright)\/cli\.js$/u.test(relativeCliPath.split(path.sep).join("/"))
+    ) {
+      return responseError(
+        "The browser-test command does not use this project's Playwright CLI.",
+        "vibe64_managed_playwright_cli_invalid"
+      );
+    }
+    command = descriptor.managedNodePath;
+  } else if (runner === "npm") {
+    const scriptName = normalizeText(args[1]);
+    let packageRecord = null;
+    try {
+      packageRecord = JSON.parse(await readFile(path.join(cwd, "package.json"), "utf8"));
+    } catch {
+      packageRecord = null;
+    }
+    if (
+      args[0] !== "run" ||
+      !scriptName ||
+      !normalizeText(packageRecord?.scripts?.[scriptName]).includes("playwright")
+    ) {
+      return responseError(
+        "The requested package script is not a declared Playwright test script.",
+        "vibe64_managed_playwright_script_invalid"
+      );
+    }
+    command = descriptor.managedNpmPath;
+  } else {
+    return responseError(
+      "Browser testing requires the registered managed node or npm runner.",
+      "vibe64_managed_playwright_runner_invalid"
+    );
+  }
+
+  const requestedEnv = isRecord(input.playwrightEnv) ? input.playwrightEnv : {};
+  let baseUrl = "";
+  try {
+    const parsed = new URL(normalizeText(requestedEnv.PLAYWRIGHT_BASE_URL));
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("Unsupported preview protocol.");
+    }
+    baseUrl = normalizeText(requestedEnv.PLAYWRIGHT_BASE_URL);
+  } catch {
+    return responseError(
+      "Browser testing requires a valid managed HTTP preview URL.",
+      "vibe64_managed_playwright_base_url_invalid"
+    );
+  }
+  const browsersPath = path.resolve(normalizeText(requestedEnv.PLAYWRIGHT_BROWSERS_PATH));
+  const runtimeRoot = path.resolve(descriptor.runtimeRoot);
+  const relativeBrowsersPath = path.relative(runtimeRoot, browsersPath);
+  if (
+    !normalizeText(requestedEnv.PLAYWRIGHT_BROWSERS_PATH) ||
+    relativeBrowsersPath === ".." ||
+    relativeBrowsersPath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeBrowsersPath) ||
+    path.basename(browsersPath) !== "browsers"
+  ) {
+    return responseError(
+      "Browser testing requires a registered Vibe64 browser runtime.",
+      "vibe64_managed_playwright_runtime_invalid"
+    );
+  }
+  const storageStatePath = normalizeText(requestedEnv.VIBE64_PLAYWRIGHT_STORAGE_STATE);
+  if (storageStatePath && !path.isAbsolute(storageStatePath)) {
+    return responseError(
+      "The managed Playwright storage-state path must be absolute.",
+      "vibe64_managed_playwright_storage_state_invalid"
+    );
+  }
+  return runCommand({
+    actor: "daemon",
+    allowedRoots: [descriptor.worktreePath],
+    args,
+    command,
+    cwd,
+    env: {
+      PLAYWRIGHT_BASE_URL: baseUrl,
+      PLAYWRIGHT_BROWSERS_PATH: browsersPath,
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1",
+      VIBE64_MANAGED_PLAYWRIGHT_TEST: "1",
+      ...(storageStatePath ? {
+        VIBE64_PLAYWRIGHT_STORAGE_STATE: storageStatePath
+      } : {})
+    },
+    envPolicy: "preview",
+    execution: {
+      controlGenerationId: descriptor.controlGenerationId,
+      kind: "browser",
+      label: "Browser testing",
+      lifecycle: "finite",
+      ownerId: descriptor.sessionId,
+      parentExecutionId,
+      projectSlug: descriptor.project?.slug,
+      sessionId: descriptor.sessionId
+    },
+    maxBuffer: 32 * 1024 * 1024,
+    mode: "capture",
+    onOutput,
+    project: descriptor.project,
+    purpose: "preview",
+    runtimes: ["node26", "playwright"],
+    session: {
+      sessionId: descriptor.sessionId
+    },
+    timeout: DEFAULT_PLAYWRIGHT_RUN_TIMEOUT_MS
+  });
 }
 
 async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
@@ -1467,6 +1613,40 @@ async function ensureAgentPreviewCommandServerUnlocked({
           sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
           return;
         }
+        if (request.url === "/agent-preview-command/playwright-run") {
+          response.writeHead(200, {
+            "Content-Type": "application/x-ndjson; charset=utf-8"
+          });
+          const writeFrame = (payload = {}) => {
+            if (!response.destroyed && !response.writableEnded) {
+              response.write(`${JSON.stringify(payload)}\n`);
+            }
+          };
+          let payload;
+          try {
+            payload = await commandService.playwrightRun(sessionId, input, {
+              onOutput: (chunk) => writeFrame({
+                data: Buffer.from(String(chunk || ""), "utf8").toString("base64"),
+                type: "output"
+              })
+            });
+          } catch (error) {
+            payload = vibe64ErrorResponse(error, {
+              fallbackCode: "vibe64_managed_playwright_run_failed",
+              fallbackMessage: "Vibe64 browser-test execution failed."
+            });
+          }
+          writeFrame({
+            code: normalizeText(payload?.code),
+            error: normalizeText(payload?.error || payload?.stderr),
+            exitCode: Number.isInteger(payload?.exitCode) ? payload.exitCode : (payload?.ok === false ? 1 : 0),
+            ok: payload?.ok !== false,
+            timedOut: payload?.timedOut === true,
+            type: "result"
+          });
+          response.end();
+          return;
+        }
         if (request.url === "/agent-preview-command/run") {
           sendJsonCommandResponse(response, 200, await commandService.run(input));
           return;
@@ -1565,7 +1745,6 @@ async function prepareAgentPreviewCommand({
   await writeWrapper({
     agentPlaywrightSource: agentPlaywrightCommandSource({
       managedNodePath,
-      managedNpmPath,
       managedPreviewPath: wrapperHostPath(normalizedWrapperHostDir),
       runtimeRoot: packRoot
     }),
@@ -1607,8 +1786,10 @@ async function prepareAgentPreviewCommand({
       [VIBE64_PREVIEW_BROWSER_WORKER_TOKEN_ENV]: token
     },
     managedNodePath,
+    managedNpmPath,
     metadataPath: browserMetadataHostPath(normalizedWrapperHostDir),
     project: isRecord(project) ? project : {},
+    runtimeRoot: packRoot,
     socketPath: browserSocketHostPath(normalizedWrapperHostDir),
     token,
     workerScriptPath,
