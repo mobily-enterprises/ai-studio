@@ -61,6 +61,7 @@ async function controllerHarness({
   assistantParts = [],
   assistantError = null,
   catalogProviders = providerResult,
+  commandEnvironmentGate = null,
   gitActorFailure = null,
   providerEvents = [],
   withCommandBoundary = false
@@ -273,6 +274,7 @@ async function controllerHarness({
       codexGitCommand: { id: "git" },
       async prepareCommandEnvironment(input) {
         commandEnvironmentCalls.push(input);
+        await commandEnvironmentGate?.(input);
         return {
           env: {
             VIBE64_AGENT_DATABASE_COMMAND_SOCKET: "/managed/database.sock",
@@ -559,6 +561,80 @@ test("OpenCode shares one lazy server across open sessions and stops it after th
   const firstClose = await harness.controller.closeAllForSession("session-1");
   assert.equal(firstClose.processExitProof.sharedProcessRetained, true);
   assert.equal(harness.processStops.length, 0);
+
+  const lastClose = await harness.controller.closeAllForSession("session-2");
+  assert.equal(lastClose.processExitProof.exited, true);
+  assert.equal(harness.processStops.length, 1);
+});
+
+test("a pending OpenCode session start retains the shared server while another session closes", async (t) => {
+  let releaseSecondStart = () => null;
+  let secondStartReached = () => null;
+  const secondStartGate = new Promise((resolve) => {
+    releaseSecondStart = resolve;
+  });
+  const secondStartReady = new Promise((resolve) => {
+    secondStartReached = resolve;
+  });
+  const harness = await controllerHarness({
+    async commandEnvironmentGate(input) {
+      if (input.sessionId === "session-2") {
+        secondStartReached();
+        await secondStartGate;
+      }
+    },
+    withCommandBoundary: true
+  });
+  const secondSourceRoot = path.join(
+    harness.root,
+    "sessions",
+    "active",
+    "session-2",
+    "source"
+  );
+  const secondSessionRoot = path.join(harness.root, "session-state", "session-2");
+  await Promise.all([
+    mkdir(secondSourceRoot, { recursive: true }),
+    mkdir(secondSessionRoot, { recursive: true })
+  ]);
+  const secondSession = {
+    ...harness.session,
+    metadata: {
+      ...harness.session.metadata,
+      source_path: secondSourceRoot
+    },
+    sessionId: "session-2",
+    sessionRoot: secondSessionRoot
+  };
+  t.after(async () => {
+    releaseSecondStart();
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    vibe64User: { username: "ada" }
+  };
+
+  await harness.controller.ensureSession("session-1", {
+    ...options,
+    session: harness.session
+  });
+  const secondStart = harness.controller.ensureSession("session-2", {
+    ...options,
+    session: secondSession
+  });
+  await secondStartReady;
+
+  const firstClose = await harness.controller.closeAllForSession("session-1");
+  releaseSecondStart();
+  await secondStart;
+
+  assert.equal(firstClose.processExitProof.sharedProcessRetained, true);
+  assert.equal(harness.processStops.length, 0);
+  assert.equal(harness.processStarts.filter((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  )).length, 1);
 
   const lastClose = await harness.controller.closeAllForSession("session-2");
   assert.equal(lastClose.processExitProof.exited, true);

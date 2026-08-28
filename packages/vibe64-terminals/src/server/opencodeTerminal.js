@@ -852,7 +852,7 @@ function createOpenCodeTerminalController({
       sessionEnvironments.delete(target.key);
       await writeSessionEnvironmentRegistry();
     }
-    const proof = processes.size === 0
+    const proof = processes.size === 0 && processStarts.size === 0
       ? await stopSharedProcess()
       : {
           exited: true,
@@ -918,10 +918,13 @@ function createOpenCodeTerminalController({
       processes.set(context.key, created);
       return created;
     }).catch(async (error) => {
+      if (processStarts.get(context.key) === start) {
+        processStarts.delete(context.key);
+      }
       if (!processes.has(context.key)) {
         sessionEnvironments.delete(context.key);
         await writeSessionEnvironmentRegistry().catch(() => null);
-        if (processes.size === 0) {
+        if (processes.size === 0 && processStarts.size === 0) {
           await stopSharedProcess("opencode-session-start-failed").catch(() => null);
         }
       }

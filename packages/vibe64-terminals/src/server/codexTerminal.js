@@ -1339,6 +1339,7 @@ function createCodexTerminalController({
   const codexAppServerManagedSessions = new Map();
   const codexAppServerWellbeingTimers = new Map();
   const codexAppServerOwnedRuntimes = new Map();
+  const codexAppServerProviderLifecycleTasks = new Set();
   const codexAppServerRuntimeAcquisitions = new Set();
   const codexAppServerReconcileTasks = new Set();
   const codexAppServerCompletedTurns = new Set();
@@ -1358,6 +1359,7 @@ function createCodexTerminalController({
   const codexAppServerAutomaticHookThreads = new Set();
   const codexAppServerMirroredTerminalItems = new Set();
   const codexAppServerNotificationTasks = new Map();
+  let codexAppServerProviderLifecycle = Promise.resolve();
   let codexAppServerServerClosing = false;
   let codexAppServerShutdownPromise = null;
 
@@ -1805,6 +1807,16 @@ function createCodexTerminalController({
     }
   }
 
+  function withCodexAppServerProviderLifecycle(operation = async () => null) {
+    const run = codexAppServerProviderLifecycle.catch(() => null).then(operation);
+    const tracked = run.catch(() => null).finally(() => {
+      codexAppServerProviderLifecycleTasks.delete(tracked);
+    });
+    codexAppServerProviderLifecycle = tracked;
+    codexAppServerProviderLifecycleTasks.add(tracked);
+    return run;
+  }
+
   function codexAppServerOwnedRuntimeKey(providerKey = "", providerOptions = {}) {
     const runtimeDir = normalizeText(providerOptions?.runtimeDir);
     return runtimeDir
@@ -1860,7 +1872,7 @@ function createCodexTerminalController({
     }
   }
 
-  async function codexAppServerProviderForSession(sessionId = "", options = {}) {
+  async function codexAppServerProviderForSessionNow(sessionId = "", options = {}) {
     assertCodexAppServerControllerOpen();
     const admissionError = codexAppServerAdmissionError(sessionId);
     if (admissionError) {
@@ -1881,7 +1893,7 @@ function createCodexTerminalController({
         currentFields.runtimeInstanceId === nextFields.runtimeInstanceId &&
         currentFields.workdir === nextFields.workdir
       ) {
-        await retireAndCloseCodexAppServerProvider(currentKey);
+        await retireAndCloseCodexAppServerProviderNow(currentKey);
       }
     }
     const currentAdmissionError = codexAppServerAdmissionError(sessionId);
@@ -1896,6 +1908,12 @@ function createCodexTerminalController({
       codexTerminalNamespace(sessionId)
     );
     return provider;
+  }
+
+  async function codexAppServerProviderForSession(sessionId = "", options = {}) {
+    return withCodexAppServerProviderLifecycle(
+      () => codexAppServerProviderForSessionNow(sessionId, options)
+    );
   }
 
   function codexAppServerProviderIsAvailableForSession(sessionId = "", options = {}) {
@@ -2989,7 +3007,7 @@ function createCodexTerminalController({
     codexAppServerProviderSessionKeys.delete(normalizedProviderKey);
   }
 
-  async function retireAndCloseCodexAppServerProvider(providerKey = "", options = {}) {
+  async function retireAndCloseCodexAppServerProviderNow(providerKey = "", options = {}) {
     const normalizedProviderKey = normalizeText(providerKey);
     const provider = codexAppServerProviders.get(normalizedProviderKey);
     if (provider) {
@@ -2998,6 +3016,12 @@ function createCodexTerminalController({
       );
     }
     closeCodexAppServerProvider(normalizedProviderKey, options);
+  }
+
+  async function retireAndCloseCodexAppServerProvider(providerKey = "", options = {}) {
+    return withCodexAppServerProviderLifecycle(
+      () => retireAndCloseCodexAppServerProviderNow(providerKey, options)
+    );
   }
 
   function codexAppServerProviderKeyToolHomeSource(providerKey = "") {
@@ -3078,7 +3102,7 @@ function createCodexTerminalController({
     };
   }
 
-  async function stopCachedCodexAppServerProvider(providerKey = "", {
+  async function stopCachedCodexAppServerProviderNow(providerKey = "", {
     preserveProcessExitProof = false,
     requireStopped = false
   } = {}) {
@@ -3134,6 +3158,12 @@ function createCodexTerminalController({
         closeProvider: !providerStoppedRuntime
       });
     }
+  }
+
+  async function stopCachedCodexAppServerProvider(providerKey = "", options = {}) {
+    return withCodexAppServerProviderLifecycle(
+      () => stopCachedCodexAppServerProviderNow(providerKey, options)
+    );
   }
 
   async function stopCachedCodexAppServerProvidersForSession(sessionId = "", options = {}) {
@@ -3509,6 +3539,7 @@ function createCodexTerminalController({
         ...codexAppServerMessageDeliveries.values(),
         ...codexAppServerReasoningPersistQueues.values(),
         ...codexAppServerResultFinalizations.values(),
+        ...codexAppServerProviderLifecycleTasks,
         ...codexAppServerRuntimeAcquisitions,
         ...codexAppServerReconcileTasks,
         ...codexAppServerSessionClosures.values(),

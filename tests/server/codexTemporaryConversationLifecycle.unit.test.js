@@ -2786,7 +2786,7 @@ test("a changed session environment retires the previous provider for the same r
   }
 });
 
-test("two Codex sessions retain one shared runtime until the final session closes", async () => {
+test("Codex sessions retain one shared runtime and concurrent final closes stop it once", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-shared-codex-runtime-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
@@ -2813,9 +2813,28 @@ test("two Codex sessions retain one shared runtime until the final session close
     sessionId: "session-2",
     sessionRoot: path.join(projectRuntimeRoot, "sessions", "active", "session-2")
   };
+  const thirdSourcePath = path.join(
+    temporaryRoot,
+    "managed",
+    "sessions",
+    "active",
+    "session-3",
+    "source"
+  );
+  await mkdir(thirdSourcePath, { recursive: true });
+  const thirdSession = {
+    ...firstSession,
+    metadata: {
+      ...firstSession.metadata,
+      source_path: thirdSourcePath
+    },
+    sessionId: "session-3",
+    sessionRoot: path.join(projectRuntimeRoot, "sessions", "active", "session-3")
+  };
   const sessions = new Map([
     [firstSession.sessionId, firstSession],
-    [secondSession.sessionId, secondSession]
+    [secondSession.sessionId, secondSession],
+    [thirdSession.sessionId, thirdSession]
   ]);
   const providers = [];
   let stopRuntimeCalls = 0;
@@ -2880,7 +2899,16 @@ test("two Codex sessions retain one shared runtime until the final session close
     assert.equal(stopRuntimeCalls, 0);
     assert.equal(providers[0].closed, 1);
 
-    await controller.closeAllForSession(secondSession.sessionId);
+    const third = await controller.createConversation(thirdSession.sessionId);
+    assert.equal(third.ok, true, JSON.stringify(third));
+    assert.equal(providers.length, 3);
+    assert.equal(providers[2].options.runtimeDir, providers[1].options.runtimeDir);
+    assert.equal(providers[2].options.threadWorkdir, thirdSession.metadata.source_path);
+
+    await Promise.all([
+      controller.closeAllForSession(secondSession.sessionId),
+      controller.closeAllForSession(thirdSession.sessionId)
+    ]);
     assert.equal(stopRuntimeCalls, 1);
   } finally {
     if (previousRuntimeNamespace === undefined) {
