@@ -1807,7 +1807,7 @@ function createCodexTerminalController({
     }
   }
 
-  function withCodexAppServerProviderLifecycle(operation = async () => null) {
+  function withCodexAppServerProviderLifecycle(operation) {
     const run = codexAppServerProviderLifecycle.catch(() => null).then(operation);
     const tracked = run.catch(() => null).finally(() => {
       codexAppServerProviderLifecycleTasks.delete(tracked);
@@ -1872,7 +1872,7 @@ function createCodexTerminalController({
     }
   }
 
-  async function codexAppServerProviderForSessionNow(sessionId = "", options = {}) {
+  async function codexAppServerProviderForSessionUnlocked(sessionId = "", options = {}) {
     assertCodexAppServerControllerOpen();
     const admissionError = codexAppServerAdmissionError(sessionId);
     if (admissionError) {
@@ -1893,7 +1893,7 @@ function createCodexTerminalController({
         currentFields.runtimeInstanceId === nextFields.runtimeInstanceId &&
         currentFields.workdir === nextFields.workdir
       ) {
-        await retireAndCloseCodexAppServerProviderNow(currentKey);
+        await retireAndCloseCodexAppServerProviderUnlocked(currentKey);
       }
     }
     const currentAdmissionError = codexAppServerAdmissionError(sessionId);
@@ -1910,9 +1910,9 @@ function createCodexTerminalController({
     return provider;
   }
 
-  async function codexAppServerProviderForSession(sessionId = "", options = {}) {
+  function codexAppServerProviderForSession(sessionId = "", options = {}) {
     return withCodexAppServerProviderLifecycle(
-      () => codexAppServerProviderForSessionNow(sessionId, options)
+      () => codexAppServerProviderForSessionUnlocked(sessionId, options)
     );
   }
 
@@ -3007,7 +3007,7 @@ function createCodexTerminalController({
     codexAppServerProviderSessionKeys.delete(normalizedProviderKey);
   }
 
-  async function retireAndCloseCodexAppServerProviderNow(providerKey = "", options = {}) {
+  async function retireAndCloseCodexAppServerProviderUnlocked(providerKey = "", options = {}) {
     const normalizedProviderKey = normalizeText(providerKey);
     const provider = codexAppServerProviders.get(normalizedProviderKey);
     if (provider) {
@@ -3018,9 +3018,9 @@ function createCodexTerminalController({
     closeCodexAppServerProvider(normalizedProviderKey, options);
   }
 
-  async function retireAndCloseCodexAppServerProvider(providerKey = "", options = {}) {
+  function retireAndCloseCodexAppServerProvider(providerKey = "", options = {}) {
     return withCodexAppServerProviderLifecycle(
-      () => retireAndCloseCodexAppServerProviderNow(providerKey, options)
+      () => retireAndCloseCodexAppServerProviderUnlocked(providerKey, options)
     );
   }
 
@@ -3102,7 +3102,7 @@ function createCodexTerminalController({
     };
   }
 
-  async function stopCachedCodexAppServerProviderNow(providerKey = "", {
+  async function stopCachedCodexAppServerProviderUnlocked(providerKey = "", {
     preserveProcessExitProof = false,
     requireStopped = false
   } = {}) {
@@ -3160,9 +3160,9 @@ function createCodexTerminalController({
     }
   }
 
-  async function stopCachedCodexAppServerProvider(providerKey = "", options = {}) {
+  function stopCachedCodexAppServerProvider(providerKey = "", options = {}) {
     return withCodexAppServerProviderLifecycle(
-      () => stopCachedCodexAppServerProviderNow(providerKey, options)
+      () => stopCachedCodexAppServerProviderUnlocked(providerKey, options)
     );
   }
 
