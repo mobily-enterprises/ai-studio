@@ -83,8 +83,14 @@ function runtimeHostToolbarSessions({
   });
 }
 
-function runtimeHostAgentWorking({ selectedSession = null } = {}) {
-  return sessionRecordHasActiveAgentWork(selectedSession);
+function runtimeHostAgentWorking({
+  selectedSession = null,
+  transientAgentThinking = false
+} = {}) {
+  return Boolean(
+    transientAgentThinking ||
+    sessionRecordHasActiveAgentWork(selectedSession)
+  );
 }
 
 function agentMessageAcceptanceSignal(controller) {
@@ -173,8 +179,10 @@ function useVibe64SessionRuntimeHost(props, emit) {
       ? props.toolbarSessions
       : unref(props.sessionData.sessions) || []
   ));
+  const autopilotAgentThinking = ref(false);
   const activeAgentWorking = computed(() => runtimeHostAgentWorking({
-    selectedSession: selectedSession.value
+    selectedSession: selectedSession.value,
+    transientAgentThinking: autopilotAgentThinking.value
   }));
   const workState = ref({
     checkedAt: "",
@@ -517,6 +525,10 @@ function useVibe64SessionRuntimeHost(props, emit) {
     return true;
   }
 
+  function setAutopilotBusy(busy = false) {
+    autopilotAgentThinking.value = Boolean(busy);
+  }
+
   function emitToolbarControls() {
     emit("toolbar-controls-ready", {
       controls: {
@@ -562,6 +574,9 @@ function useVibe64SessionRuntimeHost(props, emit) {
   });
 
   watch([activeAgentWorking, () => guardedPage.value.busy], emitBusy, { flush: "post" });
+  watch(selectedSessionId, () => {
+    autopilotAgentThinking.value = false;
+  }, { flush: "sync" });
   watch(pageError, (error) => {
     emit("page-error-change", {
       error,
@@ -630,7 +645,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     selectedAgentTerminalId,
     selection,
     sendAgentMessage,
-    setAutopilotBusy: () => null,
+    setAutopilotBusy,
     updateSessionWork,
     workState
   };

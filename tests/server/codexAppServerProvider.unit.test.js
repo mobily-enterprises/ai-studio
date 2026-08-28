@@ -22,6 +22,7 @@ import {
   CODEX_APP_SERVER_TRANSPORT,
   CodexAppServerAgentProvider,
   CodexAppServerJsonRpcClient,
+  assertCodexAuthPreflightReady,
   codexAppServerEndpointForTarget,
   codexAppServerEconomyHomeDir,
   codexAppServerEconomyWorkspaceDir,
@@ -2873,6 +2874,30 @@ test("codex provider reuses an available connection without another auth preflig
   assert.equal(result.client, client);
   assert.equal(result.reusedClient, true);
   assert.equal(preflightCalls, 0);
+});
+
+test("codex auth preflight uses the shared runtime directory when no session path is owned", async () => {
+  const runtimeDir = "/run/user/1000/vibe64/agent-providers/codex-app-server";
+  const requests = [];
+
+  await assertCodexAuthPreflightReady({
+    commandRunner: async (request) => {
+      requests.push(request);
+      return {
+        exitCode: 0,
+        ok: true,
+        output: ""
+      };
+    },
+    runtimeDir
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].cwd, runtimeDir);
+  assert.deepEqual(requests[0].allowedRoots, [runtimeDir]);
+  assert.equal(requests[0].envPolicy, "auth");
+  assert.equal(requests[0].mode, "capture");
+  assert.equal(requests[0].purpose, "codex");
 });
 
 test("codex provider reads every model catalog page with native pagination fields", async () => {

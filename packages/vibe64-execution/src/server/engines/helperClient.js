@@ -48,11 +48,26 @@ function helperOperationForRequest(request = {}) {
   }
   if (
     request.purpose === "codex" &&
+    request.mode === "capture" &&
+    request.envPolicy === "auth"
+  ) {
+    return "codex-app-server";
+  }
+  if (
+    request.purpose === "codex" &&
     request.mode === "detached" &&
     request.execution?.kind === "assistant" &&
     request.execution?.lifecycle === "service"
   ) {
     return "codex-app-server";
+  }
+  if (
+    request.mode === "detached" &&
+    request.execution?.kind === "assistant" &&
+    request.execution?.lifecycle === "service" &&
+    request.execution?.operationId === "opencode-server"
+  ) {
+    return "opencode-app-server";
   }
   if (request.purpose === "account") {
     return "account-status";

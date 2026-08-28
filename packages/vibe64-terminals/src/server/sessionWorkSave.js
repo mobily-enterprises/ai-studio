@@ -31,6 +31,7 @@ const MAX_CHANGE_DIFF_LINE_LIMIT = 5000;
 const INCOMING_VERSION_LIMIT = 5;
 const SIBLING_ADVISORY_DETAIL_LIMIT = 4;
 const SIBLING_ADVISORY_PATH_LIMIT = 20;
+const SESSION_WORK_COMMAND_SCOPE = Symbol("vibe64-session-work-command-scope");
 
 function text(value = "") {
   return String(value || "").trim();
@@ -117,6 +118,39 @@ function commandProject(context = {}, project = {}) {
     repositoryMode: context.mode,
     sessionId: context.sessionId
   };
+}
+
+function scopedSessionWorkCommand(runCommand, context = {}, project = {}, {
+  label = "Session repository work",
+  operationId = crypto.randomUUID()
+} = {}) {
+  if (runCommand?.[SESSION_WORK_COMMAND_SCOPE]) {
+    return runCommand;
+  }
+  const projectSlug = text(project.slug || project.projectSlug);
+  const scoped = (request = {}) => runCommand({
+    ...request,
+    execution: {
+      ...(request.execution || {}),
+      kind: "job",
+      label,
+      lifecycle: "finite",
+      operationId: text(operationId),
+      ownerId: context.sessionId,
+      projectSlug,
+      sessionId: context.sessionId
+    },
+    project: {
+      ...(request.project || {}),
+      ...(projectSlug ? { slug: projectSlug } : {})
+    },
+    session: {
+      ...(request.session || {}),
+      sessionId: context.sessionId
+    }
+  });
+  Object.defineProperty(scoped, SESSION_WORK_COMMAND_SCOPE, { value: true });
+  return scoped;
 }
 
 async function saveCommand(runCommand, context, command, args, {
@@ -460,6 +494,10 @@ async function inspectSessionChanges({
   runCommand = runVibe64Command,
   session = {}
 } = {}) {
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Inspecting session changes"
+  });
   const work = await inspectSessionWork({
     commandOptions,
     derivedArtifactPaths,
@@ -467,7 +505,6 @@ async function inspectSessionChanges({
     runCommand,
     session
   });
-  const context = repositoryContext(session, project);
   const changedPathSet = new Set(work.changedPaths);
   const files = work.unsaved
     ? await sessionChangeFiles(runCommand, context, work.changeBaseCommit, work.worktreeTree, {
@@ -497,6 +534,10 @@ async function inspectSessionChangeDiff({
   session = {}
 } = {}) {
   const filePath = safeChangePath(requestedPath);
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Inspecting a session change"
+  });
   const work = await inspectSessionWork({
     commandOptions,
     derivedArtifactPaths,
@@ -507,7 +548,6 @@ async function inspectSessionChangeDiff({
   if (!work.changedPaths.includes(filePath)) {
     throw saveError("That file is not part of the current saved-work difference.", "vibe64_session_change_not_found");
   }
-  const context = repositoryContext(session, project);
   const result = await git(runCommand, context, [
     "diff",
     "--no-ext-diff",
@@ -545,6 +585,9 @@ async function inspectSessionWork({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Inspecting session work"
+  });
   const tree = await writeGitWorktreeTree({
     baseCommit: "HEAD",
     project: commandProject(context, project),
@@ -1299,6 +1342,10 @@ async function checkSessionUpdates({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Checking repository for updates",
+    operationId
+  });
   return runProjectSourceExclusive(async () => {
     await assertBranch(runCommand, context, { commandOptions, project });
     const canonicalCommit = await currentCanonicalCommit(
@@ -1472,6 +1519,10 @@ async function updateSessionWork({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Updating session from repository",
+    operationId
+  });
   const author = {
     email: text(identity.email) || "vibe64@localhost",
     name: text(identity.name) || "Vibe64 Update"
@@ -1728,6 +1779,10 @@ async function recoverSessionWorkUpdate({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Recovering session update",
+    operationId: text(recovery.operationId) || crypto.randomUUID()
+  });
   const required = [
     "canonicalCommit",
     "checkpointCommit",
@@ -1893,6 +1948,10 @@ async function saveSessionWork({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Saving session work",
+    operationId
+  });
   const author = {
     email: text(identity.email) || "vibe64@localhost",
     name: text(identity.name) || "Vibe64 Save"
@@ -2134,6 +2193,10 @@ async function recoverSessionWorkSave({
 } = {}) {
   const context = repositoryContext(session, project);
   const operationId = text(recovery.operationId);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Recovering session save",
+    operationId: operationId || crypto.randomUUID()
+  });
   const expectedCanonicalCommit = text(recovery.expectedCanonicalCommit);
   const proposedCommit = text(recovery.proposedCommit);
   const checkpointCommit = text(recovery.checkpointCommit);

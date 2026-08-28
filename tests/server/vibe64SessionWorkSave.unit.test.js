@@ -136,7 +136,8 @@ function githubProject(root, remote) {
       defaultBranch: "main",
       mode: "github"
     },
-    repositoryMode: "github"
+    repositoryMode: "github",
+    slug: "test-project"
   };
 }
 
@@ -190,6 +191,10 @@ test("work inspection compares the complete session tree with its verified canon
     assert.ok(requests.every((request) => path.resolve(request.cwd) !== path.resolve(project.path)));
     assert.ok(requests.every((request) => !(request.allowedRoots || [])
       .some((rootPath) => path.resolve(rootPath) === path.resolve(project.path))));
+    assert.ok(requests.every((request) => request.execution?.label === "Inspecting session work"));
+    assert.ok(requests.every((request) => request.execution?.projectSlug === "test-project"));
+    assert.ok(requests.every((request) => request.execution?.sessionId === session.sessionId));
+    assert.equal(new Set(requests.map((request) => request.execution?.operationId)).size, 1);
     assert.equal(await readFile(hostileMarker, "utf8"), "must remain untouched\n");
     assert.equal(result.dirty, false, "the working tree itself is clean");
     assert.equal(result.unsaved, true, "the complete session tree still differs from canonical");
@@ -266,10 +271,14 @@ test("Update preserves unsaved session work while advancing to newer GitHub work
     const canonicalCommit = await git(canonicalWriter, ["rev-parse", "HEAD"]);
     await writeFile(path.join(session.sourcePath, "local.txt"), "local\n", "utf8");
 
+    const checkRequests = [];
     const check = await checkSessionUpdates({
       operationId: "check-github-update",
       project: githubProject(root, fixture.remote),
-      runCommand: commandRunner,
+      runCommand: async (request) => {
+        checkRequests.push(request);
+        return commandRunner(request);
+      },
       session
     });
     assert.equal(check.behind, 1);
@@ -281,6 +290,14 @@ test("Update preserves unsaved session work while advancing to newer GitHub work
     assert.equal(check.incomingVersions[0].commit, canonicalCommit);
     assert.equal(check.incomingVersions[0].message, "remote advance");
     assert.equal(check.incomingVersionsTruncated, false);
+    assert.ok(checkRequests.length > 1);
+    assert.ok(checkRequests.every((request) => (
+      request.execution?.label === "Checking repository for updates" &&
+      request.execution?.operationId === "check-github-update" &&
+      request.execution?.ownerId === session.sessionId &&
+      request.execution?.projectSlug === "test-project" &&
+      request.execution?.sessionId === session.sessionId
+    )));
 
     const result = await updateSessionWork({
       operationId: "apply-github-update",

@@ -656,6 +656,7 @@ function createOpenCodeTerminalController({
   }
 
   async function ensureSharedProcess(context = {}, options = {}, selected = null) {
+    await sharedProcessStop?.catch(() => null);
     if (sharedProcess) {
       const currentConnection = sharedProcess.connections.get(selected?.modelProviderId);
       if (

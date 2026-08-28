@@ -1527,6 +1527,11 @@ test("execution helper operation policy distinguishes account auth from GitHub w
     purpose: "codex"
   }), "vibe64-command");
   assert.equal(helperOperationForRequest({
+    envPolicy: "auth",
+    mode: "capture",
+    purpose: "codex"
+  }), "codex-app-server");
+  assert.equal(helperOperationForRequest({
     execution: {
       kind: "assistant",
       lifecycle: "service"
@@ -1534,6 +1539,15 @@ test("execution helper operation policy distinguishes account auth from GitHub w
     mode: "detached",
     purpose: "codex"
   }), "codex-app-server");
+  assert.equal(helperOperationForRequest({
+    execution: {
+      kind: "assistant",
+      lifecycle: "service",
+      operationId: "opencode-server"
+    },
+    mode: "detached",
+    purpose: "assistant"
+  }), "opencode-app-server");
 });
 
 test("execution helper client sends normalized payloads through sudo helper", async () => {

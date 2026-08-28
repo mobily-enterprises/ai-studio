@@ -979,6 +979,7 @@ async function runCodexAuthPreflight({
   commandRunner = defaultCommandRunner,
   env = process.env,
   executionRoot = "",
+  runtimeDir = "",
   runtimes = [],
   terminalEnv = {},
   timeoutMs = CODEX_AUTH_PREFLIGHT_TIMEOUT_MS,
@@ -995,6 +996,7 @@ async function runCodexAuthPreflight({
   });
   const processCwd = codexAppServerProcessCwd({
     executionRoot,
+    runtimeDir,
     workdir
   });
   try {

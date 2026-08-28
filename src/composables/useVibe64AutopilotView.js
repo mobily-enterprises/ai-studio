@@ -1612,7 +1612,12 @@ function useVibe64AutopilotView(props, emit, {
     }
   });
 
-  watch(() => Boolean(composerSending.value || interrupting.value || saveWorkSending.value), (busy) => {
+  watch(() => Boolean(
+    agentActive.value ||
+    composerSending.value ||
+    interrupting.value ||
+    saveWorkSending.value
+  ), (busy) => {
     emit("busy-change", busy);
   }, { immediate: true });
 

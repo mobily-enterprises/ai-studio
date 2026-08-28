@@ -34,6 +34,7 @@ const ALLOWED_OPERATIONS = new Set([
   "health-status",
   "managed-execution",
   "managed-service",
+  "opencode-app-server",
   "vibe64-command"
 ]);
 const ALLOWED_COMMANDS = new Set([
@@ -1452,7 +1453,7 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
   ) {
     return resolveAllowedUserHomePath(normalized, targetUser);
   }
-  if (operation === "codex-app-server") {
+  if (operation === "codex-app-server" || operation === "opencode-app-server") {
     const resolved = path.resolve(normalized);
     const runtimeRoot = path.join(
       "/run/user",
@@ -1461,11 +1462,14 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
       "agent-providers"
     );
     const parts = relativePathParts(runtimeRoot, resolved);
-    if (
-      parts.length === 2 &&
-      /^codex-app-server-[a-f0-9]{12}$/u.test(parts[0]) &&
-      parts[1] === "workspace"
-    ) {
+    const providerRoot = parts[0];
+    const allowedProviderRoot = operation === "opencode-app-server"
+      ? providerRoot === "opencode"
+      : providerRoot === "codex-app-server" ||
+        /^codex-app-server-[a-f0-9]{12}$/u.test(providerRoot);
+    const exactCodexRoot = operation === "codex-app-server" && parts.length === 1;
+    const exactProviderWorkspace = parts.length === 2 && parts[1] === "workspace";
+    if (allowedProviderRoot && (exactCodexRoot || exactProviderWorkspace)) {
       return resolved;
     }
   }

@@ -565,6 +565,20 @@ test("OpenCode shares one lazy server across open sessions and stops it after th
   const lastClose = await harness.controller.closeAllForSession("session-2");
   assert.equal(lastClose.processExitProof.exited, true);
   assert.equal(harness.processStops.length, 1);
+
+  const reopened = await harness.controller.ensureSession("session-1", {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  assert.ok(reopened.thread.id);
+  assert.equal(harness.processStarts.filter((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  )).length, 2);
+
+  const reopenedClose = await harness.controller.closeAllForSession("session-1");
+  assert.equal(reopenedClose.processExitProof.exited, true);
+  assert.equal(harness.processStops.length, 2);
 });
 
 test("a pending OpenCode session start retains the shared server while another session closes", async (t) => {

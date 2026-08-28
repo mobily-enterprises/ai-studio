@@ -166,6 +166,28 @@ describe("Vibe64 direct session runtime host", () => {
         sessionId: "session-a"
       }
     })).toBe(false);
+    expect(runtimeHostAgentWorking({
+      selectedSession: {
+        agentSession: { turn: { active: false } },
+        sessionId: "session-a"
+      },
+      transientAgentThinking: true
+    })).toBe(true);
+  });
+
+  it("forwards active composer work into the toolbar thinking state", () => {
+    const runtimeHostSource = readFileSync(new URL(
+      "../../src/composables/useVibe64SessionRuntimeHost.js",
+      import.meta.url
+    ), "utf8");
+    const autopilotSource = readFileSync(new URL(
+      "../../src/composables/useVibe64AutopilotView.js",
+      import.meta.url
+    ), "utf8");
+
+    expect(runtimeHostSource).toContain("setAutopilotBusy,");
+    expect(runtimeHostSource).toContain("transientAgentThinking: autopilotAgentThinking.value");
+    expect(autopilotSource).toMatch(/agentActive\.value\s*\|\|\s*composerSending\.value/u);
   });
 
   it("marks the selected toolbar session as thinking from live direct-session state", () => {
