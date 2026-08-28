@@ -192,6 +192,11 @@ describe("mounted direct session state", () => {
       "codex-app-server-turn-active",
       "codex-app-server-turn-idle",
       "codex-app-server-commentary",
+      "opencode-server-message-delivered",
+      "opencode-server-progress",
+      "opencode-server-reasoning",
+      "opencode-server-turn-active",
+      "opencode-server-turn-idle",
       "output-target-ready"
     ]) {
       expect(mountedSessionRealtimeShouldRefresh({

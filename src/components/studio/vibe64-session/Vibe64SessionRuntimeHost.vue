@@ -62,7 +62,10 @@
       <template #dashboard="dashboardSlotProps">
         <slot
           name="dashboard"
-          :dashboard-context="dashboardSlotProps?.dashboardContext || {}"
+          :dashboard-context="{
+            ...(dashboardSlotProps?.dashboardContext || {}),
+            sessions: props.toolbarSessions
+          }"
         />
       </template>
     </Vibe64AutopilotView>

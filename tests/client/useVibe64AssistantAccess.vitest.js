@@ -113,6 +113,21 @@ describe("useVibe64AssistantAccess", () => {
     expect(endpointMocks.options[0].realtime.matches({
       payload: { sessionId: "session-a" }
     })).toBe(false);
+    expect(endpointMocks.options[0].realtime.matches({
+      event: "vibe64.session.changed",
+      payload: {
+        assistantProgress: { type: "tool" },
+        reason: "opencode-server-progress",
+        sessionId: "session-b"
+      }
+    })).toBe(false);
+    expect(endpointMocks.options[0].realtime.matches({
+      event: "vibe64.session.changed",
+      payload: {
+        reason: "opencode-server-turn-idle",
+        sessionId: "session-b"
+      }
+    })).toBe(false);
     scope.stop();
   });
 

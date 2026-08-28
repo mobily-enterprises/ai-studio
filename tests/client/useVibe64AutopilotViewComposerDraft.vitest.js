@@ -267,6 +267,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.composerDraft.value).toBe("Then cover the completion race.");
     expect(view.composerDisabled.value).toBe(false);
     expect(view.composerCanSubmit.value).toBe(false);
+    expect(view.composerSubmitMode.value).toBe("waiting");
 
     delivery.resolve(true);
     await expect(submission).resolves.toBe(true);

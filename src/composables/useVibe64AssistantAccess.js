@@ -17,6 +17,16 @@ import {
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import { VIBE64_CONNECTIONS_CHANGED_EVENT } from "@/lib/studioGateApi.js";
 
+const ASSISTANT_ACCESS_IGNORED_REALTIME_REASONS = new Set([
+  "opencode-credential-failure",
+  "opencode-server-assistant-message",
+  "opencode-server-message-delivered",
+  "opencode-server-progress",
+  "opencode-server-reasoning",
+  "opencode-server-tool",
+  "opencode-server-turn-idle"
+]);
+
 function assistantAccessText(value = "") {
   return String(value ?? "").trim();
 }
@@ -52,10 +62,14 @@ function useVibe64AssistantAccess({
   );
   const realtime = {
     events: [VIBE64_SESSION_CHANGED_EVENT, VIBE64_CONNECTIONS_CHANGED_EVENT],
-    matches: ({ event = "", payload = {} } = {}) => (
-      event === VIBE64_CONNECTIONS_CHANGED_EVENT ||
-      mountedSessionRealtimeShouldRefresh({ payload }, currentSessionId.value)
-    )
+    matches: ({ event = "", payload = {} } = {}) => {
+      if (event === VIBE64_CONNECTIONS_CHANGED_EVENT) {
+        return true;
+      }
+      const reason = assistantAccessText(payload.reason);
+      return !ASSISTANT_ACCESS_IGNORED_REALTIME_REASONS.has(reason) &&
+        mountedSessionRealtimeShouldRefresh({ payload }, currentSessionId.value);
+    }
   };
   const accessResource = useEndpointResource({
     enabled,

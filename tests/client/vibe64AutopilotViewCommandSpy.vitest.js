@@ -241,6 +241,7 @@ describe("Vibe64 direct session view", () => {
     expect(runtimeHost).toContain(":save-session-work=\"saveSessionWork\"");
     expect(runtimeHost).toContain(":update-session-work=\"updateSessionWork\"");
     expect(runtimeHost).toContain(":work-state=\"workState\"");
+    expect(runtimeHost).toContain("sessions: props.toolbarSessions");
     expect(runtimeHost).not.toContain(":source-safety=\"sourceSafety\"");
     expect(runtimeHost).not.toContain(":autopilot-steps=");
     expect(runtimeHost).not.toContain(":automation-enabled=");

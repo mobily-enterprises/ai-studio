@@ -513,6 +513,18 @@ describe("useVibe64ConversationLog", () => {
       type: "upsert-turn"
     });
 
+    expect(conversationLogRealtimePatch({
+      conversationLogPatch: {
+        turn,
+        type: "upsert-turn"
+      },
+      reason: "opencode-server-assistant-message",
+      sessionId: "session-1"
+    })).toEqual({
+      turn,
+      type: "upsert-turn"
+    });
+
     const commentaryTurn = {
       commentary: [
         {

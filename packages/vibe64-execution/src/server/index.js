@@ -51,6 +51,7 @@ export {
   VIBE64_MANAGED_EXECUTION_REQUIRED_ENV,
   installVibe64ManagedExecutionProvider,
   stopVibe64Execution,
+  stopVibe64OwnedExecutions,
   vibe64CapacityRejectedResult,
   vibe64ManagedExecutionProvider,
   vibe64ManagedExecutionRequired

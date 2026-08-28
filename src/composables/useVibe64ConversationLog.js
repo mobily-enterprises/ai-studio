@@ -44,6 +44,12 @@ const CONVERSATION_LOG_REALTIME_REASONS = new Set([
   "codex-app-server-terminal-user-message",
   "codex-turn-outcome",
   "codex-app-server-message-delivered",
+  "opencode-credential-failure",
+  "opencode-server-assistant-message",
+  "opencode-server-message-delivered",
+  "opencode-server-reasoning",
+  "opencode-server-tool",
+  "opencode-server-turn-idle",
   "session-agent-message-cancelled",
   "session-agent-message-accepted",
   "session-agent-message-delivered",
@@ -213,7 +219,12 @@ function conversationLogRealtimePatch(payload = {}) {
       "codex-app-server-terminal-assistant-message",
       "codex-app-server-terminal-thinking-message",
       "codex-app-server-terminal-user-message",
-      "codex-app-server-message-delivered"
+      "codex-app-server-message-delivered",
+      "opencode-credential-failure",
+      "opencode-server-assistant-message",
+      "opencode-server-message-delivered",
+      "opencode-server-reasoning",
+      "opencode-server-tool"
     ].includes(reason) ||
     patch?.type !== "upsert-turn" ||
     !isRecord(patch.turn)

@@ -483,13 +483,13 @@ function useVibe64AutopilotView(props, emit, {
     ));
   });
   const composerSubmitMode = computed(() => {
+    if (agentActive.value && !agentSteerable.value) {
+      return "waiting";
+    }
     if (composerSending.value) {
       return composerSubmissionKind.value === "steer" ? "steering" : "sending";
     }
     if (agentActive.value) {
-      if (!agentSteerable.value) {
-        return "waiting";
-      }
       return composerRetryMatchesDraft.value ? "retry" : "steer";
     }
     return composerRetryMatchesDraft.value ? "retry" : "send";

@@ -1500,9 +1500,10 @@ function createVibe64SessionStore({
         extractionRoot
       ], {
         allowedRoots: [
+          extractionRoot,
           path.dirname(record.archivePath)
         ],
-        cwd: extractionRoot
+        cwd: normalizedProjectContextRoot
       });
       if (!extractResult.ok) {
         throw vibe64Error(
@@ -2677,7 +2678,8 @@ function createVibe64SessionStore({
       "-tzf",
       archivePath
     ], {
-      cwd: path.dirname(archivePath)
+      allowedRoots: [path.dirname(archivePath)],
+      cwd: normalizedProjectContextRoot
     });
     if (!result.ok) {
       throw vibe64Error(
@@ -2941,7 +2943,7 @@ function createVibe64SessionStore({
         normalizedSourceSessionId
       ], {
         allowedRoots: [buildRoot],
-        cwd: buildRoot
+        cwd: normalizedProjectContextRoot
       });
       if (!tarResult.ok) {
         throw vibe64Error(
@@ -3563,9 +3565,10 @@ function createVibe64SessionStore({
         sessionPaths.sessionId
       ], {
         allowedRoots: [
+          rootPaths.closingSessionsRoot,
           stagedRoot
         ],
-        cwd: rootPaths.closingSessionsRoot
+        cwd: normalizedProjectContextRoot
       });
       if (!tarResult.ok) {
         throw vibe64Error(

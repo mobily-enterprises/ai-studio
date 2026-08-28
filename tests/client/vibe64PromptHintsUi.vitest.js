@@ -221,6 +221,21 @@ describe("Vibe64 prompt hints UI", () => {
     expect(autopilot).toContain(
       "thinkingVisible.value ? thinkingLabel.value : typingLabel.value"
     );
+    expect(autopilot).toContain('event: VIBE64_SESSION_CHANGED_EVENT');
+    expect(autopilot).toContain('payload.assistantProgress');
+    expect(autopilot).toContain('deepseek: "DeepSeek"');
+    expect(autopilot).toContain('"zai-coding-plan": "Z.AI"');
+    expect(autopilot).toContain('`${openCodeProviderLabel.value} is using a tool…`');
+    expect(autopilot).toContain('`${openCodeProviderLabel.value} is reasoning…`');
+    expect(autopilot).toContain('"opencode-server-message-delivered"');
+    expect(autopilot).toContain('"opencode-server-turn-active"');
+    expect(autopilot).toContain('"opencode-server-turn-idle"');
+    expect(autopilot).toContain(
+      "openCodeProgressLabel.value ||"
+    );
+    expect(autopilot).toMatch(
+      /watch\(agentActive,[\s\S]{0,120}!active[\s\S]{0,120}openCodeProgressLabel\.value = ""[\s\S]{0,80}immediate: true/u
+    );
     expect(autopilot).toContain(':assistant-label="composerAssistantLabel"');
     expect(autopilot).toContain('@input-activity="noteTypingActivity"');
     expect(autopilot).toContain("stopTypingOnSubmit();");

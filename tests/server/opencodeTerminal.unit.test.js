@@ -58,8 +58,11 @@ const providerRevision = openCodeAssistantCapabilities({
 }).modelProviders[0].definitionRevision;
 
 async function controllerHarness({
+  assistantParts = [],
   assistantError = null,
   catalogProviders = providerResult,
+  gitActorFailure = null,
+  providerEvents = [],
   withCommandBoundary = false
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
@@ -84,16 +87,24 @@ async function controllerHarness({
       source_path: sourceRoot,
       source_path_authority: "managed_session_source"
     },
+    revision: 7,
     sessionId: "session-1",
     sessionRoot
   };
   const userMessages = [];
   const assistantMessages = [];
+  const commentaryMessages = [];
+  const thinkingMessages = [];
   const systemMessages = [];
   const metadataWrites = [];
+  const agentRunEvents = [];
+  let runStartedAt = "";
   const runtime = {
     projectContextRoot: root,
     stateRoot: path.join(root, "runtime"),
+    async getSession() {
+      return session;
+    },
     store: {
       async conversationMessageIdExists() {
         return false;
@@ -101,17 +112,33 @@ async function controllerHarness({
       async mutateSession(_sessionId, operation) {
         return operation();
       },
-      async writeAgentRunEvent() {
-        return null;
+      async writeAgentRunEvent(_sessionId, id, input = {}) {
+        const updatedAt = new Date().toISOString();
+        runStartedAt ||= updatedAt;
+        const state = input.patch?.state || input.event?.state || "active";
+        const active = state === "active";
+        const run = {
+          ...input.patch,
+          active,
+          ...(active ? {} : { finishedAt: updatedAt }),
+          id,
+          startedAt: input.patch?.startedAt || runStartedAt,
+          state,
+          updatedAt
+        };
+        agentRunEvents.push({ input, run });
+        return run;
       },
       async writeConversationAssistantMessage(_sessionId, input) {
         assistantMessages.push(input);
         return { id: input.messageId, text: input.text, type: "assistant" };
       },
       async writeConversationCommentaryMessage(_sessionId, input) {
+        commentaryMessages.push(input);
         return { id: input.messageId, text: input.text, type: "commentary" };
       },
       async writeConversationThinkingMessage(_sessionId, input) {
+        thinkingMessages.push(input);
         return { id: input.messageId, text: input.text, type: "thinking" };
       },
       async writeConversationSystemMessage(_sessionId, input) {
@@ -155,7 +182,11 @@ async function controllerHarness({
 
   function client() {
     return {
-      async *events() {},
+      async *events() {
+        for (const event of providerEvents) {
+          yield event;
+        }
+      },
       async agents() {
         return agents;
       },
@@ -190,6 +221,7 @@ async function controllerHarness({
             },
             {
               ...(assistantError ? { error: assistantError } : { text: output }),
+              ...(assistantParts.length ? { content: assistantParts } : {}),
               id: "msg_assistant",
               time: { completed: created + 1, created: created + 1 },
               type: "assistant"
@@ -282,7 +314,7 @@ async function controllerHarness({
       publishedSessionChanges.push(args);
     },
     async recordGitActor(input) {
-      return { ok: true, session: input.session };
+      return gitActorFailure || { ok: true, session: input.session };
     },
     async resolveConnection() {
       return { ...connection };
@@ -290,7 +322,9 @@ async function controllerHarness({
   });
 
   return {
+    agentRunEvents,
     assistantMessages,
+    commentaryMessages,
     connection,
     commandEnvironmentCalls,
     controller,
@@ -310,10 +344,42 @@ async function controllerHarness({
     switchedAgents,
     switchedModels,
     systemMessages,
+    thinkingMessages,
     upstreamSessions,
     userMessages
   };
 }
+
+test("OpenCode leaves starting state when Git identity admission fails", async (t) => {
+  const harness = await controllerHarness({
+    gitActorFailure: {
+      code: "vibe64_git_identity_missing",
+      error: "Choose a Git identity before sending.",
+      ok: false
+    }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const result = await harness.controller.sendMessage("session-1", {
+    message: "Try this turn",
+    messageId: "client-message-git-identity"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_git_identity_missing");
+  assert.deepEqual(
+    harness.agentRunEvents.map(({ run }) => run.state),
+    ["starting", "failed"]
+  );
+  assert.equal(harness.userMessages.length, 0);
+});
 
 test("OpenCode persists a user message only after upstream admission", async (t) => {
   const harness = await controllerHarness();
@@ -335,6 +401,10 @@ test("OpenCode persists a user message only after upstream admission", async (t)
     /admission failed/u
   );
   assert.equal(harness.userMessages.length, 0);
+  assert.deepEqual(
+    harness.agentRunEvents.map(({ run }) => run.state),
+    ["starting", "failed"]
+  );
 
   const delivered = await harness.controller.sendMessage("session-1", {
     message: "Second attempt",
@@ -385,6 +455,195 @@ test("OpenCode persists a user message only after upstream admission", async (t)
     payload.reason === "opencode-server-assistant-message" &&
     payload.payload?.conversationLogPatch?.turn?.text === "Main turn complete"
   )), true);
+  const starting = harness.publishedSessionChanges.find(([, payload]) => (
+    payload.reason === "opencode-server-turn-active" &&
+    payload.payload?.agentRun?.state === "starting"
+  ));
+  assert.equal(starting?.[1]?.payload?.agentRun?.active, true);
+  assert.equal(starting?.[1]?.payload?.agentSession?.turn?.state, "starting");
+  const active = harness.publishedSessionChanges.find(([, payload]) => (
+    payload.reason === "opencode-server-turn-active" &&
+    payload.payload?.agentRun?.state === "active"
+  ));
+  assert.deepEqual(active?.[1]?.payload?.agentRun, {
+    active: true,
+    id: "opencode_server",
+    provider: "opencode",
+    providerInterface: "opencode_server",
+    providerStatus: "active",
+    providerThreadId: delivered.thread.id,
+    providerTurnId: delivered.turn.id,
+    state: "active",
+    updatedAt: active[1].payload.agentRun.updatedAt
+  });
+  assert.equal(active?.[1]?.payload?.agentSession?.providerId, "opencode");
+  assert.equal(active?.[1]?.payload?.agentSession?.turn?.active, true);
+  assert.equal(active?.[1]?.session?.revision, 7);
+  const idle = harness.publishedSessionChanges.findLast(([, payload]) => (
+    payload.reason === "opencode-server-turn-idle"
+  ));
+  assert.equal(idle?.[1]?.payload?.agentRun?.active, false);
+  assert.equal(idle?.[1]?.payload?.agentRun?.state, "completed");
+  assert.equal(idle?.[1]?.payload?.agentSession?.turn?.active, false);
+  assert.equal(idle?.[1]?.payload?.agentSession?.turn?.state, "idle");
+});
+
+test("OpenCode publishes current provider reasoning while its turn is active", async (t) => {
+  const historicalReasoning = "This belongs to an earlier provider turn.";
+  const reasoning = "I should answer directly and keep the response concise.";
+  const harness = await controllerHarness({
+    assistantParts: [{
+      id: "reasoning-part-current",
+      text: reasoning,
+      type: "reasoning"
+    }],
+    providerEvents: [
+      {
+        data: {
+          properties: {
+            part: {
+              id: "reasoning-part-old",
+              messageID: "assistant-message-old",
+              text: historicalReasoning,
+              time: { start: Date.now() - 60_000 },
+              type: "reasoning"
+            }
+          },
+          type: "message.part.updated"
+        },
+        id: "reasoning-event-old"
+      },
+      {
+        data: {
+          properties: {
+            part: {
+              id: "reasoning-part-current",
+              messageID: "assistant-message-current",
+              text: reasoning,
+              time: { start: Date.now() + 1_000 },
+              type: "reasoning"
+            }
+          },
+          type: "message.part.updated"
+        },
+        id: "reasoning-event-current"
+      }
+    ]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Give me a concise answer",
+    messageId: "client-message-reasoning"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(harness.thinkingMessages.some((message) => (
+    message.text === reasoning && message.requireOpenTurn === true
+  )), true);
+  assert.equal(harness.thinkingMessages.some((message) => (
+    message.text === historicalReasoning
+  )), false);
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-server-reasoning" &&
+    payload.payload?.conversationLogPatch?.turn?.text === reasoning
+  )), true);
+  const progress = harness.publishedSessionChanges.find(([, payload]) => (
+    payload.reason === "opencode-server-progress" &&
+    payload.payload?.assistantProgress?.partType === "reasoning"
+  ));
+  assert.equal(progress?.[1]?.payload?.assistantProgress?.text, reasoning);
+});
+
+test("OpenCode presents long provider reasoning as compact progress and omits tool completion noise", async (t) => {
+  const first = "I should find current sources before answering.";
+  const second = "I will compare the useful results and keep the answer concise.";
+  const third = "The evidence is ready, so I can now write the response.";
+  const reasoning = `${first} ${second}\n\n${third}`;
+  const harness = await controllerHarness({
+    assistantParts: [
+      {
+        id: "reasoning-part-current",
+        text: reasoning,
+        type: "reasoning"
+      },
+      {
+        id: "tool-part-current",
+        state: { status: "completed" },
+        type: "tool"
+      }
+    ],
+    providerEvents: [
+      {
+        data: {
+          properties: {
+            part: {
+              id: "reasoning-part-current",
+              messageID: "msg_assistant",
+              text: `${first} ${second}`,
+              time: { start: Date.now() + 1_000 },
+              type: "reasoning"
+            }
+          },
+          type: "message.part.updated"
+        },
+        id: "reasoning-event-current-1"
+      },
+      {
+        data: {
+          properties: {
+            part: {
+              id: "reasoning-part-current",
+              messageID: "msg_assistant",
+              text: reasoning,
+              time: { start: Date.now() + 1_000 },
+              type: "reasoning"
+            }
+          },
+          type: "message.part.updated"
+        },
+        id: "reasoning-event-current-2"
+      }
+    ]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Research this, then answer",
+    messageId: "client-message-segmented-reasoning"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  const latestById = new Map(harness.thinkingMessages.map((message) => [
+    message.messageId,
+    message.text
+  ]));
+  assert.deepEqual([...latestById.values()], [first, second, third]);
+  assert.equal(harness.thinkingMessages.some((message) => message.text === reasoning), false);
+  assert.deepEqual(harness.commentaryMessages, []);
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-server-tool"
+  )), false);
 });
 
 test("OpenCode preserves structured provider errors as readable turn failures", async (t) => {
@@ -592,7 +851,15 @@ test("OpenCode switches connected providers while preserving its database and na
 });
 
 test("OpenCode helper turns use the hidden deny-all agent and bounded structured output", async (t) => {
-  const harness = await controllerHarness();
+  const harness = await controllerHarness({
+    providerEvents: [{
+      data: {
+        properties: { timestamp: Date.now() },
+        type: "session.next.reasoning.started"
+      },
+      id: "detached-progress"
+    }]
+  });
   const events = [];
   t.after(async () => {
     await harness.controller.closeAllForProject();
@@ -645,6 +912,10 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
   });
   assert.match(helperPrompt.prompt.text, /Return only one JSON value matching this JSON Schema/u);
   assert.match(helperPrompt.prompt.text, /"required":\["subject"\]/u);
+  assert.equal(events.some((event) => event.type === "session.next.reasoning.started"), true);
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-server-progress"
+  )), false);
 
   const tinyProfile = {
     ...executionProfile,

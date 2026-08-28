@@ -9,7 +9,8 @@ import { promisify } from "node:util";
 
 import {
   installVibe64ManagedExecutionProvider,
-  stopVibe64Execution
+  stopVibe64Execution,
+  stopVibe64OwnedExecutions
 } from "../../packages/vibe64-execution/src/server/managedExecution.js";
 import {
   normalizeExecutionDescriptor
@@ -115,6 +116,54 @@ test("the installed provider owns run and stop by the same execution id", async 
       operation: "stop"
     }
   ]);
+});
+
+test("the installed provider can drain durable services by their exact owner", async (t) => {
+  const calls = [];
+  const release = installVibe64ManagedExecutionProvider({
+    async runCommand() {
+      return { ok: true };
+    },
+    async stopExecution() {
+      return { ok: true, scopeEmpty: true };
+    },
+    async stopOwnedExecutions(selector, options) {
+      calls.push({ options, selector });
+      return {
+        closed: 2,
+        ok: true,
+        processExitProofs: [{ scopeEmpty: true, stopped: true }],
+        scopeEmpty: true,
+        supported: true
+      };
+    }
+  });
+  t.after(release);
+  const selector = {
+    kind: "assistant",
+    operationId: "opencode-server",
+    ownerId: "session-1",
+    sessionId: "session-1"
+  };
+
+  const result = await stopVibe64OwnedExecutions(selector, {
+    reason: "session-close"
+  });
+
+  assert.equal(result.closed, 2);
+  assert.equal(result.scopeEmpty, true);
+  assert.deepEqual(calls, [{
+    options: { reason: "session-close" },
+    selector
+  }]);
+  release();
+  assert.deepEqual(await stopVibe64OwnedExecutions(selector), {
+    closed: 0,
+    ok: true,
+    processExitProofs: [],
+    scopeEmpty: true,
+    supported: false
+  });
 });
 
 test("a managed host fails closed when its execution provider is unavailable", async (t) => {

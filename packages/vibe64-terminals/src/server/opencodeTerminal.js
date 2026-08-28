@@ -5,7 +5,11 @@ import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
-  VIBE64_AGENT_RUN_STATE
+  stopVibe64OwnedExecutions
+} from "@local/vibe64-execution/server";
+import {
+  VIBE64_AGENT_RUN_STATE,
+  vibe64AgentRunStateIsActive
 } from "@local/vibe64-runtime/server/sessionStore";
 import { vibe64SessionBriefing } from "@local/vibe64-runtime/server/vibeSessionBriefing";
 import {
@@ -50,6 +54,7 @@ const OPENCODE_AGENT_RUN_ID = "opencode_server";
 const OPENCODE_CATALOG_CACHE_MS = 10 * 60 * 1000;
 const OPENCODE_CATALOG_IDLE_MS = 15 * 1000;
 const OPENCODE_MESSAGE_POLL_MS = 250;
+const OPENCODE_REASONING_PROGRESS_MAX_CHARS = 280;
 const OPENCODE_SESSION_PREFIX = "ses_vibe64_";
 const OPENCODE_RENEWAL_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -91,6 +96,34 @@ function upstreamMessageId(value = "") {
 
 function conversationMessageId(...values) {
   return `oc_${fingerprint(...values).slice(0, 48)}`;
+}
+
+function openCodeReasoningSegments(value = "") {
+  const lines = String(value ?? "")
+    .replace(/\r\n?/gu, "\n")
+    .split(/\n+/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const segments = [];
+  for (const line of lines) {
+    const sentences = line.split(/(?<=[.!?])\s+(?=[\p{L}\p{N}"'([{`])/u);
+    for (const sentence of sentences) {
+      const words = sentence.trim().split(/\s+/u).filter(Boolean);
+      let segment = "";
+      for (const word of words) {
+        if (segment && segment.length + word.length + 1 > OPENCODE_REASONING_PROGRESS_MAX_CHARS) {
+          segments.push(segment);
+          segment = word;
+        } else {
+          segment = segment ? `${segment} ${word}` : word;
+        }
+      }
+      if (segment) {
+        segments.push(segment);
+      }
+    }
+  }
+  return segments;
 }
 
 function openCodeModel(selection = {}, executionProfile = null) {
@@ -262,16 +295,25 @@ function openCodeMessageRows(value = null) {
     .map(({ message }) => message);
 }
 
-function openCodeMessageResultForInput(value = null, inputMessageId = "") {
+function openCodeAssistantRowsForInput(value = null, inputMessageId = "") {
   const rows = openCodeMessageRows(value);
   const index = rows.findIndex((message) => text(message?.id) === text(inputMessageId));
   if (index < 0) {
-    return null;
+    return [];
   }
   const turnRows = rows.slice(index + 1);
   const nextUserIndex = turnRows.findIndex((message) => message?.type === "user");
-  const assistantRows = (nextUserIndex < 0 ? turnRows : turnRows.slice(0, nextUserIndex))
+  return (nextUserIndex < 0 ? turnRows : turnRows.slice(0, nextUserIndex))
     .filter((message) => message?.type === "assistant");
+}
+
+function openCodeMessageResultForInput(value = null, inputMessageId = "") {
+  const assistantRows = openCodeAssistantRowsForInput(value, inputMessageId);
+  if (!assistantRows.length && !openCodeMessageRows(value).some((message) => (
+    text(message?.id) === text(inputMessageId)
+  ))) {
+    return null;
+  }
   if (!assistantRows.length) {
     return { admitted: true, complete: false, error: "", text: "", turnId: "" };
   }
@@ -345,6 +387,7 @@ function latestOpenCodeMessageResult(value = null) {
 }
 
 async function waitForOpenCodeMessages(client, conversationId = "", inputMessageId = "", {
+  onMessages = null,
   signal
 } = {}) {
   const resolveInputMessageId = typeof inputMessageId === "function"
@@ -358,6 +401,9 @@ async function waitForOpenCodeMessages(client, conversationId = "", inputMessage
       limit: 100,
       order: "desc"
     }, { signal });
+    if (typeof onMessages === "function") {
+      await onMessages(messages, expectedInputMessageId);
+    }
     const result = expectedInputMessageId
       ? openCodeMessageResultForInput(messages, expectedInputMessageId)
       : latestOpenCodeMessageResult(messages);
@@ -384,8 +430,17 @@ function eventSummary(event = {}) {
     agent: text(info.agent || data.agent),
     at: Number(data.timestamp || part.time?.start || part.time?.created) || Date.now(),
     eventId: text(event.id || payload.id || part.id),
+    messageId: text(part.messageID || data.messageID || info.id),
     modelId: text(model.id || model.modelID || info.modelID),
     modelProviderId: text(model.providerID || info.providerID),
+    partId: text(part.id || data.partID),
+    partType: text(part.type) || (
+      text(payload.type) === "session.next.reasoning.ended"
+        ? "reasoning"
+        : text(payload.type) === "session.next.text.ended"
+          ? "text"
+          : ""
+    ),
     text: ["reasoning", "text"].includes(text(part.type))
       ? text(part.text || data.delta).slice(0, 32_000)
       : ["session.next.text.ended", "session.next.reasoning.ended"].includes(text(payload.type))
@@ -393,6 +448,52 @@ function eventSummary(event = {}) {
         : "",
     tool: text(part.tool || data.tool),
     type: text(payload.type || event.event)
+  };
+}
+
+function openCodeRunRealtimePayload(run = {}) {
+  const state = text(run.state);
+  const active = run.active === true || vibe64AgentRunStateIsActive(state);
+  const turnState = state === VIBE64_AGENT_RUN_STATE.STARTING
+    ? "starting"
+    : state === VIBE64_AGENT_RUN_STATE.FINALIZING
+      ? "finalizing"
+      : active
+        ? "active"
+        : "idle";
+  const threadId = text(run.threadId);
+  const turnId = text(run.turnId);
+  const updatedAt = text(run.updatedAt);
+  return {
+    agentRun: {
+      active,
+      id: OPENCODE_AGENT_RUN_ID,
+      provider: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+      providerInterface: OPENCODE_AGENT_RUN_ID,
+      providerStatus: state,
+      providerThreadId: threadId,
+      providerTurnId: turnId,
+      state,
+      updatedAt
+    },
+    agentSession: {
+      providerId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+      thread: {
+        id: threadId
+      },
+      transportId: OPENCODE_AGENT_RUN_ID,
+      turn: {
+        active,
+        completedAt: text(run.finishedAt),
+        error: text(run.error),
+        id: turnId,
+        runState: state,
+        startedAt: text(run.startedAt),
+        state: turnState,
+        status: state,
+        updatedAt
+      }
+    }
   };
 }
 
@@ -434,6 +535,7 @@ function createOpenCodeTerminalController({
   const processes = new Map();
   const processStarts = new Map();
   const monitors = new Map();
+  const reasoningMessages = new Map();
   const turns = new Map();
   const temporaryConversations = new Map();
   const processExitProofs = new Map();
@@ -817,30 +919,59 @@ function createOpenCodeTerminalController({
     });
   }
 
-  async function writeConversationProjection(context = {}, messages = null) {
-    let failure = "";
-    for (const message of openCodeMessageRows(messages)) {
-      if (message?.type !== "assistant") {
+  async function writeReasoningMessages(context = {}, {
+    at = "",
+    messageId = "",
+    partId = "",
+    requireOpenTurn = false,
+    value = ""
+  } = {}) {
+    const written = [];
+    const current = reasoningMessages.get(context.key) || new Map();
+    reasoningMessages.set(context.key, current);
+    for (const [index, segment] of openCodeReasoningSegments(value).entries()) {
+      const id = index === 0
+        ? conversationMessageId(messageId, partId, "reasoning")
+        : conversationMessageId(messageId, partId, "reasoning", index);
+      if (current.get(id) === segment) {
         continue;
       }
+      const turn = await context.runtime.store.writeConversationThinkingMessage(context.sessionId, {
+        at,
+        messageId: id,
+        requireOpenTurn,
+        text: segment
+      });
+      await publishConversationTurn(context, turn, "opencode-server-reasoning");
+      current.set(id, segment);
+      written.push(turn);
+    }
+    return written;
+  }
+
+  async function writeConversationProjection(context = {}, messages = null, {
+    inputMessageId = "",
+    reasoningOnly = false,
+    requireOpenTurn = false
+  } = {}) {
+    let failure = "";
+    const rows = inputMessageId
+      ? openCodeAssistantRowsForInput(messages, inputMessageId)
+      : openCodeMessageRows(messages).filter((message) => message?.type === "assistant");
+    for (const message of rows) {
       failure ||= openCodeMessageError(message);
       const parts = Array.isArray(message.content) ? message.content : [];
       for (const part of parts.filter((candidate) => candidate?.type === "reasoning" && text(candidate.text))) {
-        const turn = await context.runtime.store.writeConversationThinkingMessage(context.sessionId, {
+        await writeReasoningMessages(context, {
           at: message.time?.created ? new Date(message.time.created).toISOString() : "",
-          messageId: conversationMessageId(message.id, part.id, "reasoning"),
-          text: text(part.text)
+          messageId: message.id,
+          partId: part.id,
+          requireOpenTurn,
+          value: part.text
         });
-        await publishConversationTurn(context, turn, "opencode-server-reasoning");
       }
-      for (const part of parts.filter((candidate) => candidate?.type === "tool")) {
-        const status = text(part.state?.status || part.state?.type) || "used";
-        const turn = await context.runtime.store.writeConversationCommentaryMessage(context.sessionId, {
-          at: part.time?.created ? new Date(part.time.created).toISOString() : "",
-          messageId: conversationMessageId(message.id, part.id, "tool"),
-          text: `${text(part.name) || "Tool"}: ${status}`
-        });
-        await publishConversationTurn(context, turn, "opencode-server-tool");
+      if (reasoningOnly) {
+        continue;
       }
       const assistantText = assistantMessageText(message);
       if (assistantText) {
@@ -874,41 +1005,79 @@ function createOpenCodeTerminalController({
     if (typeof context.runtime.store?.writeAgentRunEvent !== "function") {
       return null;
     }
-    return context.runtime.store.writeAgentRunEvent(context.sessionId, OPENCODE_AGENT_RUN_ID, {
-      event: {
-        kind: `opencode-${state}`,
-        message: error,
-        state
-      },
-      patch: {
-        engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+    let written = null;
+    const write = () => context.runtime.store.writeAgentRunEvent(
+      context.sessionId,
+      OPENCODE_AGENT_RUN_ID,
+      {
+        event: {
+          kind: `opencode-${state}`,
+          message: error,
+          state
+        },
+        patch: {
+          engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+          error,
+          model: context.selection.modelId,
+          modelProviderId: context.selection.modelProviderId,
+          ...(vibe64AgentRunStateIsActive(state)
+            ? { finishedAt: "", startedAt: text(turn.startedAt) }
+            : { finishedAt: text(turn.updatedAt) }),
+          state,
+          threadId: text(turn.threadId),
+          turnId: text(turn.id),
+          updatedAt: text(turn.updatedAt)
+        }
+      }
+    ).then((run) => {
+      written = run;
+      return run;
+    });
+    const updatedSession = (
+      typeof context.runtime.store.mutateSession === "function" &&
+      typeof context.runtime.getSession === "function"
+    )
+      ? await context.runtime.store.mutateSession(context.sessionId, async () => {
+          await write();
+          return context.runtime.getSession(context.sessionId, { inspectSource: false });
+        })
+      : (await write(), context.session);
+    await publishSessionChanged(context.sessionId, {
+      payload: openCodeRunRealtimePayload(written || {
+        active: vibe64AgentRunStateIsActive(state),
         error,
-        model: context.selection.modelId,
-        modelProviderId: context.selection.modelProviderId,
+        id: OPENCODE_AGENT_RUN_ID,
         state,
         threadId: text(turn.threadId),
-        turnId: text(turn.id)
-      }
+        turnId: text(turn.id),
+        updatedAt: new Date().toISOString()
+      }),
+      reason: vibe64AgentRunStateIsActive(state)
+        ? "opencode-server-turn-active"
+        : "opencode-server-turn-idle",
+      session: updatedSession
     });
+    return written;
   }
 
-  async function consumeEvents(target = {}, context = {}, after = "", {
+  async function consumeEvents(target = {}, context = {}, turn = null, {
     onEvent = null,
+    publish = true,
     signal
   } = {}) {
     for await (const event of target.server.client.events(target.upstreamSessionId, {
-      after,
       signal
     })) {
       const summary = eventSummary(event);
-      if (summary.type && typeof onEvent === "function") {
+      const current = !turn || Number(summary.at) >= Number(turn.eventStartedAt);
+      if (summary.type && current && typeof onEvent === "function") {
         onEvent({
           ...summary,
           threadId: target.upstreamSessionId,
           turnId: turns.get(context.key)?.id || ""
         });
       }
-      if (summary.type) {
+      if (summary.type && current && publish) {
         await publishSessionChanged(context.sessionId, {
           payload: { assistantProgress: summary },
           reason: "opencode-server-progress"
@@ -922,10 +1091,12 @@ function createOpenCodeTerminalController({
     if (existing) {
       return existing;
     }
-    const startedAt = new Date().toISOString();
+    const eventStartedAt = Number(admitted.eventStartedAt) || Date.now();
+    const startedAt = text(admitted.startedAt) || new Date(eventStartedAt).toISOString();
     const turn = {
       active: true,
       error: "",
+      eventStartedAt,
       id: text(admitted.id),
       inputMessageId: text(admitted.id),
       startedAt,
@@ -939,7 +1110,7 @@ function createOpenCodeTerminalController({
       const eventAbort = new AbortController();
       const abortEvents = () => eventAbort.abort();
       target.abortController.signal.addEventListener("abort", abortEvents, { once: true });
-      const events = consumeEvents(target, context, String(admitted.admittedSeq ?? ""), {
+      const events = consumeEvents(target, context, turn, {
         onEvent: options.onEvent,
         signal: eventAbort.signal
       }).catch((error) => {
@@ -959,10 +1130,21 @@ function createOpenCodeTerminalController({
           target.upstreamSessionId,
           () => turn.inputMessageId,
           {
-          signal: target.abortController.signal
+            onMessages: (messages, inputMessageId) => writeConversationProjection(
+              context,
+              messages,
+              {
+                inputMessageId,
+                reasoningOnly: true,
+                requireOpenTurn: true
+              }
+            ),
+            signal: target.abortController.signal
           }
         );
-        const projection = await writeConversationProjection(context, completion.messages);
+        const projection = await writeConversationProjection(context, completion.messages, {
+          inputMessageId: turn.inputMessageId
+        });
         failure = projection.failure;
         if (failure) {
           credentialFailure = openCodeCredentialFailure(failure);
@@ -994,15 +1176,13 @@ function createOpenCodeTerminalController({
         turn.state = finalState;
         turn.updatedAt = new Date().toISOString();
         await writeRun(context, turn, finalState, failure).catch(() => null);
-        await publishSessionChanged(context.sessionId, {
-          reason: "opencode-server-turn-idle"
-        });
       }
       return openCodeTurnSnapshot(turn, target.upstreamSessionId);
     }).finally(() => {
       if (monitors.get(context.key) === monitor) {
         monitors.delete(context.key);
       }
+      reasoningMessages.delete(context.key);
     });
     monitors.set(context.key, monitor);
     void monitor.catch((error) => {
@@ -1060,53 +1240,98 @@ function createOpenCodeTerminalController({
         turn: openCodeTurnSnapshot(currentTurn, currentThreadId)
       };
     }
-    const actor = await recordGitActor({
-      env,
-      overwrite: !currentMonitor,
-      reason: "agent-message",
-      runtime: context.runtime,
-      session: context.session,
-      sourceRoot: terminalSessionSourceRoot(context.session),
-      threadId: currentThreadId,
-      vibe64User: options.vibe64User || null,
-      workdir: context.workdir
-    });
-    if (actor?.ok === false) {
-      return {
-        code: actor.code || "vibe64_opencode_git_actor_unavailable",
-        delivered: false,
-        error: actor.error || "GitHub identity is not available for this OpenCode message.",
-        ok: false,
-        refreshRecommended: true,
-        retryable: true
-      };
+    const eventStartedAt = Date.now();
+    const startedAt = new Date(eventStartedAt).toISOString();
+    const providerMessageId = upstreamMessageId(messageId);
+    const startingTurn = currentMonitor
+      ? null
+      : {
+          active: true,
+          error: "",
+          eventStartedAt,
+          id: providerMessageId,
+          inputMessageId: providerMessageId,
+          startedAt,
+          state: VIBE64_AGENT_RUN_STATE.STARTING,
+          threadId: currentThreadId,
+          updatedAt: startedAt
+        };
+    if (startingTurn) {
+      turns.set(context.key, startingTurn);
+      await writeRun(context, startingTurn, VIBE64_AGENT_RUN_STATE.STARTING);
     }
-    const target = await ensureUpstreamSession(context, options);
-    const aiContext = await resolveAiTurnContext({
-      projectService,
-      vibe64User: options.vibe64User || null
-    });
-    const rendered = typeof context.runtime.renderPrompt === "function"
-      ? await context.runtime.renderPrompt(context.sessionId, {
-          input,
-          request: message,
-          task: "work"
-        })
-      : { prompt: message };
-    const renderedPrompt = text(rendered?.prompt) || message;
-    const admitted = await target.server.client.prompt(target.upstreamSessionId, {
-      agent: context.selection.agentId,
-      delivery: currentMonitor ? "steer" : "queue",
-      id: upstreamMessageId(messageId),
-      model: openCodeModel(context.selection),
-      prompt: {
-        text: promptWithHiddenAiTurnContext([
-          openCodeSessionInstructions(actor?.session || context.session, aiContext.policy),
-          renderedPrompt
-        ].join("\n\n"), aiContext)
-      },
-      resume: true
-    });
+    let actor = null;
+    let actorFailure = null;
+    let aiContext = null;
+    let admitted = null;
+    let target = null;
+    try {
+      actor = await recordGitActor({
+        env,
+        overwrite: !currentMonitor,
+        reason: "agent-message",
+        runtime: context.runtime,
+        session: context.session,
+        sourceRoot: terminalSessionSourceRoot(context.session),
+        threadId: currentThreadId,
+        vibe64User: options.vibe64User || null,
+        workdir: context.workdir
+      });
+      if (actor?.ok === false) {
+        actorFailure = {
+          code: actor.code || "vibe64_opencode_git_actor_unavailable",
+          delivered: false,
+          error: actor.error || "GitHub identity is not available for this OpenCode message.",
+          ok: false,
+          refreshRecommended: true,
+          retryable: true
+        };
+        throw new Error(actorFailure.error);
+      }
+      target = await ensureUpstreamSession(context, options);
+      aiContext = await resolveAiTurnContext({
+        projectService,
+        vibe64User: options.vibe64User || null
+      });
+      const rendered = typeof context.runtime.renderPrompt === "function"
+        ? await context.runtime.renderPrompt(context.sessionId, {
+            input,
+            request: message,
+            task: "work"
+          })
+        : { prompt: message };
+      const renderedPrompt = text(rendered?.prompt) || message;
+      admitted = await target.server.client.prompt(target.upstreamSessionId, {
+        agent: context.selection.agentId,
+        delivery: currentMonitor ? "steer" : "queue",
+        id: providerMessageId,
+        model: openCodeModel(context.selection),
+        prompt: {
+          text: promptWithHiddenAiTurnContext([
+            openCodeSessionInstructions(actor?.session || context.session, aiContext.policy),
+            renderedPrompt
+          ].join("\n\n"), aiContext)
+        },
+        resume: true
+      });
+    } catch (error) {
+      if (startingTurn && !monitors.has(context.key)) {
+        startingTurn.active = false;
+        startingTurn.error = text(error?.message) || "OpenCode prompt delivery failed.";
+        startingTurn.state = VIBE64_AGENT_RUN_STATE.FAILED;
+        startingTurn.updatedAt = new Date().toISOString();
+        await writeRun(
+          context,
+          startingTurn,
+          VIBE64_AGENT_RUN_STATE.FAILED,
+          startingTurn.error
+        ).catch(() => null);
+      }
+      if (actorFailure) {
+        return actorFailure;
+      }
+      throw error;
+    }
     const conversationTurn = await context.runtime.store.writeConversationUserMessage(
       context.sessionId,
       {
@@ -1127,7 +1352,11 @@ function createOpenCodeTerminalController({
       activeTurn.inputMessageId = text(admitted.id);
       activeTurn.updatedAt = new Date().toISOString();
     } else {
-      beginMonitor(target, context, admitted, options);
+      beginMonitor(target, context, {
+        ...admitted,
+        eventStartedAt,
+        startedAt
+      }, options);
     }
     const turn = openCodeTurnSnapshot(turns.get(context.key), target.upstreamSessionId);
     return {
@@ -1271,8 +1500,9 @@ function createOpenCodeTerminalController({
     });
     const eventAbort = new AbortController();
     const events = typeof options.onEvent === "function"
-      ? consumeEvents({ ...target, upstreamSessionId: conversationId }, context, String(admitted.admittedSeq ?? ""), {
+      ? consumeEvents({ ...target, upstreamSessionId: conversationId }, context, null, {
           onEvent: options.onEvent,
+          publish: false,
           signal: eventAbort.signal
         }).catch((error) => {
           if (error?.name !== "AbortError") {
@@ -1484,6 +1714,14 @@ function createOpenCodeTerminalController({
     await Promise.all(pending);
     const targets = [...processes.values()].filter((target) => target.sessionId === id);
     const proofs = await Promise.all(targets.map((target) => stopProcessRecord(target)));
+    const owned = await stopVibe64OwnedExecutions({
+      kind: "assistant",
+      operationId: "opencode-server",
+      ownerId: id,
+      sessionId: id
+    }, {
+      reason: "opencode-session-close"
+    });
     for (const key of [...turns.keys()]) {
       if (key.endsWith(`\0${id}`)) {
         turns.delete(key);
@@ -1495,10 +1733,11 @@ function createOpenCodeTerminalController({
       }
     }
     return {
-      closed: targets.length,
-      ok: proofs.every((proof) => proof?.exited !== false),
-      processExitProof: proofs.at(-1) || processExitProofs.get(id) || { exited: true },
-      processExitProofs: proofs
+      closed: Math.max(targets.length, Number(owned?.closed) || 0),
+      ok: proofs.every((proof) => proof?.exited !== false) && owned?.scopeEmpty !== false,
+      processExitProof: proofs.at(-1) || owned?.processExitProofs?.at?.(-1) ||
+        processExitProofs.get(id) || { exited: true },
+      processExitProofs: [...proofs, ...(owned?.processExitProofs || [])]
     };
   }
 
@@ -1507,15 +1746,13 @@ function createOpenCodeTerminalController({
       ...[...processStarts.values()].map((start) => start.catch(() => null)),
       ...(catalogStart ? [catalogStart.catch(() => null)] : [])
     ]);
-    const results = [];
-    for (const target of [...processes.values()]) {
-      results.push(await stopProcessRecord(target));
-    }
-    if (catalogProcess) {
-      const target = catalogProcess;
-      catalogProcess = null;
-      results.push(await target.stop());
-    }
+    const targets = [...processes.values()];
+    const catalogTarget = catalogProcess;
+    catalogProcess = null;
+    const results = await Promise.all([
+      ...targets.map((target) => stopProcessRecord(target)),
+      ...(catalogTarget ? [catalogTarget.stop()] : [])
+    ]);
     clearTimeout(catalogIdleTimer);
     return {
       closed: results.length,
@@ -1645,8 +1882,9 @@ function createOpenCodeTerminalController({
           if (activeRun) {
             const target = await ensureUpstreamSession(context, options);
             beginMonitor(target, context, {
-              admittedSeq: "",
-              id: text(activeRun.turnId) || upstreamMessageId(randomUUID())
+              eventStartedAt: Date.parse(text(activeRun.startedAt)) || Date.now(),
+              id: text(activeRun.turnId) || upstreamMessageId(randomUUID()),
+              startedAt: text(activeRun.startedAt)
             }, options);
           }
           results.push({ ok: true, resumed: Boolean(activeRun), sessionId });

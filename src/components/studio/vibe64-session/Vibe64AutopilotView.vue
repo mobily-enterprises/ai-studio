@@ -653,6 +653,7 @@
 
 <script setup>
 import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from "vue";
+import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
 import {
   mdiAccountArrowRightOutline,
   mdiArrowLeft,
@@ -699,6 +700,9 @@ import {
 import {
   useVibe64AssistantAccess
 } from "@/composables/useVibe64AssistantAccess.js";
+import {
+  VIBE64_SESSION_CHANGED_EVENT
+} from "@/lib/vibe64SessionRequestConfig.js";
 
 const emit = defineEmits(vibe64AutopilotViewEmits);
 const props = defineProps(vibe64AutopilotViewProps);
@@ -739,6 +743,60 @@ const composerAttachmentState = ref({
 const selectedAssistantSessionId = computed(() => String(
   props.session?.sessionId || ""
 ).trim());
+const openCodeProgressLabel = ref("");
+const openCodeProviderLabel = computed(() => ({
+  deepseek: "DeepSeek",
+  "zai-coding-plan": "Z.AI"
+})[String(props.session?.assistantSelection?.modelProviderId || "").trim()] || "OpenCode");
+
+function visibleOpenCodeProgressLabel(progress = {}) {
+  if (String(progress.tool || "").trim()) {
+    return `${openCodeProviderLabel.value} is using a tool…`;
+  }
+  if (
+    String(progress.partType || "").trim() === "reasoning" ||
+    String(progress.type || "").includes("reasoning")
+  ) {
+    return `${openCodeProviderLabel.value} is reasoning…`;
+  }
+  if (String(progress.text || "").trim()) {
+    return `${openCodeProviderLabel.value} is writing…`;
+  }
+  return `${openCodeProviderLabel.value} is working…`;
+}
+
+useRealtimeEvent({
+  enabled: computed(() => Boolean(
+    props.active &&
+    !props.sessionSelectionClosed &&
+    selectedAssistantSessionId.value &&
+    props.session?.assistantSelection?.engineId === "opencode"
+  )),
+  event: VIBE64_SESSION_CHANGED_EVENT,
+  matches: ({ payload = {} } = {}) => Boolean(
+    String(payload.sessionId || payload.entityId || "").trim() === selectedAssistantSessionId.value &&
+    (
+      payload.assistantProgress ||
+      [
+        "opencode-server-message-delivered",
+        "opencode-server-turn-active",
+        "opencode-server-turn-idle"
+      ].includes(payload.reason)
+    )
+  ),
+  onEvent: ({ payload = {} } = {}) => {
+    openCodeProgressLabel.value = payload.reason === "opencode-server-turn-idle"
+      ? ""
+      : visibleOpenCodeProgressLabel(payload.assistantProgress || {});
+  }
+});
+
+watch([
+  selectedAssistantSessionId,
+  () => props.session?.assistantSelection?.engineId
+], () => {
+  openCodeProgressLabel.value = "";
+}, { immediate: true });
 const {
   accessError: assistantAccessError,
   accessLabel: assistantAccessLabel,
@@ -927,8 +985,14 @@ const {
   sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
 });
 const composerAssistantLabel = computed(() => (
-  thinkingVisible.value ? thinkingLabel.value : typingLabel.value
+  openCodeProgressLabel.value ||
+  (thinkingVisible.value ? thinkingLabel.value : typingLabel.value)
 ));
+watch(agentActive, (active) => {
+  if (!active) {
+    openCodeProgressLabel.value = "";
+  }
+}, { flush: "sync", immediate: true });
 const conversationAssistantLabel = computed(() => (
   props.session?.assistantSelection?.engineId === "opencode" ? "OpenCode" : "Codex"
 ));

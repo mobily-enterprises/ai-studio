@@ -79,10 +79,24 @@ async function stopVibe64Execution(executionId = "", options = {}) {
   return stopPtyExecution(normalizedExecutionId, options);
 }
 
+async function stopVibe64OwnedExecutions(selector = {}, options = {}) {
+  if (installedProvider?.stopOwnedExecutions) {
+    return installedProvider.stopOwnedExecutions(selector, options);
+  }
+  return {
+    closed: 0,
+    ok: true,
+    processExitProofs: [],
+    scopeEmpty: true,
+    supported: false
+  };
+}
+
 export {
   VIBE64_MANAGED_EXECUTION_REQUIRED_ENV,
   installVibe64ManagedExecutionProvider,
   stopVibe64Execution,
+  stopVibe64OwnedExecutions,
   vibe64CapacityRejectedResult,
   vibe64ManagedExecutionProvider,
   vibe64ManagedExecutionRequired
