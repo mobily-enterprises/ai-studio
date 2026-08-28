@@ -57,7 +57,11 @@ const providerRevision = openCodeAssistantCapabilities({
   providers: providerResult
 }).modelProviders[0].definitionRevision;
 
-async function controllerHarness({ assistantError = null, withCommandBoundary = false } = {}) {
+async function controllerHarness({
+  assistantError = null,
+  catalogProviders = providerResult,
+  withCommandBoundary = false
+} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
   const sourceRoot = path.join(root, "sessions", "active", "session-1", "source");
   const sessionRoot = path.join(root, "session-state", "session-1");
@@ -84,6 +88,8 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
     sessionRoot
   };
   const userMessages = [];
+  const assistantMessages = [];
+  const systemMessages = [];
   const metadataWrites = [];
   const runtime = {
     projectContextRoot: root,
@@ -99,6 +105,7 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
         return null;
       },
       async writeConversationAssistantMessage(_sessionId, input) {
+        assistantMessages.push(input);
         return { id: input.messageId, text: input.text, type: "assistant" };
       },
       async writeConversationCommentaryMessage(_sessionId, input) {
@@ -106,6 +113,13 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
       },
       async writeConversationThinkingMessage(_sessionId, input) {
         return { id: input.messageId, text: input.text, type: "thinking" };
+      },
+      async writeConversationSystemMessage(_sessionId, input) {
+        systemMessages.push(input);
+        return {
+          system: { text: input.text },
+          turnId: `system-${systemMessages.length}`
+        };
       },
       async writeConversationUserMessage(_sessionId, input) {
         userMessages.push(input);
@@ -131,6 +145,7 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
   const commandEnvironmentCalls = [];
   const createdSessions = [];
   const promptCalls = [];
+  const publishedSessionChanges = [];
   const switchedAgents = [];
   const switchedModels = [];
   const upstreamSessions = new Map();
@@ -194,7 +209,7 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
         return { admittedSeq: promptCalls.length, id: input.id };
       },
       async providers() {
-        return providerResult;
+        return catalogProviders;
       },
       async readSession(id) {
         if (!upstreamSessions.has(id)) {
@@ -263,7 +278,9 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
         return { aiPolicy: {}, ok: true };
       }
     },
-    async publishSessionChanged() {},
+    async publishSessionChanged(...args) {
+      publishedSessionChanges.push(args);
+    },
     async recordGitActor(input) {
       return { ok: true, session: input.session };
     },
@@ -273,6 +290,7 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
   });
 
   return {
+    assistantMessages,
     connection,
     commandEnvironmentCalls,
     controller,
@@ -284,12 +302,14 @@ async function controllerHarness({ assistantError = null, withCommandBoundary = 
     processStarts,
     processStops,
     promptCalls,
+    publishedSessionChanges,
     root,
     runtime,
     selection,
     session,
     switchedAgents,
     switchedModels,
+    systemMessages,
     upstreamSessions,
     userMessages
   };
@@ -354,6 +374,17 @@ test("OpenCode persists a user message only after upstream admission", async (t)
     providerID: "deepseek",
     variant: "high"
   });
+  const completed = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+  assert.equal(completed.state, "completed");
+  assert.equal(harness.assistantMessages.length, 1);
+  assert.equal(harness.assistantMessages[0].text, "Main turn complete");
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-server-assistant-message" &&
+    payload.payload?.conversationLogPatch?.turn?.text === "Main turn complete"
+  )), true);
 });
 
 test("OpenCode preserves structured provider errors as readable turn failures", async (t) => {
@@ -383,6 +414,75 @@ test("OpenCode preserves structured provider errors as readable turn failures", 
 
   assert.equal(result.error, "Aborted");
   assert.equal(result.state, "failed");
+  assert.deepEqual(harness.systemMessages, []);
+});
+
+test("OpenCode does not misclassify model token limits as credential failures", async (t) => {
+  const harness = await controllerHarness({
+    assistantError: {
+      data: { message: "Maximum output token limit exceeded" },
+      name: "ModelOutputError"
+    }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Reply exactly OK",
+    messageId: "client-message-token-limit"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  const result = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(result.error, "Maximum output token limit exceeded");
+  assert.equal(result.state, "failed");
+  assert.deepEqual(harness.systemMessages, []);
+});
+
+test("OpenCode turns make revoked provider keys actionable without exposing raw provider errors", async (t) => {
+  const harness = await controllerHarness({
+    assistantError: {
+      data: { message: "Authentication failed: API key expired or revoked" },
+      name: "AuthenticationError"
+    }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Reply exactly OK",
+    messageId: "client-message-revoked-key"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  const result = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(result.state, "failed");
+  assert.match(result.error, /OpenCode needs attention/u);
+  assert.match(result.error, /Open AI Accounts/u);
+  assert.doesNotMatch(result.error, /Authentication failed/u);
+  assert.equal(harness.systemMessages.length, 1);
+  assert.match(harness.systemMessages[0].text, /expired or been revoked/u);
+  assert.match(harness.systemMessages[0].text, /\[Open AI Accounts\]\(\/app\/manage\/accounts\)/u);
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-credential-failure" &&
+    payload.payload?.conversationLogPatch?.type === "upsert-turn"
+  )), true);
 });
 
 test("OpenCode restarts on key replacement while preserving its database and native session id", async (t) => {
@@ -409,6 +509,85 @@ test("OpenCode restarts on key replacement while preserving its database and nat
   assert.equal(sessionStarts[0].options.apiKey, "deepseek-key-one");
   assert.equal(sessionStarts[1].options.apiKey, "deepseek-key-two");
   assert.equal(harness.processStops.includes(sessionStarts[0].options), true);
+  assert.equal(harness.createdSessions.filter((entry) => entry.id === first.thread.id).length, 1);
+});
+
+test("OpenCode switches connected providers while preserving its database and native session id", async (t) => {
+  const zaiProvider = {
+    id: "zai-coding-plan",
+    models: {
+      "glm-5.3": {
+        capabilities: {
+          reasoning: true,
+          toolcall: true
+        },
+        id: "glm-5.3",
+        name: "GLM 5.3",
+        status: "active",
+        variants: {
+          high: {},
+          low: {}
+        }
+      }
+    },
+    name: "Z.AI Coding Plan",
+    source: "api"
+  };
+  const catalogProviders = {
+    all: [providerDefinition, zaiProvider],
+    default: {
+      deepseek: "deepseek-chat",
+      "zai-coding-plan": "glm-5.3"
+    }
+  };
+  const zaiRevision = openCodeAssistantCapabilities({
+    agents,
+    providers: catalogProviders
+  }).modelProviders.find(({ id }) => id === zaiProvider.id).definitionRevision;
+  const harness = await controllerHarness({ catalogProviders });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  };
+  const first = await harness.controller.ensureSession("session-1", options);
+
+  harness.connection.apiKey = "zai-key-one";
+  harness.connection.canonicalUrl = "https://api.z.ai/api/coding/paas/v4";
+  harness.connection.economyModelId = "glm-5.3";
+  harness.connection.endpointCode = "zai_coding_plan";
+  harness.connection.fingerprint = `sha256:${"3".repeat(64)}`;
+  harness.connection.modelProviderId = "zai-coding-plan";
+  harness.connection.providerRevision = zaiRevision;
+  harness.session.metadata.assistant_selection = serializeVibe64AssistantSelection({
+    ...harness.selection,
+    modelId: "glm-5.3",
+    modelProviderId: "zai-coding-plan"
+  });
+
+  const second = await harness.controller.ensureSession("session-1", options);
+  const sessionStarts = harness.processStarts.filter((entry) => entry.options.apiKey);
+
+  assert.equal(first.thread.id, second.thread.id);
+  assert.equal(sessionStarts.length, 2);
+  assert.equal(sessionStarts[0].options.dbPath, sessionStarts[1].options.dbPath);
+  assert.equal(sessionStarts[0].options.workdir, sessionStarts[1].options.workdir);
+  assert.equal(sessionStarts[0].options.modelProviderId, "deepseek");
+  assert.equal(sessionStarts[1].options.modelProviderId, "zai-coding-plan");
+  assert.equal(sessionStarts[1].options.apiKey, "zai-key-one");
+  assert.equal(harness.processStops.includes(sessionStarts[0].options), true);
+  assert.deepEqual(harness.switchedModels.at(-1), {
+    id: second.thread.id,
+    model: {
+      id: "glm-5.3",
+      providerID: "zai-coding-plan",
+      variant: "high"
+    }
+  });
   assert.equal(harness.createdSessions.filter((entry) => entry.id === first.thread.id).length, 1);
 });
 

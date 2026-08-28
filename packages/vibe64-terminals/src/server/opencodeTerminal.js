@@ -304,6 +304,21 @@ function openCodeMessageError(message = {}) {
   );
 }
 
+function openCodeCredentialFailure(value = "") {
+  const failure = text(value);
+  return (
+    /\b(?:401|403)\b/u.test(failure) ||
+    (
+      /(?:api[-_\s]?key|authentication|authorization|credential|access[-_\s]?token|unauthori[sz]ed|forbidden)/iu.test(failure) &&
+      /(?:denied|expired|failed|forbidden|incorrect|invalid|missing|rejected|revoked|unauthori[sz]ed)/iu.test(failure)
+    )
+  );
+}
+
+function openCodeCredentialFailureNoticeMessage() {
+  return "OpenCode needs attention: the selected provider rejected its API key, which may have expired or been revoked. [Open AI Accounts](/app/manage/accounts) to replace and verify the key, then return here and send your message again. Saved project changes remain.";
+}
+
 function lastAssistantResult(value = null) {
   const message = [...openCodeMessageRows(value)]
     .reverse()
@@ -839,6 +854,22 @@ function createOpenCodeTerminalController({
     return { failure };
   }
 
+  async function writeCredentialFailureNotice(context = {}, turn = {}) {
+    if (typeof context.runtime.store?.writeConversationSystemMessage !== "function") {
+      return null;
+    }
+    const written = await context.runtime.store.writeConversationSystemMessage(context.sessionId, {
+      messageId: `opencode-credential-failure-${fingerprint(
+        context.sessionId,
+        turn.threadId,
+        turn.id
+      )}`,
+      text: openCodeCredentialFailureNoticeMessage()
+    });
+    await publishConversationTurn(context, written, "opencode-credential-failure");
+    return written;
+  }
+
   async function writeRun(context = {}, turn = {}, state = VIBE64_AGENT_RUN_STATE.ACTIVE, error = "") {
     if (typeof context.runtime.store?.writeAgentRunEvent !== "function") {
       return null;
@@ -921,6 +952,7 @@ function createOpenCodeTerminalController({
       });
       let finalState = VIBE64_AGENT_RUN_STATE.COMPLETED;
       let failure = "";
+      let credentialFailure = false;
       try {
         const completion = await waitForOpenCodeMessages(
           target.server.client,
@@ -933,12 +965,14 @@ function createOpenCodeTerminalController({
         const projection = await writeConversationProjection(context, completion.messages);
         failure = projection.failure;
         if (failure) {
+          credentialFailure = openCodeCredentialFailure(failure);
           finalState = VIBE64_AGENT_RUN_STATE.FAILED;
         } else if (turn.interruptRequested) {
           finalState = VIBE64_AGENT_RUN_STATE.INTERRUPTED;
         }
       } catch (error) {
         failure = text(error?.message) || "OpenCode turn failed.";
+        credentialFailure = openCodeCredentialFailure(failure);
         finalState = target.abortController.signal.aborted
           ? VIBE64_AGENT_RUN_STATE.CANCELLED
           : VIBE64_AGENT_RUN_STATE.FAILED;
@@ -946,6 +980,15 @@ function createOpenCodeTerminalController({
         eventAbort.abort();
         await events;
         target.abortController.signal.removeEventListener("abort", abortEvents);
+        if (credentialFailure) {
+          failure = openCodeCredentialFailureNoticeMessage();
+          await writeCredentialFailureNotice(context, turn).catch((error) => {
+            vibe64SessionDebugLog("server.opencode.credential-notice.error", {
+              error: vibe64SessionDebugError(error),
+              sessionId: context.sessionId
+            });
+          });
+        }
         turn.active = false;
         turn.error = failure;
         turn.state = finalState;
