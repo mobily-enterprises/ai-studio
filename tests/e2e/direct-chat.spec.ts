@@ -122,6 +122,14 @@ test.describe("direct chat", () => {
     ));
     const initialHeight = await composerHeight();
 
+    await suggestion.hover();
+    await expect(composer).toHaveAttribute("placeholder", longPrompt);
+    await expect.poll(composerHeight).toBe(initialHeight);
+
+    await composer.hover();
+    await expect(composer).not.toHaveAttribute("placeholder", longPrompt);
+    await expect.poll(composerHeight).toBe(initialHeight);
+
     await suggestion.click();
 
     await expect(composer).toHaveValue(longPrompt);
