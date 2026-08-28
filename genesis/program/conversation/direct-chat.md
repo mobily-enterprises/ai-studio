@@ -57,6 +57,10 @@ replacement key.
 - `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity
   workspace-wide while carrying each session's directory and environment into
   its thread requests.
+- `withCodexAppServerProviderLifecycle()` serializes provider attachment,
+  replacement, and final-runtime shutdown so concurrent session closes make
+  one authoritative last-owner decision.
 - `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process
-  lifecycle; directory-scoped clients and `Vibe64SessionEnvironment` preserve
+  lifecycle. Established session targets and pending starts both retain that
+  process; directory-scoped clients and `Vibe64SessionEnvironment` preserve
   each session's working and command boundary.
