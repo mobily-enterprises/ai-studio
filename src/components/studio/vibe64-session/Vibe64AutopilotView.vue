@@ -279,6 +279,7 @@
           :hint="composerAccessHint"
           persistent-hint
           :placeholder="composerPromptHintPlaceholder"
+          :placeholder-affects-height="!composerPromptHintPreview"
           :rows="numberedQuestions.length ? 1 : 2"
           :session-id="sessionId"
           :submit-enabled="composerCanSubmit"
@@ -1053,12 +1054,15 @@ const {
   sessionId,
   sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
 });
-const composerPromptHintPlaceholder = computed(() => (
+const composerPromptHintPreview = computed(() => (
   promptHintsVisible.value &&
   !String(composerDraft.value || "").trim() &&
   promptHintPreview.value
     ? promptHintPreview.value
-    : composerPlaceholder.value
+    : ""
+));
+const composerPromptHintPlaceholder = computed(() => (
+  composerPromptHintPreview.value || composerPlaceholder.value
 ));
 const composerSupportStatusVisible = computed(() => Boolean(
   composerAssistantLabel.value || promptHintsVisible.value

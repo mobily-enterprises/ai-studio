@@ -160,6 +160,10 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
+  placeholderAffectsHeight: {
+    default: true,
+    type: Boolean
+  },
   placeholder: {
     default: "",
     type: String
@@ -254,6 +258,9 @@ function resizeTextarea() {
   }
   const textarea = textareaRef.value;
   if (!textarea) {
+    return;
+  }
+  if (!props.placeholderAffectsHeight && !textarea.value) {
     return;
   }
   const style = window.getComputedStyle(textarea);
@@ -422,6 +429,7 @@ watch(() => [
   props.autoGrow,
   props.modelValue,
   props.placeholder,
+  props.placeholderAffectsHeight,
   props.rows
 ], (values, previousValues = []) => {
   const modelValueChanged = values[1] !== previousValues[1];
