@@ -27,23 +27,41 @@
       "description": "People work with the coding agent through one ordinary project conversation,\nincluding follow-up guidance while a turn is active.",
       "districtId": "subsystem:conversation",
       "id": "operation:conversation/direct-chat",
-      "implementationMap": "",
+      "implementationMap": "- `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity\n  workspace-wide while carrying each session's directory and environment into\n  its thread requests.\n- `withCodexAppServerProviderLifecycle()` serializes provider attachment,\n  replacement, and final-runtime shutdown so concurrent session closes make\n  one authoritative last-owner decision.\n- `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process\n  lifecycle. Established session targets and pending starts both retain that\n  process; directory-scoped clients and `Vibe64SessionEnvironment` preserve\n  each session's working and command boundary.",
       "name": "direct-chat",
       "path": "genesis/program/conversation/direct-chat.md",
-      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
+      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nMessage delivery and provider work remain visibly distinct. The composer shows\nthe initial send while the message is being accepted, then reports the selected\nassistant as working for the rest of the active turn. The session tab and\nassistant avatar use that same live turn state until completion or interruption.\nOpen sessions in one workspace share a single running Codex service and a\nsingle running OpenCode service according to the assistant each session has\nselected. Codex and OpenCode remain independent: a provider service runs while\nat least one matching session is open and stops after the final matching\nsession closes. Conversation identity, working directory, command environment,\nmodel settings, and provider history remain session-specific even though the\nresident provider process is shared. Capability discovery without an open\nsession may run a bounded command but does not leave another provider service\nrunning.\nContextual prompt suggestions may preview their full text in an otherwise empty\ncomposer without modifying the draft. Showing or hiding that preview preserves\nthe composer's geometry, while text the person actually enters still grows the\ncomposer normally. Selecting a suggestion inserts ordinary editable text.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
       "sourceFileIds": [
         "file:packages/vibe64-sessions/src/server/service.js",
+        "file:packages/vibe64-runtime/src/server/codexAppServerProvider.js",
         "file:packages/vibe64-terminals/src/server/codexTerminal.js",
+        "file:packages/vibe64-terminals/src/server/opencodeServerClient.js",
+        "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
+        "file:packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js",
         "file:packages/vibe64-terminals/src/server/opencodeTerminal.js",
+        "file:packages/vibe64-terminals/src/server/sessionPromptHints.js",
         "file:src/composables/useVibe64AutopilotView.js",
-        "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
+        "file:src/composables/useVibe64PromptHints.js",
+        "file:src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue",
+        "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
+        "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue",
+        "file:src/components/studio/vibe64-session/Vibe64PromptHints.vue"
       ],
       "sources": [
         "packages/vibe64-sessions/src/server/service.js",
+        "packages/vibe64-runtime/src/server/codexAppServerProvider.js",
         "packages/vibe64-terminals/src/server/codexTerminal.js",
+        "packages/vibe64-terminals/src/server/opencodeServerClient.js",
+        "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
+        "packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js",
         "packages/vibe64-terminals/src/server/opencodeTerminal.js",
+        "packages/vibe64-terminals/src/server/sessionPromptHints.js",
         "src/composables/useVibe64AutopilotView.js",
-        "src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
+        "src/composables/useVibe64PromptHints.js",
+        "src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue",
+        "src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
+        "src/components/studio/vibe64-session/Vibe64ConversationLog.vue",
+        "src/components/studio/vibe64-session/Vibe64PromptHints.vue"
       ],
       "subsystem": "conversation",
       "title": "Direct agent conversation"
@@ -55,14 +73,24 @@
       "implementationMap": "",
       "name": "temporary-assistance",
       "path": "genesis/program/conversation/temporary-assistance.md",
-      "publicContract": "Each temporary task has its own model settings, optional attachments, message\nstream, and explicit read-only or workspace-writing policy. Temporary tasks do\nnot offer preview, console, or network diagnostic attachments and are visually\ndistinct from the durable project conversation. Closing a task stops its live\nturn, deletes its provider conversation and exact uploaded attachments, and\nremoves its browser-local state. Tasks are not restored after reload and never\nappear in session History.",
+      "publicContract": "Each temporary task has its own model settings, optional attachments, message\nstream, and explicit read-only or workspace-writing policy. Temporary tasks do\nnot offer preview, console, or network diagnostic attachments and are visually\ndistinct from the durable project conversation. Closing a task stops its live\nturn, deletes its provider conversation and exact uploaded attachments, and\nremoves its browser-local state. Tasks are not restored after reload and never\nappear in session History.\nTemporary and lightweight helper conversations use the parent session's\nselected Codex or OpenCode service and its bounded low-cost execution profile.\nThey remain isolated provider conversations with the same session directory and\ncommand boundary, but they do not start or retain a second resident assistant\nservice.",
       "sourceFileIds": [
+        "file:packages/vibe64-runtime/src/server/codexAppServerProvider.js",
+        "file:packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js",
+        "file:packages/vibe64-terminals/src/server/codexEconomyThreadLedger.js",
         "file:packages/vibe64-terminals/src/server/codexTerminal.js",
+        "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
+        "file:packages/vibe64-terminals/src/server/opencodeTerminal.js",
         "file:src/composables/useVibe64TemporaryAi.js",
         "file:src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
       ],
       "sources": [
+        "packages/vibe64-runtime/src/server/codexAppServerProvider.js",
+        "packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js",
+        "packages/vibe64-terminals/src/server/codexEconomyThreadLedger.js",
         "packages/vibe64-terminals/src/server/codexTerminal.js",
+        "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
+        "packages/vibe64-terminals/src/server/opencodeTerminal.js",
         "src/composables/useVibe64TemporaryAi.js",
         "src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
       ],
@@ -286,7 +314,7 @@
       "description": "People can deliberately publish the complete current session work to the\nproject's configured source authority without asking the coding agent to run\nGit commands.",
       "districtId": "subsystem:source",
       "id": "operation:source/save-work",
-      "implementationMap": "- `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,\n  non-advertised worktree checkpoints without changing the user's index.\n- `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes\n  canonical source mutations across processes.",
+      "implementationMap": "- `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,\n  non-advertised worktree checkpoints without changing the user's index.\n- `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes\n  canonical source mutations across processes.\n- `scopedSessionWorkCommand()` assigns one semantic operation identity plus\n  project and session ownership to the commands used by inspection, update,\n  Save, and recovery so a host can present the work as one attributable activity.",
       "name": "save-work",
       "path": "genesis/program/source/save-work.md",
       "publicContract": "Save captures tracked, staged, unstaged, and relevant untracked session work,\npreserves non-conflicting canonical changes, and publishes one ordinary commit\nto the exact configured GitHub, managed-Git, or local-source authority. It\nrefuses ambiguous authority, overlapping sibling work, conflicting changes,\ndirty local authority, or a moving canonical branch. Progress and bounded\ncommand output remain visible across reloads. A verified publication advances\nthe session baseline and preserves any later session edits; an interrupted Save\nis reconciled only when the canonical authority proves the prepared commit was\nalready published.",
@@ -411,7 +439,27 @@
     {
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-runtime/src/server/codexAppServerProvider.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/codexTerminal.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/opencodeServerClient.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js"
     },
     {
       "fromId": "operation:conversation/direct-chat",
@@ -421,7 +469,27 @@
     {
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/sessionPromptHints.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
       "toId": "file:src/composables/useVibe64AutopilotView.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64PromptHints.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
     },
     {
       "fromId": "operation:conversation/direct-chat",
@@ -429,9 +497,39 @@
       "toId": "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
     },
     {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64PromptHints.vue"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-runtime/src/server/codexAppServerProvider.js"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/codexEconomyThreadLedger.js"
+    },
+    {
       "fromId": "operation:conversation/temporary-assistance",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/codexTerminal.js"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js"
+    },
+    {
+      "fromId": "operation:conversation/temporary-assistance",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/opencodeTerminal.js"
     },
     {
       "fromId": "operation:conversation/temporary-assistance",
@@ -669,7 +767,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:3ed2f921ad88a457eec77240ea4e754c042b14e63603cab8d2bd67b1163053e8",
+  "programHash": "sha256:75d43e709ef5183018a7440845e37e337e2a0fed267d7b59f3c7e2177c7baba9",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"
