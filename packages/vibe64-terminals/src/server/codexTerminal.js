@@ -2035,13 +2035,11 @@ function createCodexTerminalController({
   }
 
   function codexAppServerRuntimeOptions({
-    project = {},
     runtimeDir = "",
     session = {},
     executionRoot = "",
     terminalEnv = {},
     toolHomeSource = "",
-    userKey = "",
     workdir = ""
   } = {}) {
     const runtimeContext = codexRuntimeForTerminalEnv({
@@ -2067,36 +2065,11 @@ function createCodexTerminalController({
       terminalEnv: {},
       threadEnv: runtimeContext.terminalProcessEnv,
       threadExecutionRoot: normalizeText(executionRoot),
-      threadProject: project,
-      threadSession: session,
-      threadUserKey: normalizeText(userKey),
       threadWorkdir: normalizeText(workdir),
       toolHomeSource: runtimeContext.toolHomeSource,
       userKey: "",
       workdir: ""
     };
-  }
-
-  function codexAppServerProjectContext(terminalEnv = {}) {
-    return {
-      slug: normalizeText(currentProjectRequestContext()?.slug),
-      tenant: normalizeText(terminalEnv.VIBE64_RUNTIME_NAMESPACE || terminalEnv.VIBE64_WORKSPACE),
-      workspace: normalizeText(terminalEnv.VIBE64_WORKSPACE || terminalEnv.VIBE64_RUNTIME_NAMESPACE)
-    };
-  }
-
-  function codexAppServerSessionRequestContext(session = {}, {
-    executionRoot = ""
-  } = {}) {
-    return {
-      metadata: isRecord(session.metadata) ? session.metadata : {},
-      sessionId: normalizeText(session.sessionId || session.id),
-      sourcePath: normalizeText(executionRoot)
-    };
-  }
-
-  function codexAppServerUserKey(session = {}) {
-    return normalizeText(session.metadata?.session_git_command_actor_user_key);
   }
 
   async function codexAppServerRuntimeOptionsForSession(session = {}, {
@@ -2138,15 +2111,11 @@ function createCodexTerminalController({
       ? metadataRuntimeDir
       : "";
     return codexAppServerRuntimeOptions({
-      project: codexAppServerProjectContext(effectiveTerminalEnv),
       runtimeDir: normalizeText(runtimeDir) || reusableMetadataRuntimeDir || expectedRuntimeDir,
-      session: codexAppServerSessionRequestContext(session, {
-        executionRoot: effectiveExecutionRoot
-      }),
+      session,
       executionRoot: effectiveExecutionRoot,
       terminalEnv: effectiveTerminalEnv,
       toolHomeSource,
-      userKey: codexAppServerUserKey(session),
       workdir: effectiveWorkdir
     });
   }
@@ -3111,8 +3080,7 @@ function createCodexTerminalController({
 
   async function stopCachedCodexAppServerProvider(providerKey = "", {
     preserveProcessExitProof = false,
-    requireStopped = false,
-    stopSharedRuntime = false
+    requireStopped = false
   } = {}) {
     const normalizedProviderKey = normalizeText(providerKey);
     const provider = codexAppServerProviders.get(normalizedProviderKey);
@@ -3126,8 +3094,8 @@ function createCodexTerminalController({
     assertCodexAppServerEconomyThreadsRetired(
       await retireCodexAppServerEconomyThreads({ provider })
     );
-    const sharedProcessRetained = !stopSharedRuntime &&
-      [...codexAppServerProviders.keys()].some((key) => key !== normalizedProviderKey);
+    const sharedProcessRetained = [...codexAppServerProviders.keys()]
+      .some((key) => key !== normalizedProviderKey);
     if (sharedProcessRetained) {
       closeCodexAppServerProvider(normalizedProviderKey);
       return {
@@ -3222,8 +3190,6 @@ function createCodexTerminalController({
     return codexAppServerRuntimeOptions({
       ...fallbackOptions,
       runtimeDir,
-      runtimeInstanceId: normalizeText(session.sessionId || session.id) ||
-        normalizeText(fallbackOptions.runtimeInstanceId),
       executionRoot: metadataExecutionRoot,
       workdir: metadataWorkdir
     });

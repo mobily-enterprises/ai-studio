@@ -582,14 +582,14 @@ function createOpenCodeTerminalController({
     return {
       cacheRoot: path.join(root, "cache"),
       dbPath: path.join(root, "opencode.db"),
-      privateRoot: path.join(root, `private-${randomUUID()}`),
       registryPath: path.join(root, "session-environments.json"),
       root,
       workdir: path.join(root, "workspace")
     };
   }
 
-  async function writeSessionEnvironmentRegistry(registryPath = sharedRoots().registryPath) {
+  async function writeSessionEnvironmentRegistry() {
+    const { registryPath } = sharedRoots();
     await mkdir(path.dirname(registryPath), { mode: 0o700, recursive: true });
     const temporaryPath = `${registryPath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify({
@@ -629,19 +629,12 @@ function createOpenCodeTerminalController({
     return resolved.filter(Boolean);
   }
 
-  async function startServer({ connections = [], execution = {} } = {}) {
-    const roots = sharedRoots();
-    await writeSessionEnvironmentRegistry(roots.registryPath);
-    return createServerProcess({
-      cacheRoot: roots.cacheRoot,
-      command,
-      dbPath: roots.dbPath,
-      env,
-      execution,
-      privateRoot: roots.privateRoot,
-      providerConnections: connections,
-      sessionEnvironmentRegistry: roots.registryPath,
-      workdir: roots.workdir
+  function openCodeServerForDirectory(server = {}, workdir = "") {
+    return Object.freeze({
+      ...server,
+      client: typeof server.client?.forDirectory === "function"
+        ? server.client.forDirectory(workdir)
+        : server.client
     });
   }
 
@@ -687,13 +680,22 @@ function createOpenCodeTerminalController({
     }
     sharedProcessStart = Promise.resolve().then(async () => {
       const connections = await configuredConnections(context, options, selected);
-      const server = await startServer({
-        connections,
+      const roots = sharedRoots();
+      await writeSessionEnvironmentRegistry();
+      const server = await createServerProcess({
+        cacheRoot: roots.cacheRoot,
+        command,
+        dbPath: roots.dbPath,
+        env,
         execution: {
           label: "OpenCode assistant",
           operationId: "opencode-server",
           ownerId: "opencode"
-        }
+        },
+        privateRoot: path.join(roots.root, `private-${randomUUID()}`),
+        providerConnections: connections,
+        sessionEnvironmentRegistry: roots.registryPath,
+        workdir: roots.workdir
       });
       sharedProcess = {
         connections: new Map(connections.map((connection) => [
@@ -706,12 +708,7 @@ function createOpenCodeTerminalController({
         server
       };
       for (const target of processes.values()) {
-        target.server = Object.freeze({
-          ...server,
-          client: typeof server.client.forDirectory === "function"
-            ? server.client.forDirectory(target.workdir)
-            : server.client
-        });
+        target.server = openCodeServerForDirectory(server, target.workdir);
       }
       return sharedProcess;
     });
@@ -901,12 +898,7 @@ function createOpenCodeTerminalController({
         ...context.selection,
         catalogRevision: currentCapabilities.revision
       });
-      const server = Object.freeze({
-        ...shared.server,
-        client: typeof shared.server.client.forDirectory === "function"
-          ? shared.server.client.forDirectory(context.workdir)
-          : shared.server.client
-      });
+      const server = openCodeServerForDirectory(shared.server, context.workdir);
       const existing = processes.get(context.key);
       const created = existing || {
         abortController: new AbortController(),

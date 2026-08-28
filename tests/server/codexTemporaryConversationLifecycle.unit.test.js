@@ -2872,8 +2872,8 @@ test("two Codex sessions retain one shared runtime until the final session close
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(providers.length, 2);
     assert.equal(providers[0].options.runtimeDir, providers[1].options.runtimeDir);
-    assert.equal(providers[0].options.threadSession.sessionId, firstSession.sessionId);
-    assert.equal(providers[1].options.threadSession.sessionId, secondSession.sessionId);
+    assert.equal(providers[0].options.threadWorkdir, firstSession.metadata.source_path);
+    assert.equal(providers[1].options.threadWorkdir, secondSession.metadata.source_path);
     assert.deepEqual(providers.map(({ options }) => options.session), [{}, {}]);
 
     await controller.closeAllForSession(firstSession.sessionId);
@@ -4056,7 +4056,7 @@ test("non-shutdown runtime invalidation keeps the controller reusable", async ()
   });
 });
 
-test("the shared Codex runtime stays workspace-wide while its thread keeps the project slug", async () => {
+test("the shared Codex runtime stays workspace-wide while its thread keeps the session directory", async () => {
   await withAgentMessageController(async ({ captures, controller, runtime, sessionId }) => {
     const prepared = await runWithProjectRequestContext({
       slug: "assistant-project",
@@ -4065,7 +4065,11 @@ test("the shared Codex runtime stays workspace-wide while its thread keeps the p
 
     assert.equal(prepared.ok, true, JSON.stringify(prepared));
     assert.deepEqual(captures.providerOptions[0].project, {});
-    assert.equal(captures.providerOptions[0].threadProject.slug, "assistant-project");
+    assert.deepEqual(captures.providerOptions[0].session, {});
+    assert.equal(
+      captures.threadStarts[0].cwd,
+      (await runtime.getSession(sessionId)).metadata.source_path
+    );
   });
 });
 
