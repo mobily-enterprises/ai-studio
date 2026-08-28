@@ -31,6 +31,11 @@ reply remains ordinary conversation text.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
 
+Message delivery and provider work remain visibly distinct. The composer shows
+the initial send while the message is being accepted, then reports the selected
+assistant as working for the rest of the active turn. The session tab and
+assistant avatar use that same live turn state until completion or interruption.
+
 Open sessions in one workspace share a single running Codex service and a
 single running OpenCode service according to the assistant each session has
 selected. Codex and OpenCode remain independent: a provider service runs while

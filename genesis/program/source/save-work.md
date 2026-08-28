@@ -28,3 +28,6 @@ already published.
   non-advertised worktree checkpoints without changing the user's index.
 - `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes
   canonical source mutations across processes.
+- `scopedSessionWorkCommand()` assigns one semantic operation identity plus
+  project and session ownership to the commands used by inspection, update,
+  Save, and recovery so a host can present the work as one attributable activity.
