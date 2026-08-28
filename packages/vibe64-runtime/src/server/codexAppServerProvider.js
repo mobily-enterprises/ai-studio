@@ -14,6 +14,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
 import {
@@ -71,6 +72,9 @@ const CODEX_APP_SERVER_PROCESS_IDENTITY_PLATFORM = "linux-proc";
 const CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV = "VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN";
 const CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV = "VIBE64_CODEX_APP_SERVER_COMMAND_HASH";
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
+const CODEX_APP_SERVER_SESSION_COMMAND_HOOK_PATH = fileURLToPath(
+  new URL("./codexSessionCommandHook.js", import.meta.url)
+);
 const CODEX_APP_SERVER_INVALID_REQUEST_CODE = -32600;
 const CODEX_APP_SERVER_MODEL_CATALOG_ERROR_CODE = "vibe64_codex_model_catalog_invalid";
 const CODEX_APP_SERVER_MODEL_CATALOG_PAGE_LIMIT = 100;
@@ -1591,11 +1595,20 @@ function codexAppServerControlGeneration(terminalEnv = {}) {
   const generations = [
     normalized.VIBE64_CODEX_GIT_COMMAND_GENERATION,
     normalized.VIBE64_AGENT_ENV_COMMAND_GENERATION,
-    normalized.VIBE64_AGENT_PREVIEW_COMMAND_GENERATION
+    normalized.VIBE64_AGENT_PREVIEW_COMMAND_GENERATION,
+    normalized.VIBE64_AGENT_SESSION_COMMAND_GENERATION
   ].map(normalizeAgentText);
   return generations.every(Boolean)
     ? stableHash(JSON.stringify(generations))
     : "";
+}
+
+function codexAppServerSessionCommandHookConfig() {
+  const command = [
+    process.execPath,
+    CODEX_APP_SERVER_SESSION_COMMAND_HOOK_PATH
+  ].map(shellQuote).join(" ");
+  return `hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",command=${JSON.stringify(command)},timeout=30}]}]`;
 }
 
 function codexAppServerCommandBaseEnv({
@@ -2204,7 +2217,14 @@ async function startCodexAppServerProcess({
     force: true
   });
   const codexArgs = [
-    ...(economy ? [] : ["--dangerously-bypass-approvals-and-sandbox"]),
+    ...(economy ? [] : [
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--dangerously-bypass-hook-trust",
+      "-c",
+      "features.hooks=true",
+      "-c",
+      codexAppServerSessionCommandHookConfig()
+    ]),
     "-c",
     STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
     ...(projectTrustOverride

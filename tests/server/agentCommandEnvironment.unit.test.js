@@ -12,6 +12,7 @@ test("assistant engines share one complete session command environment", async (
     agentDatabaseCommand: service("database-service"),
     agentEnvCommand: service("environment-service"),
     agentPreviewCommand: service("preview-service"),
+    agentSessionCommand: service("session-command-service"),
     env: { LIVE_ENV: "yes" },
     gitCommand: service("git-service"),
     gitEnvironment: { ATTACHMENT_ENV: "yes" },
@@ -35,6 +36,10 @@ test("assistant engines share one complete session command environment", async (
       calls.push(["preview", input]);
       return { env: { PREVIEW_BOUNDARY: "ready" }, ok: true };
     },
+    prepareSessionCommand: async (input) => {
+      calls.push(["session", input]);
+      return { env: { SESSION_BOUNDARY: "ready" }, ok: true };
+    },
     project: { slug: "catalogue" },
     runtime: { stateRoot: "/managed/project-state" },
     sessionId: "session-1",
@@ -43,6 +48,7 @@ test("assistant engines share one complete session command environment", async (
 
   assert.deepEqual(calls.map(([name]) => name), [
     "git",
+    "session",
     "preview",
     "environment",
     "database"
@@ -57,7 +63,8 @@ test("assistant engines share one complete session command environment", async (
       DATABASE_BOUNDARY: "ready",
       ENV_BOUNDARY: "ready",
       GIT_BOUNDARY: "ready",
-      PREVIEW_BOUNDARY: "ready"
+      PREVIEW_BOUNDARY: "ready",
+      SESSION_BOUNDARY: "ready"
     },
     hostWrapperDir: "/managed/session-wrappers",
     ok: true,

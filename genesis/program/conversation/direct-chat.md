@@ -7,6 +7,9 @@ including follow-up guidance while a turn is active.
 
 - `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
+- `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
+- `packages/vibe64-terminals/src/server/agentCommandEnvironment.js`
+- `packages/vibe64-terminals/src/server/agentSessionCommand.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-terminals/src/server/opencodeServerClient.js`
 - `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
@@ -44,7 +47,9 @@ session closes. Conversation identity, working directory, command environment,
 model settings, and provider history remain session-specific even though the
 resident provider process is shared. Capability discovery without an open
 session may run a bounded command but does not leave another provider service
-running.
+running. Shell commands and any descendants they leave running are attributed
+to the originating project session rather than to the shared provider service,
+and closing that session drains those descendants.
 
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
@@ -69,3 +74,6 @@ replacement key.
   lifecycle. Established session targets and pending starts both retain that
   process; directory-scoped clients and `Vibe64SessionEnvironment` preserve
   each session's working and command boundary.
+- `prepareAgentSessionCommand()` publishes the authenticated session command
+  broker. Codex rewrites shell tools through its pre-tool hook, while OpenCode's
+  session environment plugin performs the equivalent rewrite before execution.

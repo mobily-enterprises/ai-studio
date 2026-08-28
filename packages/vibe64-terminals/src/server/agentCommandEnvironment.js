@@ -10,6 +10,9 @@ import {
   prepareAgentPreviewCommand
 } from "./agentPreviewCommand.js";
 import {
+  prepareAgentSessionCommand
+} from "./agentSessionCommand.js";
+import {
   prepareCodexGitCommand
 } from "./codexGitCommand.js";
 
@@ -32,6 +35,7 @@ async function prepareAgentSessionCommandEnvironment({
   agentDatabaseCommand = null,
   agentEnvCommand = null,
   agentPreviewCommand = null,
+  agentSessionCommand = null,
   env = process.env,
   gitCommand = null,
   gitEnvironment = env,
@@ -39,6 +43,7 @@ async function prepareAgentSessionCommandEnvironment({
   prepareEnvironmentCommand = prepareAgentEnvCommand,
   prepareGitCommand = prepareCodexGitCommand,
   preparePreviewCommand = prepareAgentPreviewCommand,
+  prepareSessionCommand = prepareAgentSessionCommand,
   project = {},
   runtime = null,
   sessionId = "",
@@ -64,6 +69,14 @@ async function prepareAgentSessionCommandEnvironment({
   }
   const steps = [{ name: "Git", result: git }];
   const optionalSteps = await Promise.all([
+    agentSessionCommand ? prepareSessionCommand({
+      commandService: agentSessionCommand,
+      sessionId: normalizedSessionId,
+      wrapperHostDir: git.hostWrapperDir
+    }).then((result) => ({
+      name: "shell execution",
+      result
+    })) : null,
     agentPreviewCommand ? preparePreviewCommand({
       commandService: agentPreviewCommand,
       env,

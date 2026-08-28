@@ -516,6 +516,7 @@ function createOpenCodeTerminalController({
   agentDatabaseCommand = null,
   agentEnvCommand = null,
   agentPreviewCommand = null,
+  agentSessionCommand = null,
   codexGitCommand = null,
   command = "opencode",
   createServerProcess = createOpenCodeServerProcess,
@@ -822,6 +823,7 @@ function createOpenCodeTerminalController({
       agentDatabaseCommand,
       agentEnvCommand,
       agentPreviewCommand,
+      agentSessionCommand,
       env,
       gitCommand: codexGitCommand,
       project,
@@ -886,6 +888,7 @@ function createOpenCodeTerminalController({
         pathEntries: commands.shimDirs,
         projectContextRoot: path.resolve(context.runtime.projectContextRoot),
         sessionId: context.sessionId,
+        upstreamSessionId: upstreamSessionId(context.runtime.stateRoot, context.sessionId),
         workdir: context.workdir
       });
       await writeSessionEnvironmentRegistry();

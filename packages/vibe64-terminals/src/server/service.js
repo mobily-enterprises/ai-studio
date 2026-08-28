@@ -13,6 +13,7 @@ import process from "node:process";
 import { createAgentEnvCommandService } from "./agentEnvCommand.js";
 import { createAgentDatabaseCommandService } from "./agentDatabaseCommand.js";
 import { createAgentPreviewCommandService } from "./agentPreviewCommand.js";
+import { createAgentSessionCommandService } from "./agentSessionCommand.js";
 import { createCodexGitCommandService } from "./codexGitCommand.js";
 import {
   checkSessionUpdates as checkManagedSessionUpdates,
@@ -448,11 +449,16 @@ function createService({
     logger,
     projectService
   });
+  const agentSessionCommand = createAgentSessionCommandService({
+    logger,
+    projectService
+  });
   const codex = createCodexTerminalController({
     ...codexTerminalController,
     agentDatabaseCommand,
     agentEnvCommand,
     agentPreviewCommand,
+    agentSessionCommand,
     codexAppServerProviderOptions: selfTargetCodexAppServerProviderOptions({
       codexTerminalController,
       env
@@ -469,6 +475,7 @@ function createService({
     agentDatabaseCommand,
     agentEnvCommand,
     agentPreviewCommand,
+    agentSessionCommand,
     codexGitCommand,
     command: opencodeTerminalController.command || env.VIBE64_OPENCODE_COMMAND || "opencode",
     env,
@@ -1025,6 +1032,7 @@ function createService({
       { controller: agentDatabaseCommand, label: "agentDatabase" },
       { controller: agentEnvCommand, label: "agentEnv" },
       { controller: agentPreviewCommand, label: "agentPreview" },
+      { controller: agentSessionCommand, label: "agentSessionCommand" },
       { controller: outputTarget, label: "outputTarget" },
       {
         controller: {

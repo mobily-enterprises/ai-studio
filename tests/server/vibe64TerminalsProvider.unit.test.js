@@ -124,6 +124,9 @@ test("terminals feature creates the direct API from runtime env", async () => {
         [VIBE64_SERVICE_DATA_ROOT_ENV]: serviceDataRoot
       },
       project: {
+        createSessionStore() {
+          return {};
+        },
         async createRuntime() {
           return { adapter: {}, projectConfig: {}, stateRoot: runtimeRoot };
         },
@@ -191,6 +194,9 @@ test("personal Codex access blocks a member before authentication starts", async
         [VIBE64_SERVICE_DATA_ROOT_ENV]: path.join(root, "services")
       },
       project: {
+        createSessionStore() {
+          return {};
+        },
         async createRuntime() {
           return { adapter: {}, projectConfig: {}, stateRoot: runtimeRoot };
         },
@@ -250,6 +256,9 @@ test("session source creation holds the project source mutation lock while it re
       }
     });
     const project = {
+      createSessionStore() {
+        return {};
+      },
       async createRuntime() {
         return { adapter: {}, projectConfig: {}, stateRoot: runtimeRoot };
       },

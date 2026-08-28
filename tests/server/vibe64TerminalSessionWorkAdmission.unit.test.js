@@ -149,6 +149,9 @@ async function terminalServiceFixture(t, lock, {
     }
   };
   const projectService = {
+    createSessionStore() {
+      return {};
+    },
     createRuntime() {
       return runtime;
     },
@@ -325,6 +328,9 @@ test("workspace setup reuses an already-held session agent-write lock", async (t
     store
   };
   const projectService = {
+    createSessionStore() {
+      return store;
+    },
     createRuntime() {
       return runtime;
     },
@@ -459,6 +465,9 @@ test("renewal workspace setup privately resumes a pending successor while public
     store
   };
   const projectService = {
+    createSessionStore() {
+      return store;
+    },
     createRuntime() {
       return runtime;
     },

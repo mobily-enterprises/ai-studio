@@ -27,13 +27,16 @@
       "description": "People work with the coding agent through one ordinary project conversation,\nincluding follow-up guidance while a turn is active.",
       "districtId": "subsystem:conversation",
       "id": "operation:conversation/direct-chat",
-      "implementationMap": "- `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity\n  workspace-wide while carrying each session's directory and environment into\n  its thread requests.\n- `withCodexAppServerProviderLifecycle()` serializes provider attachment,\n  replacement, and final-runtime shutdown so concurrent session closes make\n  one authoritative last-owner decision.\n- `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process\n  lifecycle. Established session targets and pending starts both retain that\n  process; directory-scoped clients and `Vibe64SessionEnvironment` preserve\n  each session's working and command boundary.",
+      "implementationMap": "- `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity\n  workspace-wide while carrying each session's directory and environment into\n  its thread requests.\n- `withCodexAppServerProviderLifecycle()` serializes provider attachment,\n  replacement, and final-runtime shutdown so concurrent session closes make\n  one authoritative last-owner decision.\n- `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process\n  lifecycle. Established session targets and pending starts both retain that\n  process; directory-scoped clients and `Vibe64SessionEnvironment` preserve\n  each session's working and command boundary.\n- `prepareAgentSessionCommand()` publishes the authenticated session command\n  broker. Codex rewrites shell tools through its pre-tool hook, while OpenCode's\n  session environment plugin performs the equivalent rewrite before execution.",
       "name": "direct-chat",
       "path": "genesis/program/conversation/direct-chat.md",
-      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nMessage delivery and provider work remain visibly distinct. The composer shows\nthe initial send while the message is being accepted, then reports the selected\nassistant as working for the rest of the active turn. The session tab and\nassistant avatar use that same live turn state until completion or interruption.\nOpen sessions in one workspace share a single running Codex service and a\nsingle running OpenCode service according to the assistant each session has\nselected. Codex and OpenCode remain independent: a provider service runs while\nat least one matching session is open and stops after the final matching\nsession closes. Conversation identity, working directory, command environment,\nmodel settings, and provider history remain session-specific even though the\nresident provider process is shared. Capability discovery without an open\nsession may run a bounded command but does not leave another provider service\nrunning.\nContextual prompt suggestions may preview their full text in an otherwise empty\ncomposer without modifying the draft. Showing or hiding that preview preserves\nthe composer's geometry, while text the person actually enters still grows the\ncomposer normally. Selecting a suggestion inserts ordinary editable text.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
+      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nMessage delivery and provider work remain visibly distinct. The composer shows\nthe initial send while the message is being accepted, then reports the selected\nassistant as working for the rest of the active turn. The session tab and\nassistant avatar use that same live turn state until completion or interruption.\nOpen sessions in one workspace share a single running Codex service and a\nsingle running OpenCode service according to the assistant each session has\nselected. Codex and OpenCode remain independent: a provider service runs while\nat least one matching session is open and stops after the final matching\nsession closes. Conversation identity, working directory, command environment,\nmodel settings, and provider history remain session-specific even though the\nresident provider process is shared. Capability discovery without an open\nsession may run a bounded command but does not leave another provider service\nrunning. Shell commands and any descendants they leave running are attributed\nto the originating project session rather than to the shared provider service,\nand closing that session drains those descendants.\nContextual prompt suggestions may preview their full text in an otherwise empty\ncomposer without modifying the draft. Showing or hiding that preview preserves\nthe composer's geometry, while text the person actually enters still grows the\ncomposer normally. Selecting a suggestion inserts ordinary editable text.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
       "sourceFileIds": [
         "file:packages/vibe64-sessions/src/server/service.js",
         "file:packages/vibe64-runtime/src/server/codexAppServerProvider.js",
+        "file:packages/vibe64-runtime/src/server/codexSessionCommandHook.js",
+        "file:packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
+        "file:packages/vibe64-terminals/src/server/agentSessionCommand.js",
         "file:packages/vibe64-terminals/src/server/codexTerminal.js",
         "file:packages/vibe64-terminals/src/server/opencodeServerClient.js",
         "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
@@ -50,6 +53,9 @@
       "sources": [
         "packages/vibe64-sessions/src/server/service.js",
         "packages/vibe64-runtime/src/server/codexAppServerProvider.js",
+        "packages/vibe64-runtime/src/server/codexSessionCommandHook.js",
+        "packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
+        "packages/vibe64-terminals/src/server/agentSessionCommand.js",
         "packages/vibe64-terminals/src/server/codexTerminal.js",
         "packages/vibe64-terminals/src/server/opencodeServerClient.js",
         "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
@@ -444,6 +450,21 @@
     {
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-runtime/src/server/codexSessionCommandHook.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/agentCommandEnvironment.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/agentSessionCommand.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/codexTerminal.js"
     },
     {
@@ -767,7 +788,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:75d43e709ef5183018a7440845e37e337e2a0fed267d7b59f3c7e2177c7baba9",
+  "programHash": "sha256:bc84f1d037a73f7ea52b20c72a5edee0d3e94eb7e380595b3753e669f857034c",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

@@ -456,6 +456,9 @@ test("source explanations preserve one pre-resolved profile through the terminal
     });
     const terminalProjectService = {
       ...projectService,
+      createSessionStore() {
+        return {};
+      },
       async readCurrentProject() {
         return {
           projectContextRoot: projectService.createRuntime().projectContextRoot,
@@ -597,6 +600,9 @@ test("terminal renewal callbacks run inside the agent-write lock and hidden seed
     };
     const terminalProjectService = {
       ...projectService,
+      createSessionStore() {
+        return {};
+      },
       createRuntime() {
         return runtime;
       },

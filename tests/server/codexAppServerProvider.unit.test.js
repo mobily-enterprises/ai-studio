@@ -288,6 +288,25 @@ function managedCodexAppServerArgs(call = {}) {
   return call.args.slice(4);
 }
 
+function assertInteractiveCodexAppServerArgs(args = [], tail = []) {
+  assert.deepEqual(args.slice(0, 5), [
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust",
+    "-c",
+    "features.hooks=true",
+    "-c"
+  ]);
+  assert.match(
+    args[5],
+    /^hooks\.PreToolUse=\[\{matcher="\^Bash\$",hooks=\[\{type="command",command=.*codexSessionCommandHook\.js.*timeout=30\}\]\}\]$/u
+  );
+  assert.deepEqual(args.slice(6), [
+    "-c",
+    STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
+    ...tail
+  ]);
+}
+
 async function startOrphanedDetachedProcessGroup(directory) {
   const childPidPath = path.join(directory, "child.pid");
   const script = [
@@ -944,16 +963,10 @@ test("codex provider replaces a runtime whose socket exists but does not answer"
     assert.equal(commandCalls.length, 1);
     assert.equal(commandCalls[0].command, "/bin/sh");
     assert.equal(commandCalls[0].execution.label, "Codex assistant");
-    assert.deepEqual(commandCalls[0].args.slice(0, 8), [
-      "-c",
-      'umask 0007\nexec "$@"',
-      "vibe64-codex-app-server",
-      STUDIO_MANAGED_CODEX_COMMAND,
-      "--dangerously-bypass-approvals-and-sandbox",
-      "-c",
-      STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
-      "app-server"
-    ]);
+    assertInteractiveCodexAppServerArgs(
+      managedCodexAppServerArgs(commandCalls[0]),
+      ["app-server", "--listen", unixEndpointForRuntime(runtimeDir)]
+    );
     assert.equal(FirstErrorThenResponsiveFakeWebSocket.constructorCount, 3);
   });
 });
@@ -1062,20 +1075,16 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     assert.equal(runCall.mode, "detached");
     assert.equal(runCall.purpose, "codex");
     assert.equal(runCall.command, "/bin/sh");
-    assert.deepEqual(runCall.args, [
-      "-c",
-      'umask 0007\nexec "$@"',
-      "vibe64-codex-app-server",
-      STUDIO_MANAGED_CODEX_COMMAND,
-      "--dangerously-bypass-approvals-and-sandbox",
-      "-c",
-      STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
-      "-c",
-      `projects={${JSON.stringify(workdir)}={trust_level="trusted"}}`,
-      "app-server",
-      "--listen",
-      unixEndpointForRuntime(runtimeDir)
-    ]);
+    assertInteractiveCodexAppServerArgs(
+      managedCodexAppServerArgs(runCall),
+      [
+        "-c",
+        `projects={${JSON.stringify(workdir)}={trust_level="trusted"}}`,
+        "app-server",
+        "--listen",
+        unixEndpointForRuntime(runtimeDir)
+      ]
+    );
     assert.equal(runCall.cwd, workdir);
     assert.equal(runCall.logPath, path.join(runtimeDir, "app-server.log"));
     assert.equal(runCall.credentialHome.home, toolHomeSource);
@@ -2087,14 +2096,10 @@ test("codex provider starts a host-native app-server", async () => {
     assert.equal(runtime.reused, false);
     assert.equal(runtime.endpoint, unixEndpointForRuntime(runtimeDir));
     assert.equal(commandCalls.length, 1);
-    assert.deepEqual(managedCodexAppServerArgs(commandCalls[0]), [
-      "--dangerously-bypass-approvals-and-sandbox",
-      "-c",
-      STUDIO_MANAGED_CODEX_NO_UPDATE_CONFIG,
-      "app-server",
-      "--listen",
-      unixEndpointForRuntime(runtimeDir)
-    ]);
+    assertInteractiveCodexAppServerArgs(
+      managedCodexAppServerArgs(commandCalls[0]),
+      ["app-server", "--listen", unixEndpointForRuntime(runtimeDir)]
+    );
   });
 });
 
