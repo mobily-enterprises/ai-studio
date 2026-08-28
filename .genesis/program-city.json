@@ -30,16 +30,18 @@
       "implementationMap": "",
       "name": "direct-chat",
       "path": "genesis/program/conversation/direct-chat.md",
-      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.",
+      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
       "sourceFileIds": [
         "file:packages/vibe64-sessions/src/server/service.js",
         "file:packages/vibe64-terminals/src/server/codexTerminal.js",
+        "file:packages/vibe64-terminals/src/server/opencodeTerminal.js",
         "file:src/composables/useVibe64AutopilotView.js",
         "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
       ],
       "sources": [
         "packages/vibe64-sessions/src/server/service.js",
         "packages/vibe64-terminals/src/server/codexTerminal.js",
+        "packages/vibe64-terminals/src/server/opencodeTerminal.js",
         "src/composables/useVibe64AutopilotView.js",
         "src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
       ],
@@ -414,6 +416,11 @@
     {
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/opencodeTerminal.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
       "toId": "file:src/composables/useVibe64AutopilotView.js"
     },
     {
@@ -662,7 +669,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:bfb8be5bf76ca73ad9ec522587bf01d439482535afeb6cb7f799655fdca7972b",
+  "programHash": "sha256:3ed2f921ad88a457eec77240ea4e754c042b14e63603cab8d2bd67b1163053e8",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"
