@@ -1,6 +1,12 @@
 import crypto from "node:crypto";
 import http from "node:http";
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
+
+const DEAD_UNIX_COMMAND_SOCKET_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOENT",
+  "ENOTSOCK"
+]);
 
 function commandRequestError({
   code = "",
@@ -25,6 +31,100 @@ async function unixCommandSocketIsPresent(socketPath = "") {
   } catch {
     return false;
   }
+}
+
+async function unixJsonCommandServerIsHealthy(entry = {}, {
+  healthPath = "",
+  sessionId = "",
+  socketPath = "",
+  timeoutMs = 2000
+} = {}) {
+  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
+    return false;
+  }
+  try {
+    const response = await requestUnixJsonCommand({
+      body: {
+        generationId: entry.generationId,
+        sessionId,
+        token: entry.token
+      },
+      path: healthPath,
+      socketPath,
+      timeoutMs
+    });
+    return response.statusCode === 200 &&
+      response.payload?.ok === true &&
+      String(response.payload?.generationId || "").trim() === String(entry.generationId || "").trim() &&
+      String(response.payload?.sessionId || "").trim() === String(sessionId || "").trim();
+  } catch {
+    return false;
+  }
+}
+
+async function closeUnixJsonCommandServer(commandServers, socketPath = "", entry = null) {
+  if (entry?.server) {
+    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
+  }
+  if (commandServers.get(socketPath) === entry) {
+    commandServers.delete(socketPath);
+  }
+}
+
+async function closeUnixJsonCommandServersForSession(commandServers, sessionId = "") {
+  const normalizedSessionId = String(sessionId || "").trim();
+  let closed = 0;
+  for (const [socketPath, entryValue] of [...commandServers.entries()]) {
+    const entry = entryValue?.promise
+      ? await entryValue.promise.catch(() => null)
+      : entryValue;
+    if (String(entry?.sessionId || "").trim() !== normalizedSessionId) {
+      continue;
+    }
+    closed += entry?.server ? 1 : 0;
+    await closeUnixJsonCommandServer(commandServers, socketPath, entry);
+    await rm(socketPath, { force: true }).catch(() => null);
+  }
+  return closed;
+}
+
+async function removeDeadUnixJsonCommandSocket(socketPath = "", {
+  healthPath = "",
+  ownerErrorMessage = "The Unix command socket is owned by an unverified listener.",
+  timeoutMs = 2000
+} = {}) {
+  if (!await unixCommandSocketIsPresent(socketPath)) {
+    return;
+  }
+  try {
+    await requestUnixJsonCommand({
+      body: {},
+      path: healthPath,
+      socketPath,
+      timeoutMs
+    });
+  } catch (error) {
+    if (DEAD_UNIX_COMMAND_SOCKET_CODES.has(String(error?.code || ""))) {
+      await rm(socketPath, { force: true });
+      return;
+    }
+    throw error;
+  }
+  const error = new Error(ownerErrorMessage);
+  error.code = "vibe64_agent_control_owner_unverified";
+  throw error;
+}
+
+async function listenUnixJsonCommandServer(server, socketPath = "") {
+  await new Promise((resolve, reject) => {
+    const handleError = (error) => reject(error);
+    server.once("error", handleError);
+    server.listen(socketPath, () => {
+      server.off("error", handleError);
+      resolve();
+    });
+  });
+  server.unref?.();
 }
 
 function requestUnixJsonCommand({
@@ -117,9 +217,14 @@ function sendJsonCommandResponse(response, statusCode, payload = {}) {
 }
 
 export {
+  closeUnixJsonCommandServer,
+  closeUnixJsonCommandServersForSession,
+  listenUnixJsonCommandServer,
   readJsonCommandRequest,
+  removeDeadUnixJsonCommandSocket,
   requestUnixJsonCommand,
   sendJsonCommandResponse,
   shortCommandHash,
-  unixCommandSocketIsPresent
+  unixCommandSocketIsPresent,
+  unixJsonCommandServerIsHealthy
 };

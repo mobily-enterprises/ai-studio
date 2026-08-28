@@ -11,6 +11,39 @@ const VIBE64_AGENT_EXECUTION_WORKLOAD_IDS = Object.freeze({
   SOURCE_EXPLANATION: "source_explanation"
 });
 
+const VIBE64_AGENT_ECONOMY_WORKLOAD_LIMITS = Object.freeze({
+  [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.COMMIT_TITLE]: Object.freeze({
+    maxInputCharacters: 24_000,
+    maxOutputCharacters: 512,
+    timeoutMs: 30_000
+  }),
+  [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.CONVERSATION_SUMMARY]: Object.freeze({
+    maxInputCharacters: 200_000,
+    maxOutputCharacters: 16_000,
+    timeoutMs: 120_000
+  }),
+  [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.DATABASE_ASSISTANT]: Object.freeze({
+    maxInputCharacters: 500_000,
+    maxOutputCharacters: 16_000,
+    timeoutMs: 180_000
+  }),
+  [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.PROMPT_HINT]: Object.freeze({
+    maxInputCharacters: 24_000,
+    maxOutputCharacters: 2_500,
+    timeoutMs: 30_000
+  }),
+  [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SESSION_TITLE]: Object.freeze({
+    maxInputCharacters: 24_000,
+    maxOutputCharacters: 512,
+    timeoutMs: 30_000
+  }),
+  [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SOURCE_EXPLANATION]: Object.freeze({
+    maxInputCharacters: 100_000,
+    maxOutputCharacters: 32_000,
+    timeoutMs: 180_000
+  })
+});
+
 const VIBE64_AGENT_EXECUTION_TOOL_POLICIES = Object.freeze({
   NONE: "none"
 });
@@ -301,6 +334,7 @@ function vibe64AgentProviderSupportsExecutionProfile(provider, profileId) {
 }
 
 export {
+  VIBE64_AGENT_ECONOMY_WORKLOAD_LIMITS,
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_EXECUTION_PROFILE_LIMIT_CEILINGS,

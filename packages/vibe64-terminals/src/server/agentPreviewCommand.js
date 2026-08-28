@@ -30,11 +30,16 @@ import {
   writeExecutableFileIfChanged
 } from "./writeExecutableFileIfChanged.js";
 import {
+  closeUnixJsonCommandServer,
+  closeUnixJsonCommandServersForSession,
+  listenUnixJsonCommandServer,
   readJsonCommandRequest,
+  removeDeadUnixJsonCommandSocket,
   requestUnixJsonCommand,
   sendJsonCommandResponse,
   shortCommandHash,
-  unixCommandSocketIsPresent
+  unixCommandSocketIsPresent,
+  unixJsonCommandServerIsHealthy
 } from "./unixJsonCommand.js";
 
 const AGENT_PREVIEW_COMMAND_NAME = "vibe64-preview";
@@ -1425,86 +1430,10 @@ async function stopRegisteredBrowserWorkerForInput(sessionId = "", input = {}, {
 }
 
 async function closeAgentPreviewCommandServersForSession(sessionId = "") {
-  const normalizedSessionId = normalizeText(sessionId);
   await Promise.all([...commandServerPrepares.values()].map((preparation) => (
     preparation.catch(() => null)
   )));
-  for (const [socketPath, entryValue] of [...commandServers.entries()]) {
-    const entry = entryValue?.promise
-      ? await entryValue.promise.catch(() => null)
-      : entryValue;
-    if (normalizeText(entry?.sessionId) !== normalizedSessionId) {
-      continue;
-    }
-    if (entry?.server) {
-      await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
-    }
-    commandServers.delete(socketPath);
-    await rm(socketPath, {
-      force: true
-    }).catch(() => null);
-  }
-}
-
-async function agentPreviewCommandServerIsHealthy(entry = {}, {
-  sessionId = "",
-  socketPath = ""
-} = {}) {
-  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
-    return false;
-  }
-  try {
-    const response = await requestUnixJsonCommand({
-      body: {
-        generationId: entry.generationId,
-        sessionId,
-        token: entry.token
-      },
-      path: "/agent-preview-command/health",
-      socketPath,
-      timeoutMs: 2000
-    });
-    return response.statusCode === 200 &&
-      response.payload?.ok === true &&
-      normalizeText(response.payload?.generationId) === normalizeText(entry.generationId) &&
-      normalizeText(response.payload?.sessionId) === normalizeText(sessionId);
-  } catch {
-    return false;
-  }
-}
-
-async function closeAgentPreviewCommandServer(socketPath = "", entry = null) {
-  if (entry?.server) {
-    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
-  }
-  if (commandServers.get(socketPath) === entry) {
-    commandServers.delete(socketPath);
-  }
-}
-
-async function removeDeadAgentPreviewCommandSocket(socketPath = "") {
-  if (!await unixCommandSocketIsPresent(socketPath)) {
-    return;
-  }
-  try {
-    await requestUnixJsonCommand({
-      body: {},
-      path: "/agent-preview-command/health",
-      socketPath,
-      timeoutMs: 2000
-    });
-  } catch (error) {
-    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
-      await rm(socketPath, {
-        force: true
-      });
-      return;
-    }
-    throw error;
-  }
-  const error = new Error("The managed preview socket is owned by an unverified listener.");
-  error.code = "vibe64_agent_control_owner_unverified";
-  throw error;
+  return closeUnixJsonCommandServersForSession(commandServers, sessionId);
 }
 
 async function ensureAgentPreviewCommandServer({
@@ -1550,19 +1479,23 @@ async function ensureAgentPreviewCommandServerUnlocked({
   }
   if (
     existing?.commandService === commandService &&
-    await agentPreviewCommandServerIsHealthy(existing, {
+    await unixJsonCommandServerIsHealthy(existing, {
+      healthPath: "/agent-preview-command/health",
       sessionId,
       socketPath
     })
   ) {
     return existing;
   }
-  await closeAgentPreviewCommandServer(socketPath, existing);
+  await closeUnixJsonCommandServer(commandServers, socketPath, existing);
   const promise = (async () => {
     await mkdir(path.dirname(socketPath), {
       recursive: true
     });
-    await removeDeadAgentPreviewCommandSocket(socketPath);
+    await removeDeadUnixJsonCommandSocket(socketPath, {
+      healthPath: "/agent-preview-command/health",
+      ownerErrorMessage: "The managed preview socket is owned by an unverified listener."
+    });
     const token = commandServerToken({
       sessionId,
       socketPath,
@@ -1659,15 +1592,7 @@ async function ensureAgentPreviewCommandServerUnlocked({
         sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
       }
     });
-    await new Promise((resolve, reject) => {
-      const handleError = (error) => reject(error);
-      server.once("error", handleError);
-      server.listen(socketPath, () => {
-        server.off("error", handleError);
-        resolve();
-      });
-    });
-    server.unref?.();
+    await listenUnixJsonCommandServer(server, socketPath);
     const stored = {
       commandService,
       generationId,
@@ -1677,11 +1602,12 @@ async function ensureAgentPreviewCommandServerUnlocked({
       token
     };
     commandServers.set(socketPath, stored);
-    if (!await agentPreviewCommandServerIsHealthy(stored, {
+    if (!await unixJsonCommandServerIsHealthy(stored, {
+      healthPath: "/agent-preview-command/health",
       sessionId,
       socketPath
     })) {
-      await closeAgentPreviewCommandServer(socketPath, stored);
+      await closeUnixJsonCommandServer(commandServers, socketPath, stored);
       await rm(socketPath, {
         force: true
       }).catch(() => null);

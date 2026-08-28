@@ -37,11 +37,13 @@ import {
   writeExecutableFileIfChanged
 } from "./writeExecutableFileIfChanged.js";
 import {
+  closeUnixJsonCommandServer,
+  listenUnixJsonCommandServer,
   readJsonCommandRequest,
-  requestUnixJsonCommand,
+  removeDeadUnixJsonCommandSocket,
   sendJsonCommandResponse,
   shortCommandHash,
-  unixCommandSocketIsPresent
+  unixJsonCommandServerIsHealthy
 } from "./unixJsonCommand.js";
 
 const CODEX_GIT_COMMAND_DIR_NAME = "codex-git-command";
@@ -893,67 +895,6 @@ function commandServerToken({
   ].join("\n"));
 }
 
-async function codexGitCommandServerIsHealthy(entry = {}, {
-  sessionId = "",
-  socketPath = ""
-} = {}) {
-  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
-    return false;
-  }
-  try {
-    const response = await requestUnixJsonCommand({
-      body: {
-        generationId: entry.generationId,
-        sessionId,
-        token: entry.token
-      },
-      path: "/codex-git-command/health",
-      socketPath,
-      timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
-    });
-    return response.statusCode === 200 &&
-      response.payload?.ok === true &&
-      normalizeText(response.payload?.generationId) === normalizeText(entry.generationId) &&
-      normalizeText(response.payload?.sessionId) === normalizeText(sessionId);
-  } catch {
-    return false;
-  }
-}
-
-async function closeCodexGitCommandServer(socketPath = "", entry = null) {
-  if (entry?.server) {
-    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
-  }
-  if (commandServers.get(socketPath) === entry) {
-    commandServers.delete(socketPath);
-  }
-}
-
-async function removeDeadCodexGitCommandSocket(socketPath = "") {
-  if (!await unixCommandSocketIsPresent(socketPath)) {
-    return;
-  }
-  try {
-    await requestUnixJsonCommand({
-      body: {},
-      path: "/codex-git-command/health",
-      socketPath,
-      timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
-    });
-  } catch (error) {
-    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
-      await rm(socketPath, {
-        force: true
-      });
-      return;
-    }
-    throw error;
-  }
-  const error = new Error("The managed Git socket is owned by an unverified listener.");
-  error.code = "vibe64_agent_control_owner_unverified";
-  throw error;
-}
-
 async function replaceCodexGitCommandServer({
   commandService,
   sessionId = "",
@@ -961,11 +902,15 @@ async function replaceCodexGitCommandServer({
   stateRoot = ""
 } = {}) {
   const existing = commandServers.get(socketPath);
-  await closeCodexGitCommandServer(socketPath, existing);
+  await closeUnixJsonCommandServer(commandServers, socketPath, existing);
   await mkdir(path.dirname(socketPath), {
     recursive: true
   });
-  await removeDeadCodexGitCommandSocket(socketPath);
+  await removeDeadUnixJsonCommandSocket(socketPath, {
+    healthPath: "/codex-git-command/health",
+    ownerErrorMessage: "The managed Git socket is owned by an unverified listener.",
+    timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
+  });
   const token = commandServerToken({
     sessionId,
     socketPath,
@@ -1010,14 +955,7 @@ async function replaceCodexGitCommandServer({
       sendJsonCommandResponse(response, vibe64StatusCode(payload), payload);
     }
   });
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socketPath, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-  server.unref?.();
+  await listenUnixJsonCommandServer(server, socketPath);
   const stored = {
     commandService,
     generationId,
@@ -1027,11 +965,13 @@ async function replaceCodexGitCommandServer({
     token
   };
   commandServers.set(socketPath, stored);
-  if (!await codexGitCommandServerIsHealthy(stored, {
+  if (!await unixJsonCommandServerIsHealthy(stored, {
+    healthPath: "/codex-git-command/health",
     sessionId,
-    socketPath
+    socketPath,
+    timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
   })) {
-    await closeCodexGitCommandServer(socketPath, stored);
+    await closeUnixJsonCommandServer(commandServers, socketPath, stored);
     await rm(socketPath, {
       force: true
     }).catch(() => null);
@@ -1069,9 +1009,11 @@ async function ensureCodexGitCommandServer({
     const existing = commandServers.get(socketPath);
     if (
       existing?.commandService === commandService &&
-      await codexGitCommandServerIsHealthy(existing, {
+      await unixJsonCommandServerIsHealthy(existing, {
+        healthPath: "/codex-git-command/health",
         sessionId,
-        socketPath
+        socketPath,
+        timeoutMs: CODEX_GIT_COMMAND_HEALTH_TIMEOUT_MS
       })
     ) {
       return existing;

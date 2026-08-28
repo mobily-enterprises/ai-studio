@@ -28,11 +28,14 @@ import {
   writeExecutableFileIfChanged
 } from "./writeExecutableFileIfChanged.js";
 import {
+  closeUnixJsonCommandServer,
+  closeUnixJsonCommandServersForSession,
+  listenUnixJsonCommandServer,
   readJsonCommandRequest,
-  requestUnixJsonCommand,
+  removeDeadUnixJsonCommandSocket,
   sendJsonCommandResponse,
   shortCommandHash,
-  unixCommandSocketIsPresent
+  unixJsonCommandServerIsHealthy
 } from "./unixJsonCommand.js";
 
 const AGENT_ENV_COMMAND_NAME = "vibe64-env";
@@ -335,89 +338,10 @@ async function readRequestJson(request) {
 }
 
 async function closeAgentEnvCommandServersForSession(sessionId = "") {
-  const normalizedSessionId = normalizeText(sessionId);
   await Promise.all([...commandServerPrepares.values()].map((preparation) => (
     preparation.catch(() => null)
   )));
-  let closed = 0;
-  for (const [socketPath, entryValue] of [...commandServers.entries()]) {
-    const entry = entryValue?.promise
-      ? await entryValue.promise.catch(() => null)
-      : entryValue;
-    if (normalizeText(entry?.sessionId) !== normalizedSessionId) {
-      continue;
-    }
-    if (entry?.server) {
-      await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
-      closed += 1;
-    }
-    commandServers.delete(socketPath);
-    await rm(socketPath, {
-      force: true
-    }).catch(() => null);
-  }
-  return closed;
-}
-
-async function agentEnvCommandServerIsHealthy(entry = {}, {
-  sessionId = "",
-  socketPath = ""
-} = {}) {
-  if (!entry.server || !await unixCommandSocketIsPresent(socketPath)) {
-    return false;
-  }
-  try {
-    const response = await requestUnixJsonCommand({
-      body: {
-        generationId: entry.generationId,
-        sessionId,
-        token: entry.token
-      },
-      path: "/agent-env-command/health",
-      socketPath,
-      timeoutMs: 2000
-    });
-    return response.statusCode === 200 &&
-      response.payload?.ok === true &&
-      normalizeText(response.payload?.generationId) === normalizeText(entry.generationId) &&
-      normalizeText(response.payload?.sessionId) === normalizeText(sessionId);
-  } catch {
-    return false;
-  }
-}
-
-async function closeAgentEnvCommandServer(socketPath = "", entry = null) {
-  if (entry?.server) {
-    await new Promise((resolve) => entry.server.close(() => resolve())).catch(() => null);
-  }
-  if (commandServers.get(socketPath) === entry) {
-    commandServers.delete(socketPath);
-  }
-}
-
-async function removeDeadAgentEnvCommandSocket(socketPath = "") {
-  if (!await unixCommandSocketIsPresent(socketPath)) {
-    return;
-  }
-  try {
-    await requestUnixJsonCommand({
-      body: {},
-      path: "/agent-env-command/health",
-      socketPath,
-      timeoutMs: 2000
-    });
-  } catch (error) {
-    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(String(error?.code || ""))) {
-      await rm(socketPath, {
-        force: true
-      });
-      return;
-    }
-    throw error;
-  }
-  const error = new Error("The managed Env socket is owned by an unverified listener.");
-  error.code = "vibe64_agent_control_owner_unverified";
-  throw error;
+  return closeUnixJsonCommandServersForSession(commandServers, sessionId);
 }
 
 async function ensureAgentEnvCommandServer({
@@ -463,19 +387,23 @@ async function ensureAgentEnvCommandServerUnlocked({
   }
   if (
     existing?.commandService === commandService &&
-    await agentEnvCommandServerIsHealthy(existing, {
+    await unixJsonCommandServerIsHealthy(existing, {
+      healthPath: "/agent-env-command/health",
       sessionId,
       socketPath
     })
   ) {
     return existing;
   }
-  await closeAgentEnvCommandServer(socketPath, existing);
+  await closeUnixJsonCommandServer(commandServers, socketPath, existing);
   const promise = (async () => {
     await mkdir(path.dirname(socketPath), {
       recursive: true
     });
-    await removeDeadAgentEnvCommandSocket(socketPath);
+    await removeDeadUnixJsonCommandSocket(socketPath, {
+      healthPath: "/agent-env-command/health",
+      ownerErrorMessage: "The managed Env socket is owned by an unverified listener."
+    });
     const token = commandServerToken({
       sessionId,
       socketPath,
@@ -527,17 +455,7 @@ async function ensureAgentEnvCommandServerUnlocked({
         });
       }
     });
-    await new Promise((resolve, reject) => {
-      const handleError = (error) => {
-        reject(error);
-      };
-      server.once("error", handleError);
-      server.listen(socketPath, () => {
-        server.off("error", handleError);
-        resolve();
-      });
-    });
-    server.unref?.();
+    await listenUnixJsonCommandServer(server, socketPath);
     const stored = {
       commandService,
       generationId,
@@ -547,11 +465,12 @@ async function ensureAgentEnvCommandServerUnlocked({
       token
     };
     commandServers.set(socketPath, stored);
-    if (!await agentEnvCommandServerIsHealthy(stored, {
+    if (!await unixJsonCommandServerIsHealthy(stored, {
+      healthPath: "/agent-env-command/health",
       sessionId,
       socketPath
     })) {
-      await closeAgentEnvCommandServer(socketPath, stored);
+      await closeUnixJsonCommandServer(commandServers, socketPath, stored);
       await rm(socketPath, {
         force: true
       }).catch(() => null);
