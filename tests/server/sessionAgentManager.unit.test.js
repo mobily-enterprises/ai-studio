@@ -331,6 +331,44 @@ test("session agent manager treats durable engine metadata as authoritative", as
   );
 });
 
+test("session agent manager replaces a provisional binding with durable engine metadata", async () => {
+  const calls = [];
+  const adapter = (id) => ({
+    id,
+    transportId: `${id}_transport`,
+    async ensureSession() {
+      calls.push(id);
+      return { ok: true };
+    }
+  });
+  const manager = createSessionAgentManager({
+    providers: [adapter("codex"), adapter("opencode")]
+  });
+
+  await manager.ensureSession("session-1");
+  const session = {
+    metadata: {
+      [VIBE64_ASSISTANT_SELECTION_METADATA]: JSON.stringify({
+        agentId: "build",
+        catalogRevision,
+        engineId: "opencode",
+        modelId: "deepseek-chat",
+        modelProviderId: "deepseek",
+        schema: "vibe64.assistant-selection.v1",
+        variantId: "high"
+      })
+    },
+    sessionId: "session-1"
+  };
+  const result = await manager.ensureSession(session.sessionId, {
+    session
+  });
+
+  assert.deepEqual(calls, ["codex", "opencode"]);
+  assert.equal(result.engineId, "opencode");
+  assert.equal(manager.binding(session.sessionId), "opencode");
+});
+
 test("session agent manager resolves live engine capabilities without fallback", async () => {
   const manager = createSessionAgentManager({
     providers: [{

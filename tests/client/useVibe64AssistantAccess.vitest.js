@@ -226,8 +226,13 @@ describe("useVibe64AssistantAccess", () => {
     expect(assistantMenuSource).toContain(':access-loading="accessLoading"');
     expect(assistantMenuSource).toContain('if (props.disabled && disabledReason)');
     expect(assistantDialog).toContain('v-if="editing && accessLoading"');
-    expect(assistantDialog).toContain('type="list-item-avatar-two-line"');
+    expect(assistantDialog).toContain('type="list-item"');
     expect(assistantDialog).toContain('v-else-if="editing && normalizedAccessLabel"');
+    expect(assistantDialog.indexOf('class="vibe64-assistant-dialog__access"')).toBeLessThan(
+      assistantDialog.indexOf('<v-card-text class="vibe64-assistant-dialog__body">')
+    );
+    expect(assistantDialog).toContain('<v-btn-toggle');
+    expect(assistantDialog).toContain('height="48"');
     expect(assistantDialog).toContain("Authorized workspace members may use this owner-configured API connection.");
   });
 });

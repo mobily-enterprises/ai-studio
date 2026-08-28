@@ -55,48 +55,80 @@ type AttachmentUpload = {
   fileName: string;
 };
 
-function assistantCatalogPayload() {
-  return {
-    engines: [{
-      agents: [{
-        id: "codex",
-        label: "Codex",
-        mode: "primary"
-      }],
-      authentication: {
-        management: "account-owner",
-        modes: ["oauth", "api-key"]
-      },
-      defaults: {
-        agentId: "codex",
-        modelId: "gpt-5.6-sol",
-        modelProviderId: "openai",
-        variantId: "xhigh"
-      },
-      engineId: "codex",
-      health: {
-        status: "ready"
-      },
+function assistantCatalogPayload({ includeOpenCode = false }: {
+  includeOpenCode?: boolean;
+} = {}) {
+  const codex = {
+    agents: [{
+      id: "codex",
       label: "Codex",
-      modelProviders: [{
-        connected: true,
-        connectionStatus: "connected",
-        id: "openai",
-        label: "OpenAI",
-        models: [{
-          id: "gpt-5.6-sol",
-          label: "GPT-5.6 Sol",
-          status: "available",
-          variants: [{
-            id: "xhigh",
-            label: "Extra high"
-          }]
-        }]
-      }],
-      revision: TEST_ASSISTANT_CATALOG_REVISION,
-      schema: "vibe64.assistant-capabilities.v1",
-      transportId: "codex_app_server"
+      mode: "primary"
     }],
+    authentication: {
+      management: "account-owner",
+      modes: ["oauth", "api-key"]
+    },
+    defaults: {
+      agentId: "codex",
+      modelId: "gpt-5.6-sol",
+      modelProviderId: "openai",
+      variantId: "xhigh"
+    },
+    engineId: "codex",
+    health: {
+      status: "ready"
+    },
+    label: "Codex",
+    modelProviders: [{
+      connected: true,
+      connectionStatus: "connected",
+      id: "openai",
+      label: "OpenAI",
+      models: [{
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6 Sol",
+        status: "available",
+        variants: [{
+          id: "xhigh",
+          label: "Extra high"
+        }]
+      }]
+    }],
+    revision: TEST_ASSISTANT_CATALOG_REVISION,
+    schema: "vibe64.assistant-capabilities.v1",
+    transportId: "codex_app_server"
+  };
+  return {
+    engines: includeOpenCode
+      ? [codex, {
+          agents: [{ id: "build", label: "Build", mode: "primary" }],
+          authentication: { management: "account-owner", modes: ["api-key"] },
+          defaults: {
+            agentId: "build",
+            modelId: "glm-5.3",
+            modelProviderId: "zai-coding-plan",
+            variantId: "high"
+          },
+          engineId: "opencode",
+          health: { status: "ready" },
+          label: "OpenCode",
+          modelProviders: [{
+            connected: true,
+            connectionStatus: "connected",
+            id: "zai-coding-plan",
+            label: "Z.AI Coding Plan",
+            models: [{
+              id: "glm-5.3",
+              label: "GLM-5.3",
+              status: "available",
+              variants: [{ id: "high", label: "High" }]
+            }]
+          }],
+          revision: TEST_ASSISTANT_CATALOG_REVISION,
+          schema: "vibe64.assistant-capabilities.v1",
+          transportId: "opencode_server"
+        }]
+      : [codex],
     ok: true
   };
 }
@@ -1981,6 +2013,74 @@ test("session panel shows loading feedback instead of empty create state while s
   await expect(page.getByText("Create a session to start preview.")).toHaveCount(0);
 });
 
+test("AI session settings keeps access visible and engine choices compact", async ({ page }) => {
+  await page.setViewportSize({ height: 600, width: 900 });
+  await mockLaunchTerminalSocket(page);
+  const selectedSession = {
+    ...sessionPayload(),
+    assistantSelection: {
+      agentId: "codex",
+      catalogRevision: TEST_ASSISTANT_CATALOG_REVISION,
+      engineId: "codex",
+      modelId: "gpt-5.6-sol",
+      modelProviderId: "openai",
+      variantId: "xhigh"
+    }
+  };
+  await mockLaunchSession(page, {
+    assistantAccess: {
+      accessLabel: "Personal use",
+      available: true,
+      canUse: true,
+      ok: true,
+      ownerOnly: true
+    },
+    assistantCatalog: assistantCatalogPayload({ includeOpenCode: true }),
+    session: selectedSession
+  });
+
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await page.locator("button[aria-label='AI session settings']:visible").click();
+
+  const dialog = page.getByRole("dialog");
+  const access = dialog.locator(".vibe64-assistant-dialog__access");
+  const body = dialog.locator(".vibe64-assistant-dialog__body");
+  const engines = dialog.locator(".vibe64-assistant-dialog__engine");
+  await expect(dialog).toBeVisible();
+  await expect(access).toContainText("Personal use");
+  await expect(engines).toHaveCount(2);
+  const engineBoxes = await engines.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { height: box.height, top: box.top };
+  }));
+  expect(engineBoxes.every(({ height }) => height <= 48)).toBe(true);
+  expect(Math.abs(engineBoxes[0].top - engineBoxes[1].top)).toBeLessThan(1);
+
+  const accessTop = await access.evaluate((element) => element.getBoundingClientRect().top);
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(access).toBeVisible();
+  expect(Math.abs(
+    (await access.evaluate((element) => element.getBoundingClientRect().top)) - accessTop
+  )).toBeLessThan(1);
+
+  await page.setViewportSize({ height: 700, width: 390 });
+  await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  const mobileEngineBoxes = await engines.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { height: box.height, top: box.top };
+  }));
+  expect(mobileEngineBoxes.every(({ height }) => height <= 48)).toBe(true);
+  expect(Math.abs(mobileEngineBoxes[0].top - mobileEngineBoxes[1].top)).toBeLessThan(1);
+  await expect(access).toBeVisible();
+  await body.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+});
+
 test("chat source links open the editor and editor autosaves file changes", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const sourceEditor = await mockLaunchSession(page, {
@@ -2522,6 +2622,8 @@ test("embedded launch terminal stays expanded after the launch exits", async ({ 
 
 async function mockLaunchSession(page: Page, {
   agentTerminalControlOutcomes = [],
+  assistantAccess = null,
+  assistantCatalog = assistantCatalogPayload(),
   attachmentUploadOutcomes = [],
   attachmentUploadResponseDelayMs = 0,
   conversationLog = [],
@@ -2546,6 +2648,8 @@ async function mockLaunchSession(page: Page, {
   temporaryAiRecoveryRequests = null
 }: {
   agentTerminalControlOutcomes?: Array<"failure" | "success">;
+  assistantAccess?: Record<string, unknown> | null;
+  assistantCatalog?: ReturnType<typeof assistantCatalogPayload>;
   attachmentUploadOutcomes?: Array<"failure" | "success">;
   attachmentUploadResponseDelayMs?: number;
   conversationLog?: unknown[];
@@ -2665,7 +2769,7 @@ async function mockLaunchSession(page: Page, {
   await page.route(
     /\/api(?:\/app\/[^/]+)?\/vibe64\/assistants\/capabilities(?:\?.*)?$/u,
     async (route) => {
-      await fulfillJson(route, assistantCatalogPayload());
+      await fulfillJson(route, assistantCatalog);
     }
   );
   await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/sessions(?:\/.*)?(?:\?.*)?$/u, async (route) => {
@@ -2778,6 +2882,10 @@ async function mockLaunchSession(page: Page, {
         ok: true,
         sessionId: decodeURIComponent(url.pathname.split("/").at(-2) || "")
       });
+      return;
+    }
+    if (assistantAccess && method === "GET" && url.pathname.endsWith("/assistant-access")) {
+      await fulfillJson(route, assistantAccess);
       return;
     }
     if (temporaryAiRecoveryRequests && method === "POST" && url.pathname.endsWith("/agent-message")) {

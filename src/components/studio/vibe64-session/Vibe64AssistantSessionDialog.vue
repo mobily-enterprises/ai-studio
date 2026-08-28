@@ -18,6 +18,27 @@
         />
       </v-card-title>
 
+      <v-skeleton-loader
+        v-if="editing && accessLoading"
+        aria-label="Loading AI access"
+        class="vibe64-assistant-dialog__access"
+        type="list-item"
+      />
+
+      <v-alert
+        v-else-if="editing && normalizedAccessLabel"
+        class="vibe64-assistant-dialog__access"
+        :color="normalizedAccessLabel === 'Workspace use' ? 'success' : 'warning'"
+        density="compact"
+        :icon="normalizedAccessLabel === 'Workspace use' ? mdiAccountMultipleOutline : mdiLockOutline"
+        variant="tonal"
+      >
+        <div class="vibe64-assistant-dialog__access-copy">
+          <strong>{{ normalizedAccessLabel }}</strong>
+          <span>{{ accessSummary }}</span>
+        </div>
+      </v-alert>
+
       <v-card-text class="vibe64-assistant-dialog__body">
         <p class="vibe64-assistant-dialog__intro">
           <template v-if="editing">
@@ -30,33 +51,12 @@
           </template>
         </p>
 
-        <v-skeleton-loader
-          v-if="editing && accessLoading"
-          aria-label="Loading AI access"
-          class="vibe64-assistant-dialog__access"
-          type="list-item-avatar-two-line"
-        />
-
-        <v-alert
-          v-else-if="editing && normalizedAccessLabel"
-          class="vibe64-assistant-dialog__access"
-          :color="normalizedAccessLabel === 'Workspace use' ? 'success' : 'warning'"
-          density="compact"
-          :icon="normalizedAccessLabel === 'Workspace use' ? mdiAccountMultipleOutline : mdiLockOutline"
-          variant="tonal"
-        >
-          <div class="vibe64-assistant-dialog__access-copy">
-            <strong>{{ normalizedAccessLabel }}</strong>
-            <span>{{ accessSummary }}</span>
-          </div>
-        </v-alert>
-
         <div v-if="overviewLoading" class="vibe64-assistant-dialog__engine-grid" aria-label="Loading AI engines">
           <v-skeleton-loader
             v-for="index in 2"
             :key="index"
             class="vibe64-assistant-dialog__engine-skeleton"
-            type="list-item-avatar-two-line, chip"
+            type="button"
           />
         </div>
 
@@ -65,34 +65,43 @@
           <v-btn size="small" variant="tonal" @click="catalog.overview.reload()">Try again</v-btn>
         </div>
 
-        <div v-else class="vibe64-assistant-dialog__engine-grid" role="radiogroup" aria-label="AI engine">
-          <button
+        <v-btn-toggle
+          v-else
+          aria-label="AI engine"
+          class="vibe64-assistant-dialog__engine-toggle"
+          color="primary"
+          divided
+          mandatory
+          :model-value="engineId"
+          role="radiogroup"
+          variant="outlined"
+        >
+          <v-btn
             v-for="engine in catalog.engines.value"
             :key="engine.engineId"
             class="vibe64-assistant-dialog__engine"
-            :class="{ 'vibe64-assistant-dialog__engine--selected': engine.engineId === engineId }"
+            :aria-label="`${engine.label}. ${engineDescription(engine)} ${engine.health?.status === 'ready' ? 'Ready.' : 'Setup needed.'}`"
             :disabled="engineLocked && engine.engineId !== engineId"
-            type="button"
+            height="48"
             role="radio"
             :aria-checked="engine.engineId === engineId"
+            :value="engine.engineId"
             @click="selectEngine(engine)"
           >
             <span class="vibe64-assistant-dialog__engine-heading">
-              <v-icon :icon="engine.engineId === 'codex' ? mdiCreationOutline : mdiCodeBraces" />
+              <v-icon :icon="engine.engineId === 'codex' ? mdiCreationOutline : mdiCodeBraces" size="20" />
               <strong>{{ engine.label }}</strong>
-              <v-chip
-                :color="engine.health?.status === 'ready' ? 'success' : undefined"
-                size="x-small"
-                variant="tonal"
-              >
+              <span class="vibe64-assistant-dialog__engine-status">
+                <v-icon
+                  :color="engine.health?.status === 'ready' ? 'success' : 'warning'"
+                  :icon="engine.health?.status === 'ready' ? mdiCheckCircleOutline : mdiKeyOutline"
+                  size="15"
+                />
                 {{ engine.health?.status === "ready" ? "Ready" : "Setup needed" }}
-              </v-chip>
+              </span>
             </span>
-            <span class="vibe64-assistant-dialog__engine-copy">
-              {{ engineDescription(engine) }}
-            </span>
-          </button>
-        </div>
+          </v-btn>
+        </v-btn-toggle>
 
         <template v-if="selectedOverviewEngine">
           <div class="vibe64-assistant-dialog__selection-heading">
@@ -702,7 +711,7 @@ onScopeDispose(() => {
 
 .vibe64-assistant-dialog__body {
   display: grid;
-  gap: 1rem;
+  gap: 0.85rem;
   padding: 0.25rem 1.25rem 1rem !important;
 }
 
@@ -712,9 +721,24 @@ onScopeDispose(() => {
   margin: 0;
 }
 
+.vibe64-assistant-dialog__access {
+  flex: 0 0 auto;
+  margin: 0 1.25rem 0.75rem;
+  min-height: 3rem;
+}
+
 .vibe64-assistant-dialog__access-copy {
-  display: grid;
-  gap: 0.15rem;
+  align-items: baseline;
+  column-gap: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 0.1rem;
+}
+
+.vibe64-assistant-dialog__access-copy span {
+  color: rgba(var(--v-theme-on-surface), 0.7);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .vibe64-assistant-dialog__engine-grid {
@@ -723,7 +747,6 @@ onScopeDispose(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.vibe64-assistant-dialog__engine,
 .vibe64-assistant-dialog__provider {
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-outline), 0.22);
@@ -733,41 +756,44 @@ onScopeDispose(() => {
   text-align: left;
 }
 
-.vibe64-assistant-dialog__engine {
-  border-radius: 1rem;
-  display: grid;
-  gap: 0.55rem;
-  min-height: 7.5rem;
-  padding: 1rem;
+.vibe64-assistant-dialog__engine-toggle {
+  display: flex;
+  width: 100%;
 }
 
-.vibe64-assistant-dialog__engine:hover,
 .vibe64-assistant-dialog__provider:hover {
   background: rgba(var(--v-theme-primary), 0.05);
 }
 
-.vibe64-assistant-dialog__engine:disabled {
-  cursor: not-allowed;
-  opacity: var(--v-disabled-opacity, 0.38);
-}
-
-.vibe64-assistant-dialog__engine--selected,
 .vibe64-assistant-dialog__provider--selected {
   background: rgba(var(--v-theme-primary), 0.08);
   border-color: rgba(var(--v-theme-primary), 0.6);
 }
 
+.vibe64-assistant-dialog__engine {
+  flex: 1 1 0;
+  min-width: 0;
+  text-transform: none;
+}
+
 .vibe64-assistant-dialog__engine-heading {
   align-items: center;
   display: flex;
-  gap: 0.55rem;
+  gap: 0.45rem;
+  min-width: 0;
+  width: 100%;
 }
 
-.vibe64-assistant-dialog__engine-heading .v-chip {
+.vibe64-assistant-dialog__engine-status {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.66);
+  display: inline-flex;
+  font-size: 0.72rem;
+  gap: 0.2rem;
   margin-inline-start: auto;
+  white-space: nowrap;
 }
 
-.vibe64-assistant-dialog__engine-copy,
 .vibe64-assistant-dialog__section-heading span,
 .vibe64-assistant-dialog__selection-heading span {
   color: rgba(var(--v-theme-on-surface), 0.68);
@@ -777,8 +803,8 @@ onScopeDispose(() => {
 
 .vibe64-assistant-dialog__engine-skeleton {
   border: 1px solid rgba(var(--v-theme-outline), 0.12);
-  border-radius: 1rem;
-  min-height: 7.5rem;
+  border-radius: 0.5rem;
+  min-height: 3rem;
 }
 
 .vibe64-assistant-dialog__selection-heading {
@@ -887,9 +913,20 @@ onScopeDispose(() => {
 }
 
 @media (max-width: 600px) {
-  .vibe64-assistant-dialog__engine-grid,
   .vibe64-assistant-dialog__field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .vibe64-assistant-dialog__access {
+    margin-inline: 1rem;
+  }
+
+  .vibe64-assistant-dialog__body {
+    padding-inline: 1rem !important;
+  }
+
+  .vibe64-assistant-dialog__engine-status {
+    font-size: 0;
   }
 
   .vibe64-assistant-dialog__actions {

@@ -208,20 +208,26 @@ function createSessionAgentManager({
     }
     const currentProviderId = bindings.get(id);
     const selection = sessionAssistantSelection(options);
+    const durableProviderId = normalizeText(selection?.engineId);
     const explicitEngineId = normalizeText(options?.engineId);
     if (selection && explicitEngineId && selection.engineId !== explicitEngineId) {
       throw providerBindingConflictError(id, selection.engineId, explicitEngineId);
     }
     const requestedProviderId = sessionAgentProviderId(options);
-    if (currentProviderId && requestedProviderId && currentProviderId !== requestedProviderId) {
+    if (
+      !durableProviderId &&
+      currentProviderId &&
+      requestedProviderId &&
+      currentProviderId !== requestedProviderId
+    ) {
       throw providerBindingConflictError(id, currentProviderId, requestedProviderId);
     }
     const provider = providerFor({
       ...options,
-      providerId: requestedProviderId || currentProviderId || defaultProviderId
+      providerId: durableProviderId || requestedProviderId || currentProviderId || defaultProviderId
     });
     bindings.set(id, provider.id);
-    if (!bindingTokens.has(id)) {
+    if (!bindingTokens.has(id) || (currentProviderId && currentProviderId !== provider.id)) {
       bindingTokens.set(id, Object.freeze({}));
     }
     return provider;

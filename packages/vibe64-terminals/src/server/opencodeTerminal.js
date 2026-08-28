@@ -295,12 +295,21 @@ function assistantMessageText(message = {}) {
   return [...new Set(values)].join("\n\n");
 }
 
+function openCodeMessageError(message = {}) {
+  return text(
+    message?.error?.message ||
+    message?.error?.data?.message ||
+    message?.error?.name ||
+    message?.error
+  );
+}
+
 function lastAssistantResult(value = null) {
   const message = [...openCodeMessageRows(value)]
     .reverse()
     .find((candidate) => candidate?.type === "assistant");
   return {
-    error: text(message?.error?.message || message?.error),
+    error: openCodeMessageError(message),
     message,
     text: assistantMessageText(message)
   };
@@ -799,7 +808,7 @@ function createOpenCodeTerminalController({
       if (message?.type !== "assistant") {
         continue;
       }
-      failure ||= text(message.error?.message || message.error);
+      failure ||= openCodeMessageError(message);
       const parts = Array.isArray(message.content) ? message.content : [];
       for (const part of parts.filter((candidate) => candidate?.type === "reasoning" && text(candidate.text))) {
         const turn = await context.runtime.store.writeConversationThinkingMessage(context.sessionId, {

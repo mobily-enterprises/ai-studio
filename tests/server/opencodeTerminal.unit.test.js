@@ -57,7 +57,7 @@ const providerRevision = openCodeAssistantCapabilities({
   providers: providerResult
 }).modelProviders[0].definitionRevision;
 
-async function controllerHarness({ withCommandBoundary = false } = {}) {
+async function controllerHarness({ assistantError = null, withCommandBoundary = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
   const sourceRoot = path.join(root, "sessions", "active", "session-1", "source");
   const sessionRoot = path.join(root, "session-state", "session-1");
@@ -174,8 +174,8 @@ async function controllerHarness({ withCommandBoundary = false } = {}) {
               type: "user"
             },
             {
+              ...(assistantError ? { error: assistantError } : { text: output }),
               id: "msg_assistant",
-              text: output,
               time: { completed: created + 1, created: created + 1 },
               type: "assistant"
             }
@@ -354,6 +354,35 @@ test("OpenCode persists a user message only after upstream admission", async (t)
     providerID: "deepseek",
     variant: "high"
   });
+});
+
+test("OpenCode preserves structured provider errors as readable turn failures", async (t) => {
+  const harness = await controllerHarness({
+    assistantError: {
+      data: { message: "Aborted" },
+      name: "MessageAbortedError"
+    }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Reply exactly OK",
+    messageId: "client-message-1"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  const result = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(result.error, "Aborted");
+  assert.equal(result.state, "failed");
 });
 
 test("OpenCode restarts on key replacement while preserving its database and native session id", async (t) => {
