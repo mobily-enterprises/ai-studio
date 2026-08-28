@@ -1065,6 +1065,7 @@ async function assertCodexAuthPreflightReady(options = {}, {
 
 function codexAppServerProcessCwd({
   executionRoot = "",
+  runtimeDir = "",
   workdir = ""
 } = {}) {
   const normalizedWorkdir = normalizeAgentText(workdir) ? path.resolve(workdir) : "";
@@ -1072,7 +1073,10 @@ function codexAppServerProcessCwd({
     return normalizedWorkdir;
   }
   const normalizedExecutionRoot = normalizeAgentText(executionRoot) ? path.resolve(executionRoot) : "";
-  return normalizedExecutionRoot;
+  if (normalizedExecutionRoot) {
+    return normalizedExecutionRoot;
+  }
+  return normalizeAgentText(runtimeDir) ? path.resolve(runtimeDir) : "";
 }
 
 function codexAppServerRuntimeDirIsManaged(runtimeDir = "") {
@@ -1560,6 +1564,24 @@ function normalizeCodexAppServerTerminalEnv(terminalEnv = {}) {
       String(value ?? "")
     ])
     .filter(([name, value]) => name && String(value || "")));
+}
+
+function codexAppServerThreadRequestParams(params = {}, threadEnv = {}) {
+  const source = isPlainObject(params) ? params : {};
+  const config = isPlainObject(source.config) ? source.config : {};
+  if (Object.hasOwn(config, "shell_environment_policy")) {
+    return source;
+  }
+  return {
+    ...source,
+    config: {
+      ...config,
+      shell_environment_policy: {
+        inherit: "none",
+        set: normalizeCodexAppServerTerminalEnv(threadEnv)
+      }
+    }
+  };
 }
 
 function codexAppServerControlGeneration(terminalEnv = {}) {
@@ -2151,6 +2173,7 @@ async function startCodexAppServerProcess({
     ? economyWorkspace
     : codexAppServerProcessCwd({
         executionRoot,
+        runtimeDir,
         workdir
       });
   const projectTrustOverride = economy ? "" : codexAppServerProjectTrustOverride(workdir);
@@ -3384,23 +3407,17 @@ class CodexAppServerAgentProvider {
   }
 
   async currentEconomyExecutionContext() {
-    if (!this.isEconomyProvider()) {
-      throw codexAppServerEconomyAuthError(
-        "vibe64_codex_economy_provider_required",
-        "Codex economy work requires its dedicated isolated provider."
-      );
-    }
     const runtime = await this.ensureRuntime();
-    const cwd = codexAppServerEconomyWorkspaceDir(runtime.runtimeDir);
-    if (
-      runtime.executionMode !== CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY ||
-      runtime.processCwd !== cwd
-    ) {
+    const cwd = normalizeAgentText(this.options.economyWorkdir)
+      ? path.resolve(this.options.economyWorkdir)
+      : codexAppServerEconomyWorkspaceDir(runtime.runtimeDir);
+    if (!runtime.runtimeDir) {
       throw codexAppServerEconomyAuthError(
         "vibe64_codex_economy_runtime_invalid",
         "Codex economy runtime isolation could not be verified."
       );
     }
+    await ensureWritablePrivateDirectory(cwd);
     return Object.freeze({
       accountIdentitySignature: await currentCodexAccountIdentitySignature(this.options),
       cwd,
@@ -3474,8 +3491,9 @@ class CodexAppServerAgentProvider {
 
   async startThread(params = {}) {
     const client = await this.activeClient();
+    const requestParams = codexAppServerThreadRequestParams(params, this.options.threadEnv);
     const response = await this.runRequest(
-      () => client.request("thread/start", params),
+      () => client.request("thread/start", requestParams),
       "codex-app-server-thread-start"
     );
     return {
@@ -3490,11 +3508,12 @@ class CodexAppServerAgentProvider {
 
   async resumeThread(threadId = "", params = {}) {
     const client = await this.activeClient();
+    const requestParams = codexAppServerThreadRequestParams(params, this.options.threadEnv);
     const response = await this.runRequest(
       () => client.request("thread/resume", {
         excludeTurns: true,
-        ...params,
-        threadId: normalizeAgentText(threadId || params.threadId)
+        ...requestParams,
+        threadId: normalizeAgentText(threadId || requestParams.threadId)
       }),
       "codex-app-server-thread-resume"
     );
@@ -3601,11 +3620,6 @@ class CodexAppServerAgentProvider {
   async listEconomyThreads({
     signal = null
   } = {}) {
-    if (!this.isEconomyProvider()) {
-      const error = new Error("Codex economy thread inventory requires its dedicated provider.");
-      error.code = "vibe64_codex_economy_provider_required";
-      throw error;
-    }
     const client = await this.activeClient();
     const execution = await this.currentEconomyExecutionContext();
     const state = {

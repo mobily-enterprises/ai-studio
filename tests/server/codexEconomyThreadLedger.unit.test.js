@@ -60,7 +60,7 @@ function ownershipRecord(root, overrides = {}) {
         accountIdentitySignature: `sha256:${"a".repeat(64)}`,
         authStateSignature: `v1:${"b".repeat(24)}`,
         endpoint: `unix://${path.join(root, "codex.sock")}`,
-        executionMode: "economy",
+        executionMode: "interactive",
         executionContextHash: "c".repeat(12),
         provider: "codex_app_server",
         runtimeDir: path.join(root, "codex-runtime"),
@@ -433,11 +433,11 @@ test("economy ownership records reject relative, non-normalized, and unbounded i
           ...valid.identity,
           runtime: {
             ...valid.identity.runtime,
-            executionMode: "interactive"
+            executionMode: "unsupported"
           }
         }
       }),
-      /isolated Codex app-server/u
+      /managed Codex app-server/u
     );
     assert.throws(
       () => defineCodexEconomyThreadRecord({
@@ -463,9 +463,9 @@ test("economy ownership records reject relative, non-normalized, and unbounded i
           }
         }
       }),
-      /isolated Codex app-server/u
+      /managed Codex app-server/u
     );
-    assert.throws(
+    assert.doesNotThrow(
       () => defineCodexEconomyThreadRecord({
         ...valid,
         identity: {
@@ -475,8 +475,7 @@ test("economy ownership records reject relative, non-normalized, and unbounded i
             toolHomeSource: path.join(root, "credential-home")
           }
         }
-      }),
-      /without a credential-home path/u
+      })
     );
     assert.throws(
       () => defineCodexEconomyThreadRecord({

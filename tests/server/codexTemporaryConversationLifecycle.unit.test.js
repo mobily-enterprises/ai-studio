@@ -23,7 +23,6 @@ import {
   createService as createSourceEditorService
 } from "../../packages/vibe64-source-editor/src/server/service.js";
 import {
-  CODEX_APP_SERVER_EXECUTION_MODES,
   CODEX_APP_SERVER_METADATA_SCHEMA_VERSION,
   CODEX_APP_SERVER_PROVIDER_ID,
   codexAppServerRuntimeDir,
@@ -118,12 +117,9 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
       };
     },
     async currentEconomyExecutionContext() {
-      if (providerOptions.executionMode !== "economy") {
-        throw new Error("Interactive providers have no economy execution context.");
-      }
       return {
         accountIdentitySignature: captures.runtimeInfo.accountIdentitySignature,
-        cwd: path.join(providerOptions.runtimeDir, "workspace"),
+        cwd: providerOptions.economyWorkdir,
         executionMode: "economy"
       };
     },
@@ -346,7 +342,7 @@ test("economy model discovery does not cache failures and invalidates on reconne
   });
 });
 
-test("Codex provider description uses the dedicated economy runtime and stable account identity", async () => {
+test("Codex provider description uses the session's shared runtime and stable account identity", async () => {
   await withConversationController(async ({ captures, controller }) => {
     const description = await controller.describeProvider("session-1");
 
@@ -357,8 +353,9 @@ test("Codex provider description uses the dedicated economy runtime and stable a
     });
     assert.equal(Object.isFrozen(description), true);
     assert.equal(captures.providerOptions.length, 1);
-    assert.equal(captures.providerOptions[0].executionMode, "economy");
-    assert.equal(captures.providerOptions[0].runtimeInstanceId, "session-1:economy");
+    assert.equal(captures.providerOptions[0].executionMode, "");
+    assert.equal(captures.providerOptions[0].runtimeInstanceId, "");
+    assert.match(captures.providerOptions[0].economyWorkdir, /economy-workspaces/u);
   });
 });
 
@@ -1185,6 +1182,7 @@ async function withConversationController(operation, {
     transport: "unix"
   };
   const projectService = {
+    agentRuntimeRoot: path.join(temporaryRoot, "agent-runtimes"),
     createRuntime() {
       return {
         async getSession() {
@@ -1218,6 +1216,7 @@ async function withConversationController(operation, {
       return createProvider(calls, subscribers, captures, providerOptions);
     },
     env: {
+      VIBE64_AGENT_RUNTIME_DIR: projectService.agentRuntimeRoot,
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
@@ -1292,11 +1291,15 @@ function createRestartedController({
   projectService,
   subscribers = new Set()
 } = {}) {
+  const projectRuntimeRoot = projectService.createRuntime().stateRoot;
+  const agentRuntimeRoot = projectService.agentRuntimeRoot ||
+    path.join(projectRuntimeRoot, "agent-runtimes");
   return createCodexTerminalController({
     codexAppServerProviderFactory(providerOptions) {
       return createProvider(calls, subscribers, captures, providerOptions);
     },
     env: {
+      VIBE64_AGENT_RUNTIME_DIR: agentRuntimeRoot,
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
@@ -1385,6 +1388,11 @@ async function withAgentMessageController(operation) {
         async listLoadedThreads() {
           return {
             data: [provider.threadId]
+          };
+        },
+        async listEconomyThreads() {
+          return {
+            threadIds: []
           };
         },
         async listAppServerThreadsForCwd({ cwd }) {
@@ -1509,6 +1517,7 @@ async function withAgentMessageController(operation) {
       return provider;
     },
     env: {
+      VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
@@ -2718,9 +2727,10 @@ test("a changed session environment retires the previous provider for the same r
   let environmentVersion = "one";
   const providers = [];
   const controller = createCodexTerminalController({
-    codexAppServerProviderFactory() {
+    codexAppServerProviderFactory(options) {
       const provider = {
         closed: 0,
+        options,
         close() {
           provider.closed += 1;
         },
@@ -2733,6 +2743,7 @@ test("a changed session environment retires the previous provider for the same r
       return provider;
     },
     env: {
+      VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
@@ -2766,6 +2777,112 @@ test("a changed session environment retires the previous provider for the same r
     assert.equal(providers[1].closed, 0);
   } finally {
     await controller.closeAllForSession("session-1");
+    if (previousRuntimeNamespace === undefined) {
+      delete process.env.VIBE64_RUNTIME_NAMESPACE;
+    } else {
+      process.env.VIBE64_RUNTIME_NAMESPACE = previousRuntimeNamespace;
+    }
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("two Codex sessions retain one shared runtime until the final session closes", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-shared-codex-runtime-"));
+  const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+  process.env.VIBE64_RUNTIME_NAMESPACE = "test";
+  const {
+    projectContextRoot,
+    projectRuntimeRoot,
+    session: firstSession
+  } = await managedSessionFixture(temporaryRoot);
+  const secondSourcePath = path.join(
+    temporaryRoot,
+    "managed",
+    "sessions",
+    "active",
+    "session-2",
+    "source"
+  );
+  await mkdir(secondSourcePath, { recursive: true });
+  const secondSession = {
+    ...firstSession,
+    metadata: {
+      ...firstSession.metadata,
+      source_path: secondSourcePath
+    },
+    sessionId: "session-2",
+    sessionRoot: path.join(projectRuntimeRoot, "sessions", "active", "session-2")
+  };
+  const sessions = new Map([
+    [firstSession.sessionId, firstSession],
+    [secondSession.sessionId, secondSession]
+  ]);
+  const providers = [];
+  let stopRuntimeCalls = 0;
+  const controller = createCodexTerminalController({
+    codexAppServerProviderFactory(options) {
+      const provider = {
+        closed: 0,
+        options,
+        close() {
+          provider.closed += 1;
+        },
+        async ensureAvailable() {},
+        async startThread() {
+          return { id: `conversation-${providers.length + 1}` };
+        },
+        async stopRuntime() {
+          stopRuntimeCalls += 1;
+          return {
+            processExitVerified: true,
+            stopped: true
+          };
+        }
+      };
+      providers.push(provider);
+      return provider;
+    },
+    env: {
+      VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
+      VIBE64_RUNTIME_NAMESPACE: "test",
+      VIBE64_WORKSPACE: "test"
+    },
+    projectService: {
+      createRuntime() {
+        return {
+          async getSession(sessionId) {
+            return sessions.get(sessionId);
+          },
+          projectContextRoot,
+          stateRoot: projectRuntimeRoot
+        };
+      },
+      async projectExecutionEnvironment() {
+        return {
+          VIBE64_RUNTIME_NAMESPACE: "test",
+          VIBE64_WORKSPACE: "test"
+        };
+      }
+    }
+  });
+  try {
+    const first = await controller.createConversation(firstSession.sessionId);
+    const second = await controller.createConversation(secondSession.sessionId);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(providers.length, 2);
+    assert.equal(providers[0].options.runtimeDir, providers[1].options.runtimeDir);
+    assert.equal(providers[0].options.threadSession.sessionId, firstSession.sessionId);
+    assert.equal(providers[1].options.threadSession.sessionId, secondSession.sessionId);
+    assert.deepEqual(providers.map(({ options }) => options.session), [{}, {}]);
+
+    await controller.closeAllForSession(firstSession.sessionId);
+    assert.equal(stopRuntimeCalls, 0);
+    assert.equal(providers[0].closed, 1);
+
+    await controller.closeAllForSession(secondSession.sessionId);
+    assert.equal(stopRuntimeCalls, 1);
+  } finally {
     if (previousRuntimeNamespace === undefined) {
       delete process.env.VIBE64_RUNTIME_NAMESPACE;
     } else {
@@ -2949,6 +3066,7 @@ test("an active chat keeps its provider across environment changes until the nex
       return provider;
     },
     env: {
+      VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
@@ -2984,7 +3102,7 @@ test("an active chat keeps its provider across environment changes until the nex
     });
     assert.equal(started.ok, true, JSON.stringify(started));
     assert.equal(providers.length, 1);
-    assert.equal(providers[0].options.terminalEnv.PROVIDER_OWNERSHIP_VERSION, "one");
+    assert.equal(providers[0].options.threadEnv.PROVIDER_OWNERSHIP_VERSION, "one");
     assert.match(
       providers[0].startedThreads[0].developerInstructions,
       /Project owner preference: Use examples from the apiary\./u
@@ -3063,7 +3181,7 @@ test("an active chat keeps its provider across environment changes until the nex
     assert.equal(providers.length, 2);
     assert.equal(providers[0].closed, 1);
     assert.equal(providers[1].closed, 0);
-    assert.equal(providers[1].options.terminalEnv.PROVIDER_OWNERSHIP_VERSION, "two");
+    assert.equal(providers[1].options.threadEnv.PROVIDER_OWNERSHIP_VERSION, "two");
     assert.match(
       providers[1].resumedThreads[0].settings.developerInstructions,
       /Project owner preference: Prefer the latest hive measurements\./u
@@ -3106,7 +3224,7 @@ test("an active chat keeps its provider across environment changes until the nex
   }
 });
 
-test("closing a session stops its deterministic runtime before transport metadata is persisted", async () => {
+test("closing a session without recorded Codex ownership leaves the shared runtime alone", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-unrecorded-runtime-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
@@ -3121,28 +3239,15 @@ test("closing a session stops its deterministic runtime before transport metadat
     VIBE64_RUNTIME_NAMESPACE: "test",
     VIBE64_WORKSPACE: "test"
   };
-  const runtimeDir = codexAppServerRuntimeDir({
-    env: providerEnv,
-    executionRoot: session.metadata.source_path,
-    runtimeInstanceId: session.sessionId,
-    workdir: session.metadata.source_path
-  });
-  const unscopedRuntimeDir = codexAppServerRuntimeDir({
+  const sharedRuntimeDir = codexAppServerRuntimeDir({
     env: providerEnv
   });
-  await mkdir(runtimeDir, {
-    recursive: true
-  });
-  await mkdir(unscopedRuntimeDir, {
+  await mkdir(sharedRuntimeDir, {
     recursive: true
   });
   await writeFile(
-    path.join(runtimeDir, "runtime.json"),
-    JSON.stringify(exactStoppedRuntimeMetadata(runtimeDir))
-  );
-  await writeFile(
-    path.join(unscopedRuntimeDir, "runtime.json"),
-    JSON.stringify(exactStoppedRuntimeMetadata(unscopedRuntimeDir))
+    path.join(sharedRuntimeDir, "runtime.json"),
+    JSON.stringify(exactStoppedRuntimeMetadata(sharedRuntimeDir))
   );
   let currentSession = session;
   const controller = createCodexTerminalController({
@@ -3167,11 +3272,9 @@ test("closing a session stops its deterministic runtime before transport metadat
   });
   try {
     await controller.closeAllForSession("session-1");
-    await assert.rejects(
-      () => readFile(path.join(runtimeDir, "runtime.json"), "utf8"),
-      {
-        code: "ENOENT"
-      }
+    assert.equal(
+      JSON.parse(await readFile(path.join(sharedRuntimeDir, "runtime.json"), "utf8")).runtimeDir,
+      sharedRuntimeDir
     );
 
     currentSession = {
@@ -3181,8 +3284,8 @@ test("closing a session stops its deterministic runtime before transport metadat
     };
     await controller.closeAllForSession("session-without-source");
     assert.equal(
-      JSON.parse(await readFile(path.join(unscopedRuntimeDir, "runtime.json"), "utf8")).runtimeDir,
-      unscopedRuntimeDir
+      JSON.parse(await readFile(path.join(sharedRuntimeDir, "runtime.json"), "utf8")).runtimeDir,
+      sharedRuntimeDir
     );
   } finally {
     if (previousRuntimeNamespace === undefined) {
@@ -3495,8 +3598,8 @@ test("economy detached turns apply the resolved Luna-low profile and strict tool
     await waitForCapturedTurns(captures, 1);
 
     assert.equal(captures.providerOptions.length, 1);
-    assert.equal(captures.providerOptions[0].executionMode, "economy");
-    assert.equal(captures.providerOptions[0].runtimeInstanceId, "session-1:economy");
+    assert.equal(captures.providerOptions[0].executionMode, "");
+    assert.equal(captures.providerOptions[0].runtimeInstanceId, "");
     assert.equal(captures.threads.length, 1);
     const threadSettings = captures.threads[0];
     assert.equal(threadSettings.allowProviderModelFallback, false);
@@ -3893,7 +3996,7 @@ test("ordinary runtime invalidation preserves interactive session process-exit p
   });
 });
 
-test("ordinary runtime invalidation stops cached runtimes concurrently and isolates failures", async () => {
+test("ordinary runtime invalidation reports one failure for the shared Codex runtime", async () => {
   await withConversationController(async ({ captures, controller, session }) => {
     const conversation = await controller.createConversation(session.sessionId, {
       ephemeral: true
@@ -3902,63 +4005,31 @@ test("ordinary runtime invalidation stops cached runtimes concurrently and isola
     const catalog = await controller.executionProfileModelCatalog(session.sessionId);
     assert.equal(catalog.data[0].model, "gpt-5.6-luna");
 
-    const runtimeStopsHeld = createDeterministicHold();
-    let bothRuntimeStopsStarted = () => null;
-    const bothRuntimeStops = new Promise((resolve) => {
-      bothRuntimeStopsStarted = resolve;
-    });
-    captures.onStopRuntime = () => {
-      if (captures.stopRuntimes === 2) {
-        bothRuntimeStopsStarted();
-      }
-    };
-    captures.stopRuntimeWait = runtimeStopsHeld.wait;
-    captures.stopRuntimeHandler = ({ providerOptions }) => {
-      if (providerOptions.executionMode !== CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY) {
-        const error = new Error("Interactive runtime stop failed.");
-        error.code = "test_runtime_stop_failed";
-        error.retryable = true;
-        throw error;
-      }
-      return {
-        processExitVerified: true,
-        runtimeDirPreserved: false,
-        stopped: true
-      };
+    captures.stopRuntimeHandler = () => {
+      const error = new Error("Shared Codex runtime stop failed.");
+      error.code = "test_runtime_stop_failed";
+      error.retryable = true;
+      throw error;
     };
 
-    const invalidating = controller.invalidateAppServerRuntimes({
-      reason: "server-shutdown"
+    const invalidated = await controller.invalidateAppServerRuntimes({
+      reason: "account-changed"
     });
-    await bothRuntimeStops;
-    assert.equal(captures.stopRuntimes, 2);
-    runtimeStopsHeld.release();
-
-    const invalidated = await invalidating;
     assert.equal(invalidated.ok, false);
-    assert.equal(invalidated.providerCount, 2);
-    assert.equal(invalidated.stopped, 1);
-    assert.equal(invalidated.results.length, 1);
+    assert.equal(invalidated.providerCount, 1);
+    assert.equal(invalidated.stopped, 0);
+    assert.equal(invalidated.results.length, 0);
     assert.deepEqual(invalidated.failed.map((failure) => ({
       code: failure.code,
       error: failure.error,
       retryable: failure.retryable
     })), [{
       code: "test_runtime_stop_failed",
-      error: "Interactive runtime stop failed.",
+      error: "Shared Codex runtime stop failed.",
       retryable: true
     }]);
-    assert.deepEqual(captures.stopRuntimeProviderOptions.map((providerOptions, index) => ({
-      executionMode: providerOptions.executionMode || CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
-      preserveProcessExitProof: captures.stopRuntimeOptions[index].preserveProcessExitProof
-    })).sort((left, right) => left.executionMode.localeCompare(right.executionMode)), [{
-      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
-      preserveProcessExitProof: false
-    }, {
-      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
-      preserveProcessExitProof: true
-    }, {
-      executionMode: CODEX_APP_SERVER_EXECUTION_MODES.INTERACTIVE,
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, [{
       preserveProcessExitProof: true
     }]);
   });
@@ -3985,7 +4056,7 @@ test("non-shutdown runtime invalidation keeps the controller reusable", async ()
   });
 });
 
-test("Codex runtime execution records carry the active project slug", async () => {
+test("the shared Codex runtime stays workspace-wide while its thread keeps the project slug", async () => {
   await withAgentMessageController(async ({ captures, controller, runtime, sessionId }) => {
     const prepared = await runWithProjectRequestContext({
       slug: "assistant-project",
@@ -3993,7 +4064,8 @@ test("Codex runtime execution records carry the active project slug", async () =
     }, () => controller.ensureThread(sessionId));
 
     assert.equal(prepared.ok, true, JSON.stringify(prepared));
-    assert.equal(captures.providerOptions[0].project.slug, "assistant-project");
+    assert.deepEqual(captures.providerOptions[0].project, {});
+    assert.equal(captures.providerOptions[0].threadProject.slug, "assistant-project");
   });
 });
 
@@ -4668,11 +4740,7 @@ test("renewal cleanup cannot observe or delete another project's Temporary AI st
         session: alpha.session
       })
     ));
-    assert.equal(captures.stopRuntimeProviderOptions.length, 1);
-    assert.equal(
-      captures.stopRuntimeProviderOptions[0].executionRoot,
-      alpha.session.metadata.source_path
-    );
+    assert.equal(captures.stopRuntimeProviderOptions.length, 0);
 
     const alphaAfterCleanup = await runWithProjectRequestContext(
       alpha.context,
@@ -6058,11 +6126,11 @@ test("startup reconciliation deletes a thread orphaned before its first ledger w
     assert.equal(failed.ok, false);
     assert.equal(failed.code, "vibe64_codex_economy_ownership_blocked");
     assert.deepEqual(captures.deletes, ["conversation-1"]);
-    const economyOptions = captures.providerOptions.find(({ executionMode }) => (
-      executionMode === "economy"
+    const sharedOptions = captures.providerOptions.find(({ economyWorkdir }) => (
+      Boolean(economyWorkdir)
     ));
-    assert.ok(economyOptions?.runtimeDir);
-    await mkdir(economyOptions.runtimeDir, { recursive: true });
+    assert.ok(sharedOptions?.runtimeDir);
+    await mkdir(sharedOptions.runtimeDir, { recursive: true });
     simulateControllerCrash();
 
     const restarted = restartedCaptures(captures, {

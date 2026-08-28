@@ -1749,12 +1749,14 @@ function createCodexTerminalController({
     const runtimeIdsHash = stableHash(JSON.stringify(Array.isArray(options.runtimes) ? options.runtimes : []));
     return [
       normalizedSessionId,
-      normalizeText(options.executionRoot),
+      normalizeText(options.threadExecutionRoot || options.executionRoot),
       normalizeText(options.runtimeInstanceId),
       runtimeIdsHash,
-      executionEnvFingerprint(codexAppServerProviderIdentityEnv(options.terminalEnv)),
+      executionEnvFingerprint(codexAppServerProviderIdentityEnv(
+        options.threadEnv || options.terminalEnv
+      )),
       normalizeText(options.toolHomeSource),
-      normalizeText(options.workdir),
+      normalizeText(options.threadWorkdir || options.workdir),
       normalizeText(options.executionMode)
     ].join(CODEX_APP_SERVER_PROVIDER_KEY_DELIMITER);
   }
@@ -1897,8 +1899,7 @@ function createCodexTerminalController({
   }
 
   function codexAppServerProviderIsAvailableForSession(sessionId = "", options = {}) {
-    const providerOptions = codexAppServerRuntimeOptions(options);
-    const providerKey = codexAppServerProviderKey(sessionId, providerOptions);
+    const providerKey = codexAppServerProviderKey(sessionId, options);
     const provider = codexAppServerProviders.get(providerKey);
     return provider?.isAvailable?.() === true;
   }
@@ -1952,7 +1953,7 @@ function createCodexTerminalController({
 
   async function ensureCodexAppServerDaemonForSession(sessionId = "", options = {}) {
     const normalizedSessionId = normalizeText(sessionId);
-    const providerOptions = codexAppServerRuntimeOptions(options);
+    const providerOptions = options;
     const provider = await codexAppServerProviderForSession(normalizedSessionId, providerOptions);
     const providerKey = codexAppServerProviderKey(normalizedSessionId, providerOptions);
     try {
@@ -1978,10 +1979,9 @@ function createCodexTerminalController({
       });
       return provider;
     } catch (error) {
-      await retireAndCloseCodexAppServerProviderForSession(
-        normalizedSessionId,
-        providerOptions
-      );
+      if (!codexAppServerServerClosing) {
+        await stopCodexAppServerProviderForSession(normalizedSessionId, providerOptions);
+      }
       throw error;
     }
   }
@@ -2035,10 +2035,8 @@ function createCodexTerminalController({
   }
 
   function codexAppServerRuntimeOptions({
-    executionMode = "",
     project = {},
     runtimeDir = "",
-    runtimeInstanceId = "",
     session = {},
     executionRoot = "",
     terminalEnv = {},
@@ -2050,18 +2048,32 @@ function createCodexTerminalController({
       terminalEnv,
       toolHomeSource
     });
+    const sharedRuntimeDir = normalizeText(runtimeDir) ||
+      codexAppServerRuntimeDir(runtimeContext.providerOptions);
+    const sessionId = normalizeText(session?.sessionId || session?.id);
     return {
       ...runtimeContext.providerOptions,
-      executionMode: normalizeText(executionMode),
-      project,
-      runtimeDir: normalizeText(runtimeDir),
-      runtimeInstanceId: normalizeText(runtimeInstanceId),
-      session,
-      executionRoot: normalizeText(executionRoot),
-      terminalEnv: runtimeContext.terminalEnv,
+      economyWorkdir: path.join(
+        sharedRuntimeDir,
+        "economy-workspaces",
+        stableHash(sessionId || normalizeText(workdir) || "unattributed")
+      ),
+      executionMode: "",
+      executionRoot: "",
+      project: {},
+      runtimeDir: sharedRuntimeDir,
+      runtimeInstanceId: "",
+      session: {},
+      terminalEnv: {},
+      threadEnv: runtimeContext.terminalProcessEnv,
+      threadExecutionRoot: normalizeText(executionRoot),
+      threadProject: project,
+      threadSession: session,
+      threadUserKey: normalizeText(userKey),
+      threadWorkdir: normalizeText(workdir),
       toolHomeSource: runtimeContext.toolHomeSource,
-      userKey: normalizeText(userKey),
-      workdir: normalizeText(workdir)
+      userKey: "",
+      workdir: ""
     };
   }
 
@@ -2088,18 +2100,14 @@ function createCodexTerminalController({
   }
 
   async function codexAppServerRuntimeOptionsForSession(session = {}, {
-    executionMode = "",
     runtime = null,
     runtimeDir = "",
-    runtimeInstanceId = "",
     executionRoot = "",
     terminalEnv,
     toolHomeSource = "",
     workdir = ""
   } = {}) {
     const metadata = session.metadata || {};
-    const effectiveRuntimeInstanceId = normalizeText(runtimeInstanceId) ||
-      normalizeText(session.sessionId || session.id);
     const effectiveExecutionRoot = normalizeText(executionRoot) || terminalSessionSourceRoot(session);
     const effectiveWorkdir = normalizeText(workdir) || terminalWorktreePath(session);
     const effectiveRuntime = runtime || await createRuntimeForSession();
@@ -2123,26 +2131,15 @@ function createCodexTerminalController({
           sessionId: normalizeText(session.sessionId || session.id)
         })
       };
-    const expectedRuntimeDir = effectiveRuntimeInstanceId && (effectiveExecutionRoot || effectiveWorkdir)
-      ? codexAppServerRuntimeDir({
-          ...codexAppServerProviderOptions,
-          executionMode: normalizeText(executionMode),
-          runtimeInstanceId: effectiveRuntimeInstanceId,
-          executionRoot: effectiveExecutionRoot,
-          workdir: effectiveWorkdir
-        })
-      : "";
+    const expectedRuntimeDir = codexAppServerRuntimeDir(codexAppServerProviderOptions);
     const metadataRuntimeDir = normalizeText(metadata.agent_transport_runtime_dir);
     const reusableMetadataRuntimeDir = metadataRuntimeDir && expectedRuntimeDir &&
-      !normalizeText(executionMode) &&
       path.resolve(metadataRuntimeDir) === path.resolve(expectedRuntimeDir)
       ? metadataRuntimeDir
       : "";
     return codexAppServerRuntimeOptions({
-      executionMode,
       project: codexAppServerProjectContext(effectiveTerminalEnv),
       runtimeDir: normalizeText(runtimeDir) || reusableMetadataRuntimeDir || expectedRuntimeDir,
-      runtimeInstanceId: effectiveRuntimeInstanceId,
       session: codexAppServerSessionRequestContext(session, {
         executionRoot: effectiveExecutionRoot
       }),
@@ -2155,12 +2152,7 @@ function createCodexTerminalController({
   }
 
   async function codexAppServerEconomyRuntimeOptionsForSession(session = {}, options = {}) {
-    const sessionId = normalizeText(session.sessionId || session.id);
-    return codexAppServerRuntimeOptionsForSession(session, {
-      ...options,
-      executionMode: "economy",
-      runtimeInstanceId: `${sessionId}:economy`
-    });
+    return codexAppServerRuntimeOptionsForSession(session, options);
   }
 
   function sessionHasCodexAppServerRuntime(session = {}) {
@@ -3119,7 +3111,8 @@ function createCodexTerminalController({
 
   async function stopCachedCodexAppServerProvider(providerKey = "", {
     preserveProcessExitProof = false,
-    requireStopped = false
+    requireStopped = false,
+    stopSharedRuntime = false
   } = {}) {
     const normalizedProviderKey = normalizeText(providerKey);
     const provider = codexAppServerProviders.get(normalizedProviderKey);
@@ -3133,6 +3126,17 @@ function createCodexTerminalController({
     assertCodexAppServerEconomyThreadsRetired(
       await retireCodexAppServerEconomyThreads({ provider })
     );
+    const sharedProcessRetained = !stopSharedRuntime &&
+      [...codexAppServerProviders.keys()].some((key) => key !== normalizedProviderKey);
+    if (sharedProcessRetained) {
+      closeCodexAppServerProvider(normalizedProviderKey);
+      return {
+        providerKey: normalizedProviderKey,
+        sessionDetached: true,
+        sharedProcessRetained: true,
+        stopped: false
+      };
+    }
     if (typeof provider.stopRuntime !== "function") {
       closeCodexAppServerProvider(normalizedProviderKey);
       throw new Error("Codex app-server provider must implement stopRuntime().");
@@ -3335,50 +3339,47 @@ function createCodexTerminalController({
         targetedProviders.add(record.provider);
       }
     }
+    targets.sort((left, right) => Number(Boolean(left.record)) - Number(Boolean(right.record)));
     const failed = [];
     const results = [];
-    const stops = await Promise.allSettled(targets.map(async (target) => {
+    for (const target of targets) {
       const fields = codexAppServerProviderKeyFields(target.providerKey);
       const preserveProcessExitProof = Boolean(
         fields.sessionId &&
         fields.executionMode !== CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
       );
-      const result = shutdown
-        ? await stopCodexAppServerRuntimeForShutdown({
-            ...(target.record || {}),
-            provider: target.provider,
-            providerKey: target.providerKey
-          }, {
-            cached: target.kind === "cached",
-            preserveProcessExitProof,
-            requireVerifiedExit: Boolean(target.record)
-          })
-        : await stopCachedCodexAppServerProvider(target.providerKey, {
-            preserveProcessExitProof
-          });
-      if (
-        requireVerifiedExit &&
-        target.record &&
-        !codexAppServerRuntimeStopWasVerified(result)
-      ) {
-        throw codexAppServerRuntimeExitUnverifiedError(target.providerKey);
-      }
-      return result;
-    }));
-    stops.forEach((stop, index) => {
-      const providerKey = targets[index].providerKey;
-      if (stop.status === "fulfilled") {
-        results.push(stop.value);
-      } else {
-        const error = stop.reason;
+      try {
+        const result = shutdown && target.record
+          ? await stopCodexAppServerRuntimeForShutdown({
+              ...(target.record || {}),
+              provider: target.provider,
+              providerKey: target.providerKey
+            }, {
+              cached: target.kind === "cached",
+              preserveProcessExitProof,
+              requireVerifiedExit: true
+            })
+          : await stopCachedCodexAppServerProvider(target.providerKey, {
+              preserveProcessExitProof,
+              requireStopped: shutdown && target.record != null
+            });
+        if (
+          requireVerifiedExit &&
+          target.record &&
+          !codexAppServerRuntimeStopWasVerified(result)
+        ) {
+          throw codexAppServerRuntimeExitUnverifiedError(target.providerKey);
+        }
+        results.push(result);
+      } catch (error) {
         failed.push({
           code: normalizeText(error?.code),
           error: errorMessage(error, "Vibe64 Codex app-server runtime invalidation failed."),
-          providerKey,
+          providerKey: target.providerKey,
           retryable: error?.retryable === true
         });
       }
-    });
+    }
     const stopped = results.filter((result) => result.stopped).length;
     vibe64SessionDebugLog("server.codexTerminal.appServerRuntime.invalidate.done", {
       failedCount: failed.length,
@@ -3669,7 +3670,7 @@ function createCodexTerminalController({
     const provider = codexAppServerProviders.get(normalizedProviderKey);
     const sessionId = normalizeText(managed?.sessionId);
     const threadId = normalizeText(managed?.threadId);
-    if (!managed || !provider || !sessionId || !threadId) {
+    if (!managed || !provider || !sessionId) {
       throw new Error("Codex app-server managed connection is incomplete.");
     }
 
@@ -3679,6 +3680,12 @@ function createCodexTerminalController({
       providerKey: normalizedProviderKey,
       providerOptions: managed.providerOptions || {}
     });
+    if (!threadId) {
+      return {
+        ok: true,
+        status: "available"
+      };
+    }
     const providerThread = await codexAppServerReadThreadStatus(provider, threadId);
     const subscriptionKey = codexAppServerEventSubscriptionKey(
       normalizedProviderKey,
@@ -3807,6 +3814,14 @@ function createCodexTerminalController({
     const providerKey = codexAppServerProviderKey(normalizedSessionId, options);
     const provider = codexAppServerProviders.get(providerKey);
     if (!provider) {
+      if (codexAppServerProviders.size > 0) {
+        return {
+          providerKey,
+          sessionDetached: true,
+          sharedProcessRetained: true,
+          stopped: false
+        };
+      }
       await stopCodexAppServerRuntime({
         ...options,
         preserveProcessExitProof
@@ -7615,8 +7630,23 @@ function createCodexTerminalController({
     } = context;
     const threadId = codexThreadIdForWorkdir(session, workdir);
     if (!threadId) {
+      const providerOptions = await codexAppServerRuntimeOptionsForSession(session, {
+        runtime,
+        executionRoot,
+        toolHomeSource,
+        workdir
+      });
+      const providerKey = codexAppServerProviderKey(normalizedSessionId, providerOptions);
+      await ensureCodexAppServerDaemonForSession(normalizedSessionId, providerOptions);
+      rememberCodexAppServerManagedSession(providerKey, {
+        providerOptions,
+        sessionId: normalizedSessionId,
+        executionRoot,
+        workdir
+      });
       return {
         ok: true,
+        providerKey,
         sessionId: normalizedSessionId,
         status: "notStarted",
         threadId: ""
@@ -7743,9 +7773,6 @@ function createCodexTerminalController({
     const results = await Promise.all(sessionIds.map(async (sessionId) => {
       try {
         const session = await runtime.getSession(sessionId, { inspectSource: false });
-        const result = await reconcileCodexAppServerThreadForSession(sessionId, {
-          agentSettings
-        });
         let economyFailure = null;
         let economyInventory = null;
         if (economyRestore.ok !== false) {
@@ -7762,6 +7789,9 @@ function createCodexTerminalController({
             });
           }
         }
+        const result = await reconcileCodexAppServerThreadForSession(sessionId, {
+          agentSettings
+        });
         return {
           ...result,
           economyFailure,
@@ -12337,20 +12367,42 @@ function createCodexTerminalController({
               sessionId: normalizedSessionId
             });
           }
-          if (!renewalCleanup && !cachedProviders.providerCount && providerOptions) {
+          if (
+            !renewalCleanup &&
+            !cachedProviders.providerCount &&
+            providerOptions &&
+            sessionHasCodexAppServerRuntime(session)
+          ) {
             await stopCodexAppServerProviderForSession(normalizedSessionId, providerOptions, {
               preserveProcessExitProof
             });
           }
           let persistedRuntime = null;
           if (session) {
-            persistedRuntime = await stopPersistedCodexAppServerRuntimeForSession(
-              session,
-              providerOptions || {},
-              {
-                preserveProcessExitProof
-              }
-            );
+            persistedRuntime = cachedProviders.stopped > 0
+              ? {
+                  stopped: true,
+                  verifiedStopped: true
+                }
+              : codexAppServerProviders.size > 0
+              ? {
+                  sessionDetached: true,
+                  sharedProcessRetained: true,
+                  stopped: false,
+                  verifiedStopped: false
+                }
+              : sessionHasCodexAppServerRuntime(session)
+                ? await stopPersistedCodexAppServerRuntimeForSession(
+                  session,
+                  providerOptions || {},
+                  {
+                    preserveProcessExitProof
+                  }
+                )
+                : {
+                    stopped: false,
+                    verifiedStopped: false
+                  };
             vibe64SessionDebugLog("server.codexTerminal.appServerRuntime.closeSession.persisted.done", {
               removed: persistedRuntime?.removed === true,
               runtimeDirRemoved: persistedRuntime?.runtimeDirRemoved === true,
@@ -12361,8 +12413,15 @@ function createCodexTerminalController({
           if (renewalCleanup) {
             const cachedRuntimeExitVerified = cachedProviders.providerCount > 0 &&
               cachedProviders.results.length === cachedProviders.providerCount &&
-              cachedProviders.results.every((result) => result?.stopped === true);
-            const persistedRuntimeExitVerified = persistedRuntime?.verifiedStopped === true;
+              cachedProviders.results.every((result) => (
+                result?.stopped === true ||
+                (result?.sessionDetached === true && result?.sharedProcessRetained === true)
+              ));
+            const persistedRuntimeExitVerified = persistedRuntime?.verifiedStopped === true ||
+              (
+                persistedRuntime?.sessionDetached === true &&
+                persistedRuntime?.sharedProcessRetained === true
+              );
             if (
               cachedProviders.failed.length > 0 ||
               (!cachedRuntimeExitVerified && !persistedRuntimeExitVerified)

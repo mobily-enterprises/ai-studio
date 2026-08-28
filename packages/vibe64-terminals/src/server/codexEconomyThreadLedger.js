@@ -228,9 +228,8 @@ function strictIdentity(value) {
   const endpointPath = endpoint.startsWith("unix://") ? endpoint.slice("unix://".length) : "";
   if (
     providerId !== "codex" ||
-    executionMode !== "economy" ||
+    !["economy", "interactive"].includes(executionMode) ||
     provider !== "codex_app_server" ||
-    toolHomeSource ||
     transport !== "unix" ||
     !endpointPath ||
     !path.isAbsolute(endpointPath) ||
@@ -238,7 +237,7 @@ function strictIdentity(value) {
     transportId !== "codex_app_server"
   ) {
     throw ledgerError(
-      "Codex economy ownership identity must use the isolated Codex app-server without a credential-home path."
+      "Codex economy ownership identity must use the managed Codex app-server."
     );
   }
   return Object.freeze({

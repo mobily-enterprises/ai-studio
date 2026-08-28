@@ -29,6 +29,29 @@ test("OpenCode client accepts only loopback HTTP origins", () => {
   }));
 });
 
+test("OpenCode project clients scope every request to one directory", async () => {
+  const requests = [];
+  const client = createOpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetchImpl: async (url, options = {}) => {
+      requests.push({ headers: { ...options.headers }, url: String(url) });
+      return jsonResponse(new URL(url).pathname === "/api/session"
+        ? { data: { id: "ses_scoped" } }
+        : true);
+    },
+    password: "bridge-password"
+  }).forDirectory("/workspace/project-one");
+
+  await client.createSession({ id: "ses_scoped" });
+  await client.readSession("ses_scoped");
+  await client.interrupt("ses_scoped");
+
+  assert.deepEqual(
+    requests.map(({ headers }) => headers["x-opencode-directory"]),
+    ["/workspace/project-one", "/workspace/project-one", "/workspace/project-one"]
+  );
+});
+
 test("OpenCode client combines durable v2 sessions with stable execution routes and isolates provider keys", async () => {
   const requests = [];
   const client = createOpenCodeServerClient({

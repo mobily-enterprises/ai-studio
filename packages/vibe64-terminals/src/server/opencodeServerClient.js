@@ -155,6 +155,7 @@ function decodeOpenCodeEventData(value = "") {
 
 function createOpenCodeServerClient({
   baseUrl = "",
+  directory = "",
   fetchImpl = globalThis.fetch,
   password = "",
   username = "opencode"
@@ -167,6 +168,16 @@ function createOpenCodeServerClient({
     throw new TypeError("OpenCode bridge clients require fetch().");
   }
   const authorization = `Basic ${Buffer.from(`${text(username) || "opencode"}:${String(password)}`).toString("base64")}`;
+  const scopedDirectory = text(directory);
+
+  function requestHeaders(accept = "application/json", body = undefined) {
+    return {
+      accept,
+      authorization,
+      ...(scopedDirectory ? { "x-opencode-directory": scopedDirectory } : {}),
+      ...(body === undefined ? {} : { "content-type": "application/json" })
+    };
+  }
 
   async function request(method = "GET", requestPath = "/", {
     body,
@@ -175,11 +186,7 @@ function createOpenCodeServerClient({
   } = {}) {
     const response = await fetchImpl(new URL(requestPath, origin), {
       body: body === undefined ? undefined : JSON.stringify(body),
-      headers: {
-        accept: "application/json",
-        authorization,
-        ...(body === undefined ? {} : { "content-type": "application/json" })
-      },
+      headers: requestHeaders("application/json", body),
       method,
       signal
     });
@@ -201,10 +208,7 @@ function createOpenCodeServerClient({
   async function *events(sessionId = "", { signal } = {}) {
     const requestPath = "/event";
     const response = await fetchImpl(new URL(requestPath, origin), {
-      headers: {
-        accept: "text/event-stream",
-        authorization
-      },
+      headers: requestHeaders("text/event-stream"),
       method: "GET",
       signal
     });
@@ -316,6 +320,19 @@ function createOpenCodeServerClient({
       return request("DELETE", `/session/${encodeURIComponent(text(sessionId))}`, { signal });
     },
     events,
+    forDirectory(nextDirectory = "") {
+      const normalizedDirectory = text(nextDirectory);
+      if (!normalizedDirectory) {
+        throw new TypeError("OpenCode project clients require a working directory.");
+      }
+      return createOpenCodeServerClient({
+        baseUrl: origin.toString(),
+        directory: normalizedDirectory,
+        fetchImpl,
+        password,
+        username
+      });
+    },
     async health({ signal } = {}) {
       return request("GET", "/global/health", { signal });
     },

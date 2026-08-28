@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -262,6 +262,10 @@ async function controllerHarness({
   }
 
   const controller = createOpenCodeTerminalController({
+    env: {
+      ...process.env,
+      VIBE64_AGENT_RUNTIME_DIR: path.join(root, "agent-providers")
+    },
     ...(withCommandBoundary ? {
       agentDatabaseCommand: { id: "database" },
       agentEnvCommand: { id: "environment" },
@@ -309,6 +313,12 @@ async function controllerHarness({
       async readProjectAiPolicy() {
         return { aiPolicy: {}, ok: true };
       }
+    },
+    async readCatalogCommand() {
+      return {
+        agents,
+        providers: catalogProviders
+      };
     },
     async publishSessionChanged(...args) {
       publishedSessionChanges.push(args);
@@ -381,6 +391,21 @@ test("OpenCode leaves starting state when Git identity admission fails", async (
   assert.equal(harness.userMessages.length, 0);
 });
 
+test("OpenCode capability discovery does not start an app server", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const result = await harness.controller.capabilities({}, {
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(result.engineId, "opencode");
+  assert.equal(harness.processStarts.length, 0);
+});
+
 test("OpenCode persists a user message only after upstream admission", async (t) => {
   const harness = await controllerHarness();
   t.after(async () => {
@@ -419,24 +444,23 @@ test("OpenCode persists a user message only after upstream admission", async (t)
   assert.equal(harness.userMessages[0].messageId, "client-message-2");
   assert.equal(harness.userMessages[0].turnMetadata.engineId, "opencode");
   assert.match(harness.userMessages[0].turnMetadata.upstreamMessageId, /^msg_vibe64_/u);
-  assert.equal(harness.processStarts.filter((entry) => entry.options.apiKey).length, 1);
+  assert.equal(harness.processStarts.filter((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  )).length, 1);
   assert.equal(
-    harness.processStarts.find((entry) => entry.options.apiKey).options.apiKey,
+    harness.processStarts.find((entry) => (
+      entry.options.execution.operationId === "opencode-server"
+    )).options.providerConnections[0].apiKey,
     "deepseek-key-one"
   );
-  const sessionProcess = harness.processStarts.find((entry) => entry.options.apiKey);
+  const sessionProcess = harness.processStarts.find((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  ));
   assert.deepEqual(sessionProcess.options.execution, {
     label: "OpenCode assistant",
     operationId: "opencode-server",
-    ownerId: "session-1",
-    projectSlug: path.basename(harness.root),
-    sessionId: "session-1"
+    ownerId: "opencode"
   });
-  const catalogProcess = harness.processStarts.find((entry) => !entry.options.apiKey);
-  assert.equal(catalogProcess.options.execution.label, "OpenCode model catalogue");
-  assert.equal(catalogProcess.options.execution.operationId, "opencode-catalog");
-  assert.equal(catalogProcess.options.execution.projectSlug, path.basename(harness.root));
-  assert.match(catalogProcess.options.execution.ownerId, /^opencode-catalog-[a-f0-9]{40}$/u);
   const mainPrompt = harness.promptCalls.find((entry) => entry.id === delivered.thread.id).input;
   assert.equal(mainPrompt.agent, "build");
   assert.deepEqual(mainPrompt.model, {
@@ -486,6 +510,59 @@ test("OpenCode persists a user message only after upstream admission", async (t)
   assert.equal(idle?.[1]?.payload?.agentRun?.state, "completed");
   assert.equal(idle?.[1]?.payload?.agentSession?.turn?.active, false);
   assert.equal(idle?.[1]?.payload?.agentSession?.turn?.state, "idle");
+});
+
+test("OpenCode shares one lazy server across open sessions and stops it after the last closes", async (t) => {
+  const harness = await controllerHarness();
+  const secondSourceRoot = path.join(
+    harness.root,
+    "sessions",
+    "active",
+    "session-2",
+    "source"
+  );
+  const secondSessionRoot = path.join(harness.root, "session-state", "session-2");
+  await Promise.all([
+    mkdir(secondSourceRoot, { recursive: true }),
+    mkdir(secondSessionRoot, { recursive: true })
+  ]);
+  const secondSession = {
+    ...harness.session,
+    metadata: {
+      ...harness.session.metadata,
+      source_path: secondSourceRoot
+    },
+    sessionId: "session-2",
+    sessionRoot: secondSessionRoot
+  };
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const reconciled = await harness.controller.reconcileSessions([
+    harness.session,
+    secondSession
+  ], {
+    runtime: harness.runtime,
+    vibe64User: { username: "ada" }
+  });
+  const serverStarts = harness.processStarts.filter((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  ));
+
+  assert.equal(reconciled.ok, true);
+  assert.equal(reconciled.results.every((result) => result.resumed === false), true);
+  assert.equal(serverStarts.length, 1);
+  assert.equal(harness.createdSessions.length, 2);
+
+  const firstClose = await harness.controller.closeAllForSession("session-1");
+  assert.equal(firstClose.processExitProof.sharedProcessRetained, true);
+  assert.equal(harness.processStops.length, 0);
+
+  const lastClose = await harness.controller.closeAllForSession("session-2");
+  assert.equal(lastClose.processExitProof.exited, true);
+  assert.equal(harness.processStops.length, 1);
 });
 
 test("OpenCode publishes current provider reasoning while its turn is active", async (t) => {
@@ -759,14 +836,16 @@ test("OpenCode restarts on key replacement while preserving its database and nat
   harness.connection.apiKey = "deepseek-key-two";
   harness.connection.fingerprint = `sha256:${"2".repeat(64)}`;
   const second = await harness.controller.ensureSession("session-1", options);
-  const sessionStarts = harness.processStarts.filter((entry) => entry.options.apiKey);
+  const sessionStarts = harness.processStarts.filter((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  ));
 
   assert.equal(first.thread.id, second.thread.id);
   assert.equal(sessionStarts.length, 2);
   assert.equal(sessionStarts[0].options.dbPath, sessionStarts[1].options.dbPath);
   assert.equal(sessionStarts[0].options.workdir, sessionStarts[1].options.workdir);
-  assert.equal(sessionStarts[0].options.apiKey, "deepseek-key-one");
-  assert.equal(sessionStarts[1].options.apiKey, "deepseek-key-two");
+  assert.equal(sessionStarts[0].options.providerConnections[0].apiKey, "deepseek-key-one");
+  assert.equal(sessionStarts[1].options.providerConnections[0].apiKey, "deepseek-key-two");
   assert.equal(harness.processStops.includes(sessionStarts[0].options), true);
   assert.equal(harness.createdSessions.filter((entry) => entry.id === first.thread.id).length, 1);
 });
@@ -829,15 +908,17 @@ test("OpenCode switches connected providers while preserving its database and na
   });
 
   const second = await harness.controller.ensureSession("session-1", options);
-  const sessionStarts = harness.processStarts.filter((entry) => entry.options.apiKey);
+  const sessionStarts = harness.processStarts.filter((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  ));
 
   assert.equal(first.thread.id, second.thread.id);
   assert.equal(sessionStarts.length, 2);
   assert.equal(sessionStarts[0].options.dbPath, sessionStarts[1].options.dbPath);
   assert.equal(sessionStarts[0].options.workdir, sessionStarts[1].options.workdir);
-  assert.equal(sessionStarts[0].options.modelProviderId, "deepseek");
-  assert.equal(sessionStarts[1].options.modelProviderId, "zai-coding-plan");
-  assert.equal(sessionStarts[1].options.apiKey, "zai-key-one");
+  assert.equal(sessionStarts[0].options.providerConnections[0].modelProviderId, "deepseek");
+  assert.equal(sessionStarts[1].options.providerConnections[0].modelProviderId, "zai-coding-plan");
+  assert.equal(sessionStarts[1].options.providerConnections[0].apiKey, "zai-key-one");
   assert.equal(harness.processStops.includes(sessionStarts[0].options), true);
   assert.deepEqual(harness.switchedModels.at(-1), {
     id: second.thread.id,
@@ -960,12 +1041,19 @@ test("OpenCode receives the same complete session command boundary as Codex", as
     "session-1",
     "source"
   ));
-  const sessionProcess = harness.processStarts.find((entry) => entry.options.apiKey);
-  assert.deepEqual(sessionProcess.options.managedEnv, {
+  const sessionProcess = harness.processStarts.find((entry) => (
+    entry.options.execution.operationId === "opencode-server"
+  ));
+  const registry = JSON.parse(await readFile(
+    sessionProcess.options.sessionEnvironmentRegistry,
+    "utf8"
+  ));
+  assert.deepEqual(registry.sessions[0].env, {
     VIBE64_AGENT_DATABASE_COMMAND_SOCKET: "/managed/database.sock",
     VIBE64_AGENT_ENV_COMMAND_SOCKET: "/managed/environment.sock",
     VIBE64_AGENT_PREVIEW_COMMAND_SOCKET: "/managed/preview.sock",
     VIBE64_CODEX_GIT_COMMAND_SOCKET: "/managed/git.sock"
   });
-  assert.deepEqual(sessionProcess.options.shimDirs, ["/managed/wrappers"]);
+  assert.deepEqual(registry.sessions[0].pathEntries, ["/managed/wrappers"]);
+  assert.equal(registry.sessions[0].sessionId, "session-1");
 });

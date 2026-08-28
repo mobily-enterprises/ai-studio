@@ -13,8 +13,57 @@ import {
   OPENCODE_EXPECTED_VERSION,
   createOpenCodeServerProcess,
   openCodeInlineConfig,
+  parseOpenCodeAgentCatalog,
+  parseOpenCodeModelCatalog,
   safeOpenCodeEnvironment
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
+
+test("OpenCode finite catalogue output is parsed without a resident server", () => {
+  const providers = parseOpenCodeModelCatalog([
+    "deepseek/deepseek-chat",
+    JSON.stringify({
+      capabilities: { reasoning: true, toolcall: true },
+      id: "deepseek-chat",
+      name: "DeepSeek Chat",
+      providerID: "deepseek",
+      status: "active",
+      variants: { high: {}, low: {} }
+    }, null, 2),
+    "zai/glm-5",
+    JSON.stringify({
+      capabilities: { reasoning: true, toolcall: true },
+      id: "glm-5",
+      name: "GLM 5",
+      providerID: "zai",
+      status: "active",
+      variants: {}
+    }, null, 2)
+  ].join("\n"));
+  const agents = parseOpenCodeAgentCatalog([
+    "build (primary)",
+    JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }], null, 2),
+    "explore (subagent)",
+    JSON.stringify([{ action: "deny", pattern: "*", permission: "*" }], null, 2)
+  ].join("\n"));
+
+  assert.deepEqual(providers.default, {
+    deepseek: "deepseek-chat",
+    zai: "glm-5"
+  });
+  assert.equal(providers.all[0].models["deepseek-chat"].name, "DeepSeek Chat");
+  assert.deepEqual(agents.map(({ mode, name }) => ({ mode, name })), [
+    { mode: "primary", name: "build" },
+    { mode: "subagent", name: "explore" }
+  ]);
+  assert.equal(parseOpenCodeModelCatalog([
+    "deepseek/deepseek-chat",
+    JSON.stringify({ id: "deepseek-chat", providerID: "deepseek" })
+  ].join("\n")).all[0].models["deepseek-chat"].id, "deepseek-chat");
+  assert.equal(parseOpenCodeAgentCatalog([
+    "build (primary)",
+    JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }])
+  ].join("\n"))[0].name, "build");
+});
 
 test("OpenCode process environment is minimal and injects Vibe64's deny-all helper agent", () => {
   const env = safeOpenCodeEnvironment({

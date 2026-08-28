@@ -640,6 +640,10 @@ function codexAppServerEconomyIsolationConfig({
       }
     },
     project_doc_max_bytes: 0,
+    shell_environment_policy: {
+      inherit: "none",
+      set: {}
+    },
     skills: {
       include_instructions: false
     },

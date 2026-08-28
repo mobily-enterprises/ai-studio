@@ -1,16 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
-  stopVibe64OwnedExecutions
-} from "@local/vibe64-execution/server";
-import {
+  codexAppServerRuntimeBaseDir,
   VIBE64_AGENT_RUN_STATE,
   vibe64AgentRunStateIsActive
-} from "@local/vibe64-runtime/server/sessionStore";
+} from "@local/vibe64-runtime/server";
 import { vibe64SessionBriefing } from "@local/vibe64-runtime/server/vibeSessionBriefing";
 import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
@@ -36,7 +34,8 @@ import {
 } from "./agentCommandEnvironment.js";
 import {
   OPENCODE_ECONOMY_AGENT_ID,
-  createOpenCodeServerProcess
+  createOpenCodeServerProcess,
+  readOpenCodeCatalog
 } from "./opencodeServerProcess.js";
 import {
   defineSessionRenewalApprovedHandover,
@@ -52,7 +51,6 @@ import { terminalSessionSourceRoot } from "./terminalShared.js";
 
 const OPENCODE_AGENT_RUN_ID = "opencode_server";
 const OPENCODE_CATALOG_CACHE_MS = 10 * 60 * 1000;
-const OPENCODE_CATALOG_IDLE_MS = 15 * 1000;
 const OPENCODE_MESSAGE_POLL_MS = 250;
 const OPENCODE_REASONING_PROGRESS_MAX_CHARS = 280;
 const OPENCODE_SESSION_PREFIX = "ses_vibe64_";
@@ -526,6 +524,7 @@ function createOpenCodeTerminalController({
   prepareCommandEnvironment = prepareAgentSessionCommandEnvironment,
   projectService,
   publishSessionChanged = async () => null,
+  readCatalogCommand = readOpenCodeCatalog,
   recordGitActor = recordSessionGitCommandActor,
   resolveConnection = async () => null
 } = {}) {
@@ -539,11 +538,13 @@ function createOpenCodeTerminalController({
   const turns = new Map();
   const temporaryConversations = new Map();
   const processExitProofs = new Map();
-  let catalogProcess = null;
-  let catalogStart = null;
-  let catalogIdleTimer = null;
+  const sessionEnvironments = new Map();
+  let catalogRead = null;
   let catalogSnapshot = null;
   let closed = false;
+  let sharedProcess = null;
+  let sharedProcessStart = null;
+  let sharedProcessStop = null;
 
   async function contextFor(sessionId = "", options = {}) {
     const id = safeSessionId(sessionId);
@@ -576,63 +577,148 @@ function createOpenCodeTerminalController({
     };
   }
 
-  function catalogRoots(runtime = {}) {
-    const root = path.join(path.resolve(runtime.stateRoot), "assistant-runtimes", "opencode");
+  function sharedRoots() {
+    const root = path.join(codexAppServerRuntimeBaseDir({ env }), "opencode");
     return {
       cacheRoot: path.join(root, "cache"),
-      dbPath: path.join(root, "catalog", "opencode.db"),
-      privateRoot: path.join(root, "catalog", `private-${randomUUID()}`),
-      workdir: path.resolve(runtime.projectContextRoot || runtime.stateRoot)
+      dbPath: path.join(root, "opencode.db"),
+      privateRoot: path.join(root, `private-${randomUUID()}`),
+      registryPath: path.join(root, "session-environments.json"),
+      root,
+      workdir: path.join(root, "workspace")
     };
   }
 
-  function projectExecutionSlug(runtime = {}) {
-    return text(path.basename(path.resolve(runtime.projectContextRoot || runtime.stateRoot)));
+  async function writeSessionEnvironmentRegistry(registryPath = sharedRoots().registryPath) {
+    await mkdir(path.dirname(registryPath), { mode: 0o700, recursive: true });
+    const temporaryPath = `${registryPath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify({
+      sessions: [...sessionEnvironments.values()]
+    })}\n`, {
+      mode: 0o600
+    });
+    await rename(temporaryPath, registryPath);
   }
 
-  function scheduleCatalogStop() {
-    clearTimeout(catalogIdleTimer);
-    catalogIdleTimer = setTimeout(() => {
-      const target = catalogProcess;
-      catalogProcess = null;
-      void target?.stop().catch(() => null);
-    }, OPENCODE_CATALOG_IDLE_MS);
-    catalogIdleTimer.unref?.();
+  async function configuredConnections(context = {}, options = {}, selected = null) {
+    const listed = await listConnections({
+      engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+      vibe64User: options.vibe64User || null
+    });
+    const providerIds = new Set((Array.isArray(listed) ? listed : [])
+      .map((connection) => text(connection?.modelProviderId || connection?.id))
+      .filter(Boolean));
+    if (selected?.modelProviderId) {
+      providerIds.add(selected.modelProviderId);
+    }
+    const resolved = await Promise.all([...providerIds].map(async (modelProviderId) => {
+      try {
+        return requireOpenCodeConnection(await resolveConnection({
+          engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+          modelProviderId,
+          sessionId: context.sessionId,
+          vibe64User: options.vibe64User || null
+        }), modelProviderId);
+      } catch (error) {
+        if (modelProviderId === selected?.modelProviderId) {
+          throw error;
+        }
+        return null;
+      }
+    }));
+    return resolved.filter(Boolean);
   }
 
-  async function ensureCatalogProcess() {
-    if (catalogProcess) {
-      scheduleCatalogStop();
-      return catalogProcess;
+  async function startServer({ connections = [], execution = {} } = {}) {
+    const roots = sharedRoots();
+    await writeSessionEnvironmentRegistry(roots.registryPath);
+    return createServerProcess({
+      cacheRoot: roots.cacheRoot,
+      command,
+      dbPath: roots.dbPath,
+      env,
+      execution,
+      privateRoot: roots.privateRoot,
+      providerConnections: connections,
+      sessionEnvironmentRegistry: roots.registryPath,
+      workdir: roots.workdir
+    });
+  }
+
+  async function stopSharedProcess(reason = "opencode-last-session-closed") {
+    if (sharedProcessStop) {
+      return sharedProcessStop;
     }
-    if (catalogStart) {
-      return catalogStart;
+    const target = sharedProcess;
+    sharedProcess = null;
+    if (!target) {
+      return { exited: true, reason };
     }
-    catalogStart = Promise.resolve().then(async () => {
-      const runtime = await projectService.createRuntime({ inspectSource: false });
-      const roots = catalogRoots(runtime);
-      const started = await createServerProcess({
-        cacheRoot: roots.cacheRoot,
-        command,
-        dbPath: roots.dbPath,
-        env,
+    sharedProcessStop = target.server.stop();
+    try {
+      return await sharedProcessStop;
+    } finally {
+      sharedProcessStop = null;
+    }
+  }
+
+  async function ensureSharedProcess(context = {}, options = {}, selected = null) {
+    if (sharedProcess) {
+      const currentConnection = sharedProcess.connections.get(selected?.modelProviderId);
+      if (
+        !selected ||
+        (
+          currentConnection?.fingerprint === selected.fingerprint &&
+          currentConnection?.endpointCode === selected.endpointCode
+        )
+      ) {
+        try {
+          await sharedProcess.server.client.health({ signal: AbortSignal.timeout(1_000) });
+          return sharedProcess;
+        } catch {
+          await stopSharedProcess("opencode-health-check-failed").catch(() => null);
+        }
+      } else {
+        await stopSharedProcess("opencode-connection-changed");
+      }
+    }
+    if (sharedProcessStart) {
+      return sharedProcessStart;
+    }
+    sharedProcessStart = Promise.resolve().then(async () => {
+      const connections = await configuredConnections(context, options, selected);
+      const server = await startServer({
+        connections,
         execution: {
-          label: "OpenCode model catalogue",
-          operationId: "opencode-catalog",
-          ownerId: `opencode-catalog-${fingerprint(runtime.stateRoot).slice(0, 40)}`,
-          projectSlug: projectExecutionSlug(runtime)
-        },
-        privateRoot: roots.privateRoot,
-        workdir: roots.workdir
+          label: "OpenCode assistant",
+          operationId: "opencode-server",
+          ownerId: "opencode"
+        }
       });
-      catalogProcess = started;
-      scheduleCatalogStop();
-      return started;
+      sharedProcess = {
+        connections: new Map(connections.map((connection) => [
+          connection.modelProviderId,
+          {
+            endpointCode: connection.endpointCode,
+            fingerprint: connection.fingerprint
+          }
+        ])),
+        server
+      };
+      for (const target of processes.values()) {
+        target.server = Object.freeze({
+          ...server,
+          client: typeof server.client.forDirectory === "function"
+            ? server.client.forDirectory(target.workdir)
+            : server.client
+        });
+      }
+      return sharedProcess;
     });
     try {
-      return await catalogStart;
+      return await sharedProcessStart;
     } finally {
-      catalogStart = null;
+      sharedProcessStart = null;
     }
   }
 
@@ -640,18 +726,41 @@ function createOpenCodeTerminalController({
     if (catalogSnapshot && Date.now() - catalogSnapshot.readAt < OPENCODE_CATALOG_CACHE_MS) {
       return catalogSnapshot;
     }
-    const server = await ensureCatalogProcess();
-    const [providers, agents] = await Promise.all([
-      server.client.providers({ directory: server.workdir }),
-      server.client.agents({ directory: server.workdir })
-    ]);
-    catalogSnapshot = {
-      agents,
-      providers,
-      readAt: Date.now()
-    };
-    scheduleCatalogStop();
-    return catalogSnapshot;
+    if (catalogRead) {
+      return catalogRead;
+    }
+    catalogRead = Promise.resolve().then(async () => {
+      let catalog = null;
+      if (sharedProcess) {
+        const server = sharedProcess.server;
+        const [providers, agents] = await Promise.all([
+          server.client.providers({ directory: server.workdir }),
+          server.client.agents({ directory: server.workdir })
+        ]);
+        catalog = { agents, providers };
+      } else {
+        const runtime = await projectService.createRuntime({ inspectSource: false });
+        const roots = sharedRoots();
+        catalog = await readCatalogCommand({
+          cacheRoot: roots.cacheRoot,
+          command,
+          env,
+          privateRoot: path.join(roots.root, `catalog-${randomUUID()}`),
+          workdir: path.resolve(runtime.projectContextRoot || roots.workdir)
+        });
+      }
+      catalogSnapshot = {
+        agents: catalog.agents,
+        providers: catalog.providers,
+        readAt: Date.now()
+      };
+      return catalogSnapshot;
+    });
+    try {
+      return await catalogRead;
+    } finally {
+      catalogRead = null;
+    }
   }
 
   async function capabilities(input = {}, options = {}) {
@@ -668,21 +777,6 @@ function createOpenCodeTerminalController({
       input,
       providers: catalog.providers
     });
-  }
-
-  function processRoots(context = {}) {
-    const root = path.join(
-      path.resolve(context.runtime.stateRoot),
-      "assistant-runtimes",
-      "opencode"
-    );
-    const privateSessionRoot = path.join(root, "private", context.sessionId);
-    return {
-      cacheRoot: path.join(root, "cache"),
-      dbPath: path.join(path.resolve(context.session.sessionRoot), "opencode", "opencode.db"),
-      privateRoot: path.join(privateSessionRoot, randomUUID()),
-      privateSessionRoot
-    };
   }
 
   function renewalSession(context = {}) {
@@ -756,12 +850,19 @@ function createOpenCodeTerminalController({
       return { exited: true };
     }
     target.abortController.abort();
-    const proof = await target.server.stop();
-    if (target.sessionId) {
-      processExitProofs.set(target.sessionId, proof);
-    }
     if (processes.get(target.key) === target) {
       processes.delete(target.key);
+      sessionEnvironments.delete(target.key);
+      await writeSessionEnvironmentRegistry();
+    }
+    const proof = processes.size === 0
+      ? await stopSharedProcess()
+      : {
+          exited: true,
+          sharedProcessRetained: true
+        };
+    if (target.sessionId) {
+      processExitProofs.set(target.sessionId, proof);
     }
     return proof;
   }
@@ -770,81 +871,69 @@ function createOpenCodeTerminalController({
     if (closed) {
       throw openCodeError("vibe64_opencode_closed", "The OpenCode bridge is shutting down.", {}, 503);
     }
-    const currentCapabilities = await capabilities({
-      limit: "1",
-      modelId: context.selection.modelId,
-      modelProviderId: context.selection.modelProviderId
-    }, options);
-    resolveVibe64AssistantSelection(currentCapabilities, {
-      ...context.selection,
-      catalogRevision: currentCapabilities.revision
-    });
     const connection = requireOpenCodeConnection(await resolveConnection({
       engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
       modelProviderId: context.selection.modelProviderId,
       sessionId: context.sessionId,
       vibe64User: options.vibe64User || null
     }), context.selection.modelProviderId);
-    const existing = processes.get(context.key);
-    if (
-      existing &&
-      existing.connectionFingerprint === connection.fingerprint &&
-      existing.endpointCode === connection.endpointCode &&
-      existing.modelProviderId === connection.modelProviderId &&
-      existing.workdir === context.workdir
-    ) {
-      try {
-        await existing.server.client.health({ signal: AbortSignal.timeout(1_000) });
-        existing.selection = context.selection;
-        return existing;
-      } catch {
-        await stopProcessRecord(existing).catch(() => null);
-      }
-    } else if (existing) {
-      await stopProcessRecord(existing);
-    }
     const pending = processStarts.get(context.key);
     if (pending) {
       return pending;
     }
     const start = Promise.resolve().then(async () => {
-      const roots = processRoots(context);
       const commands = await managedCommandEnvironment(context);
-      await rm(roots.privateSessionRoot, { force: true, recursive: true });
-      const server = await createServerProcess({
-        apiKey: connection.apiKey,
-        cacheRoot: roots.cacheRoot,
-        canonicalUrl: connection.canonicalUrl,
-        command,
-        dbPath: roots.dbPath,
-        env,
-        execution: {
-          label: "OpenCode assistant",
-          operationId: "opencode-server",
-          ownerId: context.sessionId,
-          projectSlug: projectExecutionSlug(context.runtime),
-          sessionId: context.sessionId
-        },
-        managedEnv: commands.env,
-        modelProviderId: connection.modelProviderId,
-        privateRoot: roots.privateRoot,
-        shimDirs: commands.shimDirs,
+      sessionEnvironments.set(context.key, {
+        env: commands.env,
+        pathEntries: commands.shimDirs,
+        projectContextRoot: path.resolve(context.runtime.projectContextRoot),
+        sessionId: context.sessionId,
         workdir: context.workdir
       });
-      const created = {
+      await writeSessionEnvironmentRegistry();
+      const shared = await ensureSharedProcess(context, options, connection);
+      const currentCapabilities = await capabilities({
+        limit: "1",
+        modelId: context.selection.modelId,
+        modelProviderId: context.selection.modelProviderId
+      }, options);
+      resolveVibe64AssistantSelection(currentCapabilities, {
+        ...context.selection,
+        catalogRevision: currentCapabilities.revision
+      });
+      const server = Object.freeze({
+        ...shared.server,
+        client: typeof shared.server.client.forDirectory === "function"
+          ? shared.server.client.forDirectory(context.workdir)
+          : shared.server.client
+      });
+      const existing = processes.get(context.key);
+      const created = existing || {
         abortController: new AbortController(),
+        key: context.key,
+        sessionId: context.sessionId,
+        upstreamSessionId: upstreamSessionId(context.runtime.stateRoot, context.sessionId)
+      };
+      Object.assign(created, {
         connectionFingerprint: connection.fingerprint,
         endpointCode: connection.endpointCode,
-        key: context.key,
         modelProviderId: connection.modelProviderId,
+        projectContextRoot: path.resolve(context.runtime.projectContextRoot),
         selection: context.selection,
         server,
-        sessionId: context.sessionId,
-        upstreamSessionId: upstreamSessionId(context.runtime.stateRoot, context.sessionId),
         workdir: context.workdir
-      };
+      });
       processes.set(context.key, created);
       return created;
+    }).catch(async (error) => {
+      if (!processes.has(context.key)) {
+        sessionEnvironments.delete(context.key);
+        await writeSessionEnvironmentRegistry().catch(() => null);
+        if (processes.size === 0) {
+          await stopSharedProcess("opencode-session-start-failed").catch(() => null);
+        }
+      }
+      throw error;
     });
     processStarts.set(context.key, start);
     try {
@@ -1714,14 +1803,6 @@ function createOpenCodeTerminalController({
     await Promise.all(pending);
     const targets = [...processes.values()].filter((target) => target.sessionId === id);
     const proofs = await Promise.all(targets.map((target) => stopProcessRecord(target)));
-    const owned = await stopVibe64OwnedExecutions({
-      kind: "assistant",
-      operationId: "opencode-server",
-      ownerId: id,
-      sessionId: id
-    }, {
-      reason: "opencode-session-close"
-    });
     for (const key of [...turns.keys()]) {
       if (key.endsWith(`\0${id}`)) {
         turns.delete(key);
@@ -1733,27 +1814,23 @@ function createOpenCodeTerminalController({
       }
     }
     return {
-      closed: Math.max(targets.length, Number(owned?.closed) || 0),
-      ok: proofs.every((proof) => proof?.exited !== false) && owned?.scopeEmpty !== false,
-      processExitProof: proofs.at(-1) || owned?.processExitProofs?.at?.(-1) ||
-        processExitProofs.get(id) || { exited: true },
-      processExitProofs: [...proofs, ...(owned?.processExitProofs || [])]
+      closed: targets.length,
+      ok: proofs.every((proof) => proof?.exited !== false),
+      processExitProof: proofs.at(-1) || processExitProofs.get(id) || { exited: true },
+      processExitProofs: proofs
     };
   }
 
-  async function closeAllForProject() {
-    await Promise.all([
-      ...[...processStarts.values()].map((start) => start.catch(() => null)),
-      ...(catalogStart ? [catalogStart.catch(() => null)] : [])
-    ]);
-    const targets = [...processes.values()];
-    const catalogTarget = catalogProcess;
-    catalogProcess = null;
-    const results = await Promise.all([
-      ...targets.map((target) => stopProcessRecord(target)),
-      ...(catalogTarget ? [catalogTarget.stop()] : [])
-    ]);
-    clearTimeout(catalogIdleTimer);
+  async function closeAllForProject(input = {}) {
+    await Promise.all([...processStarts.values()].map((start) => start.catch(() => null)));
+    const projectContextRoot = text(input.projectContextRoot);
+    const targets = [...processes.values()].filter((target) => (
+      !projectContextRoot || target.projectContextRoot === path.resolve(projectContextRoot)
+    ));
+    const results = await Promise.all(targets.map((target) => stopProcessRecord(target)));
+    if (!projectContextRoot && processes.size === 0 && sharedProcess) {
+      results.push(await stopSharedProcess(text(input.reason) || "opencode-project-close"));
+    }
     return {
       closed: results.length,
       ok: results.every((result) => result?.exited !== false)
@@ -1850,15 +1927,12 @@ function createOpenCodeTerminalController({
         closed = true;
       }
       catalogSnapshot = null;
-      const providerId = text(input.modelProviderId);
-      if (!providerId) {
-        return closeAllForProject();
-      }
       await Promise.all([...processStarts.values()].map((start) => start.catch(() => null)));
-      const targets = [...processes.values()].filter((target) => (
-        target.modelProviderId === providerId
-      ));
+      const targets = [...processes.values()];
       const results = await Promise.all(targets.map((target) => stopProcessRecord(target)));
+      if (targets.length === 0 && sharedProcess) {
+        results.push(await stopSharedProcess(text(input.reason) || "opencode-runtime-invalidation"));
+      }
       return {
         closed: results.length,
         ok: results.every((result) => result?.exited !== false)
@@ -1879,8 +1953,8 @@ function createOpenCodeTerminalController({
           const context = await contextFor(sessionId, { ...options, session });
           const activeRun = (Array.isArray(session?.agentRuns) ? session.agentRuns : [])
             .find((run) => run?.id === OPENCODE_AGENT_RUN_ID && run.active === true);
+          const target = await ensureUpstreamSession(context, options);
           if (activeRun) {
-            const target = await ensureUpstreamSession(context, options);
             beginMonitor(target, context, {
               eventStartedAt: Date.parse(text(activeRun.startedAt)) || Date.now(),
               id: text(activeRun.turnId) || upstreamMessageId(randomUUID()),
@@ -1952,7 +2026,6 @@ function createOpenCodeTerminalController({
 export {
   OPENCODE_AGENT_RUN_ID,
   OPENCODE_CATALOG_CACHE_MS,
-  OPENCODE_CATALOG_IDLE_MS,
   createOpenCodeTerminalController,
   upstreamMessageId,
   upstreamSessionId

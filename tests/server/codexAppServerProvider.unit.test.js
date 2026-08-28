@@ -2697,12 +2697,89 @@ test("codex provider resumes threads without returning their history", async () 
     {
       method: "thread/resume",
       params: {
+        config: {
+          shell_environment_policy: {
+            inherit: "none",
+            set: {}
+          }
+        },
         cwd: "/repo/worktree",
         excludeTurns: true,
         threadId: "thread-1"
       }
     }
   ]);
+});
+
+test("codex provider scopes each thread to its session environment", async () => {
+  const requests = [];
+  const provider = new CodexAppServerAgentProvider({
+    threadEnv: {
+      DATABASE_URL: "mysql://session-database.test/app",
+      SESSION_MARKER: "session-two"
+    }
+  });
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      requests.push({ method, params });
+      return {
+        thread: {
+          id: "thread-1",
+          turns: []
+        }
+      };
+    }
+  });
+
+  await provider.startThread({ cwd: "/repo/session-two" });
+  await provider.resumeThread("thread-1", { cwd: "/repo/session-two" });
+  await provider.startThread({
+    config: {
+      shell_environment_policy: {
+        inherit: "none",
+        set: {}
+      }
+    },
+    cwd: "/tmp/isolated-helper"
+  });
+
+  const sessionPolicy = {
+    inherit: "none",
+    set: {
+      DATABASE_URL: "mysql://session-database.test/app",
+      SESSION_MARKER: "session-two"
+    }
+  };
+  assert.deepEqual(requests, [{
+    method: "thread/start",
+    params: {
+      config: {
+        shell_environment_policy: sessionPolicy
+      },
+      cwd: "/repo/session-two"
+    }
+  }, {
+    method: "thread/resume",
+    params: {
+      config: {
+        shell_environment_policy: sessionPolicy
+      },
+      cwd: "/repo/session-two",
+      excludeTurns: true,
+      threadId: "thread-1"
+    }
+  }, {
+    method: "thread/start",
+    params: {
+      config: {
+        shell_environment_policy: {
+          inherit: "none",
+          set: {}
+        }
+      },
+      cwd: "/tmp/isolated-helper"
+    }
+  }]);
 });
 
 test("codex provider lists a bounded page of thread turns", async () => {

@@ -9,6 +9,7 @@ import { mkdir, rm } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
+import stripAnsi from "strip-ansi";
 
 import {
   isolatedProcessEnv,
@@ -23,8 +24,14 @@ const OPENCODE_EXPECTED_VERSION = "1.18.22";
 const OPENCODE_ECONOMY_AGENT_ID = "vibe64-economy";
 const OPENCODE_HOST = "127.0.0.1";
 const OPENCODE_LOG_LIMIT_BYTES = 64 * 1024;
+const OPENCODE_CATALOG_LIMIT_BYTES = 32 * 1024 * 1024;
+const OPENCODE_CATALOG_TIMEOUT_MS = 30_000;
 const OPENCODE_READY_TIMEOUT_MS = 30_000;
 const OPENCODE_STOP_TIMEOUT_MS = 3_000;
+const OPENCODE_SESSION_ENVIRONMENT_PLUGIN_URL = new URL(
+  "./opencodeSessionEnvironmentPlugin.js",
+  import.meta.url
+).href;
 const OPENCODE_MANAGED_STARTUP_SCRIPT = [
   "set -eu",
   "log_path=\"$1\"",
@@ -50,6 +57,88 @@ const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
 
 function text(value = "") {
   return String(value ?? "").trim();
+}
+
+function openCodeCatalogBlocks(value = "") {
+  const lines = stripAnsi(String(value || ""))
+    .replace(/\r\n?/gu, "\n")
+    .split("\n");
+  const blocks = [];
+  let header = "";
+  let source = [];
+  for (const line of lines) {
+    const normalized = line.trim();
+    if (source.length === 0) {
+      if (normalized.startsWith("{") || normalized.startsWith("[")) {
+        try {
+          blocks.push({
+            header,
+            value: JSON.parse(line)
+          });
+          header = "";
+        } catch {
+          source = [line];
+        }
+      } else if (normalized) {
+        header = normalized;
+      }
+      continue;
+    }
+    source.push(line);
+    try {
+      blocks.push({
+        header,
+        value: JSON.parse(source.join("\n"))
+      });
+      header = "";
+      source = [];
+    } catch {
+      // The pretty-printed JSON block is not complete yet.
+    }
+  }
+  return blocks;
+}
+
+function parseOpenCodeModelCatalog(value = "") {
+  const providers = new Map();
+  const defaults = {};
+  for (const block of openCodeCatalogBlocks(value)) {
+    const model = block.value;
+    const providerId = text(model?.providerID || block.header.split("/")[0]);
+    const modelId = text(model?.id || block.header.slice(providerId.length + 1));
+    if (!providerId || !modelId || !model || typeof model !== "object" || Array.isArray(model)) {
+      continue;
+    }
+    const provider = providers.get(providerId) || {
+      id: providerId,
+      models: {},
+      name: providerId,
+      source: "api"
+    };
+    provider.models[modelId] = { ...model, id: modelId };
+    providers.set(providerId, provider);
+    defaults[providerId] ||= modelId;
+  }
+  if (providers.size === 0) {
+    throw new Error("OpenCode returned no parseable model catalogue.");
+  }
+  return {
+    all: [...providers.values()],
+    default: defaults
+  };
+}
+
+function parseOpenCodeAgentCatalog(value = "") {
+  return openCodeCatalogBlocks(value).map((block) => {
+    const match = block.header.match(/^(.*?)\s+\(([^)]+)\)$/u);
+    return {
+      description: "",
+      hidden: false,
+      mode: text(match?.[2]) || "primary",
+      name: text(match?.[1] || block.header),
+      permission: block.value
+    };
+  }).filter((agent) => agent.name);
 }
 
 function canonicalProviderUrl(value = "") {
@@ -78,22 +167,33 @@ function canonicalProviderUrl(value = "") {
 
 function openCodeInlineConfig({
   canonicalUrl = "",
-  modelProviderId = ""
+  modelProviderId = "",
+  providerConnections = [],
+  sessionEnvironmentRegistry = ""
 } = {}) {
-  const providerId = text(modelProviderId);
-  const baseURL = canonicalProviderUrl(canonicalUrl);
-  if (Boolean(providerId) !== Boolean(baseURL)) {
+  const routes = new Map();
+  if (text(modelProviderId) || text(canonicalUrl)) {
+    routes.set(text(modelProviderId), canonicalProviderUrl(canonicalUrl));
+  }
+  for (const connection of Array.isArray(providerConnections) ? providerConnections : []) {
+    routes.set(text(connection?.modelProviderId), canonicalProviderUrl(connection?.canonicalUrl));
+  }
+  if ([...routes].some(([providerId, baseURL]) => !providerId || !baseURL)) {
     throw new TypeError("OpenCode provider id and canonical URL must be supplied together.");
   }
   return JSON.stringify({
     ...OPENCODE_INLINE_CONFIG_BASE,
-    ...(providerId
+    ...(text(sessionEnvironmentRegistry)
+      ? { plugin: [OPENCODE_SESSION_ENVIRONMENT_PLUGIN_URL] }
+      : {}),
+    ...(routes.size > 0
       ? {
-          provider: {
-            [providerId]: {
+          provider: Object.fromEntries([...routes].map(([providerId, baseURL]) => [
+            providerId,
+            {
               options: { baseURL }
             }
-          }
+          ]))
         }
       : {})
   });
@@ -111,6 +211,8 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
   modelProviderId = "",
   password = "",
   privateRoot = "",
+  providerConnections = [],
+  sessionEnvironmentRegistry = "",
   shimDirs = []
 } = {}) {
   const homeRoot = path.join(privateRoot, "home");
@@ -129,7 +231,12 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
         .filter(Boolean)
         .join(","),
       OPENCODE_DB: dbPath,
-      OPENCODE_CONFIG_CONTENT: openCodeInlineConfig({ canonicalUrl, modelProviderId }),
+      OPENCODE_CONFIG_CONTENT: openCodeInlineConfig({
+        canonicalUrl,
+        modelProviderId,
+        providerConnections,
+        sessionEnvironmentRegistry
+      }),
       OPENCODE_DISABLE_AUTOUPDATE: "1",
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
       OPENCODE_DISABLE_SHARE: "1",
@@ -137,7 +244,10 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
       OPENCODE_PRINT_LOGS: "0",
       OPENCODE_PURE: "1",
       OPENCODE_SERVER_PASSWORD: password,
-      OPENCODE_SERVER_USERNAME: "opencode"
+      OPENCODE_SERVER_USERNAME: "opencode",
+      ...(text(sessionEnvironmentRegistry)
+        ? { VIBE64_OPENCODE_SESSION_ENV_REGISTRY: path.resolve(sessionEnvironmentRegistry) }
+        : {})
     },
     homeRoot,
     pathEntries: shimDirs,
@@ -218,7 +328,9 @@ async function createOpenCodeServerProcess({
   modelProviderId = "",
   port = 0,
   privateRoot = "",
+  providerConnections = [],
   readinessTimeoutMs = OPENCODE_READY_TIMEOUT_MS,
+  sessionEnvironmentRegistry = "",
   shimDirs = [],
   stopExecution = stopVibe64Execution,
   workdir = ""
@@ -298,6 +410,8 @@ async function createOpenCodeServerProcess({
       modelProviderId,
       password,
       privateRoot: normalizedPrivateRoot,
+      providerConnections,
+      sessionEnvironmentRegistry,
       shimDirs
     });
     const startResult = await commandRunner({
@@ -377,8 +491,21 @@ async function createOpenCodeServerProcess({
       processHandle,
       timeoutMs: readinessTimeoutMs
     });
-    if (text(modelProviderId) || String(apiKey)) {
-      await client.authenticateApiKey(modelProviderId, apiKey);
+    const connections = [
+      ...(text(modelProviderId) || String(apiKey)
+        ? [{ apiKey, canonicalUrl, modelProviderId }]
+        : []),
+      ...(Array.isArray(providerConnections) ? providerConnections : [])
+    ];
+    const authenticated = new Set();
+    for (const connection of connections) {
+      const providerId = text(connection?.modelProviderId);
+      const key = String(connection?.apiKey || "");
+      if (!providerId || !key || authenticated.has(providerId)) {
+        continue;
+      }
+      await client.authenticateApiKey(providerId, key);
+      authenticated.add(providerId);
     }
     return Object.freeze({
       canonicalUrl: canonicalProviderUrl(canonicalUrl),
@@ -386,6 +513,7 @@ async function createOpenCodeServerProcess({
       dbPath: normalizedDbPath,
       health: Object.freeze({ ...health }),
       modelProviderId: text(modelProviderId),
+      modelProviderIds: Object.freeze([...authenticated]),
       executionId: processHandle.executionId,
       pid: processHandle.pid,
       port: selectedPort,
@@ -405,6 +533,76 @@ async function createOpenCodeServerProcess({
   }
 }
 
+async function readOpenCodeCatalog({
+  cacheRoot = "",
+  command = "opencode",
+  commandRunner = runVibe64Command,
+  env = process.env,
+  privateRoot = "",
+  workdir = ""
+} = {}) {
+  const normalizedPrivateRoot = path.resolve(text(privateRoot));
+  const normalizedWorkdir = path.resolve(text(workdir));
+  if (!text(privateRoot) || !text(workdir)) {
+    throw new TypeError("OpenCode catalogue reads require private and working roots.");
+  }
+  await Promise.all([
+    mkdir(normalizedPrivateRoot, { mode: 0o700, recursive: true }),
+    mkdir(normalizedWorkdir, { recursive: true })
+  ]);
+  const processEnv = safeOpenCodeEnvironment(env, {
+    cacheRoot,
+    dbPath: path.join(normalizedPrivateRoot, "opencode.db"),
+    privateRoot: normalizedPrivateRoot
+  });
+  const run = async (args, label) => {
+    const result = await commandRunner({
+      actor: "app",
+      allowedRoots: [normalizedWorkdir],
+      args,
+      baseEnv: processEnv,
+      command: text(command) || "opencode",
+      credentialHome: {
+        cacheRoot: text(cacheRoot) ? path.resolve(cacheRoot) : path.join(normalizedPrivateRoot, "cache"),
+        configRoot: path.join(normalizedPrivateRoot, "config"),
+        dataRoot: path.join(normalizedPrivateRoot, "data"),
+        home: path.join(normalizedPrivateRoot, "home"),
+        stateRoot: path.join(normalizedPrivateRoot, "state")
+      },
+      cwd: normalizedWorkdir,
+      envPolicy: "auth",
+      execution: {
+        kind: "assistant",
+        label,
+        lifecycle: "finite",
+        operationId: "opencode-catalog",
+        ownerId: "opencode-catalog"
+      },
+      inheritProcessEnv: false,
+      maxBuffer: OPENCODE_CATALOG_LIMIT_BYTES,
+      mode: "capture",
+      purpose: "assistant",
+      timeout: OPENCODE_CATALOG_TIMEOUT_MS
+    });
+    if (result?.ok !== true) {
+      const error = new Error(text(result?.error || result?.stderr || result?.stdout) || `${label} failed.`);
+      error.code = text(result?.code) || "vibe64_opencode_catalog_failed";
+      throw error;
+    }
+    return String(result.stdout || "");
+  };
+  try {
+    const models = await run(["models", "--pure", "--verbose"], "Reading OpenCode models");
+    const agents = await run(["agent", "list", "--pure"], "Reading OpenCode agents");
+    return {
+      agents: parseOpenCodeAgentCatalog(agents),
+      providers: parseOpenCodeModelCatalog(models)
+    };
+  } finally {
+    await rm(normalizedPrivateRoot, { force: true, recursive: true });
+  }
+}
+
 export {
   OPENCODE_ECONOMY_AGENT_ID,
   OPENCODE_EXPECTED_VERSION,
@@ -415,5 +613,8 @@ export {
   canonicalProviderUrl,
   createOpenCodeServerProcess,
   openCodeInlineConfig,
+  parseOpenCodeAgentCatalog,
+  parseOpenCodeModelCatalog,
+  readOpenCodeCatalog,
   safeOpenCodeEnvironment
 };
