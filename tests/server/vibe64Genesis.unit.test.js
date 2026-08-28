@@ -349,8 +349,8 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
     assert.match(rendered.prompt, /interface has already welcomed the person/u);
     assert.match(rendered.prompt, /without repeating that greeting/u);
     assert.match(rendered.prompt, /invite them to write what they would like to make/u);
-    assert.match(rendered.prompt, /genesis stack add jskit-mysql/u);
-    assert.match(rendered.prompt, /otherwise run `genesis stack add jskit`/u);
+    assert.match(rendered.prompt, /Genesis `stack add jskit-mysql` operation/u);
+    assert.match(rendered.prompt, /otherwise run the Genesis `stack add jskit` operation/u);
     assert.match(rendered.prompt, /Do not ask the person to choose a database/u);
     assert.match(rendered.prompt, /PostgreSQL is temporarily unavailable/u);
     assert.match(rendered.prompt, /explicitly requests PostgreSQL/u);
@@ -415,7 +415,7 @@ test("Genesis owns the opening conversation for an existing uninitialized projec
       /strongly recommend preparing the existing project for\s+guided editing/u
     );
     assert.match(rendered.prompt, /Do not require the user to know\s+Genesis terminology/u);
-    assert.match(rendered.prompt, /If they approve, run `genesis adopt`\s+yourself/u);
+    assert.match(rendered.prompt, /If they approve, run the Genesis `adopt`\s+operation yourself/u);
     await assert.rejects(
       () => readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"),
       { code: "ENOENT" }

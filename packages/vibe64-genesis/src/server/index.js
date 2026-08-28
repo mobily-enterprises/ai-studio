@@ -244,7 +244,7 @@ function withVibe64ConversationContract(prompt = "", {
       "The Vibe64 interface has already welcomed the person and invited their rough idea. Respond directly to their first message without repeating that greeting.",
       "If the person still has not described an idea, warmly invite them to write what they would like to make and stop there; do not lead with technical questions.",
       "Keep the conversation in friendly product language. Do not mention Genesis, Stack, JSKIT, Vue, or other internal foundation names unless the person explicitly asks about technology.",
-      "When the idea is clearly a web app and the person has not requested a technology, use Vibe64's standard web-app foundation. Run `genesis stack add jskit-mysql` when the product clearly needs durable application records; otherwise run `genesis stack add jskit`. This is an explicit Vibe64 host default and overrides the earlier generic instruction not to select technology silently for this case.",
+      "When the idea is clearly a web app and the person has not requested a technology, use Vibe64's standard web-app foundation. Run the Genesis `stack add jskit-mysql` operation when the product clearly needs durable application records; otherwise run the Genesis `stack add jskit` operation. This is an explicit Vibe64 host default and overrides the earlier generic instruction not to select technology silently for this case.",
       "Do not ask the person to choose a database when Vibe64's MySQL default satisfies the product they described.",
       ...(!VIBE64_POSTGRESQL_NEW_PROJECT_AVAILABLE ? [
         "PostgreSQL is temporarily unavailable for new Vibe64 projects. Do not offer or select `postgresql` or `jskit-postgresql`.",

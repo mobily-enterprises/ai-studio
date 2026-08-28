@@ -53,8 +53,12 @@ generic CRUD merely to make the structure look uniform.
 Use the installed JSKIT pattern index and package metadata to select the
 smallest complete package set. Plan the top-level dependencies and their
 ordinary npm closure before changing the lockfile, then install that planned
-closure once. Review `package.json` and the lockfile as source changes. There
-is no framework synchronization step after npm installation.
+closure once. Review `package.json` and the lockfile as source changes. Adopt
+the supported package-graph scripts and run `npm run jskit:update` before
+changing application source; see the **Upgrade JSKIT** guide in the agent docs.
+The updater aligns root and workspace declarations to one published release
+cohort, installs once at the project root, and verifies the resulting lockfile.
+It does not regenerate or synchronize application source.
 
 Model product domains through `defineFeature()` when they own a real capability
 or operation boundary. A Feature declares stable named `requires`, optional
@@ -78,10 +82,12 @@ still have callers and tests.
 
 Audit application `AGENTS.md` files, ordinary documentation, npm scripts, CI,
 and package metadata as well as executable source. There is no supported
-`jskit doctor` command or general JSKIT authoring CLI. Replace stale
-instructions to run them with current-state checks owned by runtime startup,
-the client build, migration status and disposable rebuilds, the application's
-normal verification script, and Playwright.
+`jskit doctor` command or general JSKIT source-authoring CLI. The supported
+`jskit update` and `jskit check` commands own only the installed package graph;
+they do not author, regenerate, or certify application source. Replace stale
+doctor or authoring instructions with current-state checks owned by runtime
+startup, the client build, migration status and disposable rebuilds, the
+application's normal verification script, and Playwright.
 
 ## 3. Choose the narrowest server seam that owns each behavior
 
@@ -171,7 +177,10 @@ Do not conflate these identities:
   not synthesize any of them as a side effect.
 
 For a managed preview, retain the app-owned `tools/preview-identity`
-executable and declare it in the managed Launch target. It calls the
+executable and declare it under `#### Preview identity` in the web-presented
+Vibe64 `Outputs` target. JSKIT owns the executable/library pattern, Vibe64 owns
+the declaration's grammar and runtime behavior, and Genesis transports the
+consumer-owned section without interpreting it. The executable calls the
 `@jskit-ai/auth-web` server-side managed-preview library; it does not need a
 framework CLI. Never expose the exchange secret in browser code, a URL, client
 environment, logs, or source.
@@ -206,7 +215,7 @@ do not accept a visually similar screen as behavioral equivalence.
 When the project uses Genesis, run an explicit reconciliation after the port is
 functionally green. Compare the implemented source with the current Blueprint,
 selected Stack, Program, resources, managed skills, and effective workspace and
-Launch recipes. Update stale citations and declarations to describe what now
+Outputs recipes. Update stale citations and declarations to describe what now
 exists. Do not duplicate an inherited setup recipe merely to make the project
 look self-contained.
 
@@ -233,7 +242,7 @@ evidence in ordinary source, configuration, command output, and tests:
    when supplied.
 2. **Reconciliation:** a dedicated Genesis reconciliation confirms the
    Blueprint, Stack, Program, resources, managed skills, and effective setup and
-   Launch recipes match the implementation. For a project without Genesis,
+   Outputs recipes match the implementation. For a project without Genesis,
    reconcile its equivalent authoritative product and host documentation.
 3. **Deslop:** a distinct JSKIT Deslop pass, including the selected Material 3
    audit where UI is affected, removes obsolete framework residue without
