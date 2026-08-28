@@ -13,7 +13,8 @@ import {
 } from "@local/vibe64-runtime/server";
 import {
   checkpointRefs,
-  createGitTurnCheckpoint
+  createGitTurnCheckpoint,
+  installVibe64ManagedExecutionProvider
 } from "@local/vibe64-execution/server";
 import {
   projectRuntimeRoot,
@@ -342,7 +343,19 @@ test("archives session clone commits into a saved bundle", async () => {
   });
 });
 
-test("archives and proves restoration of hidden turn checkpoint refs before removing source", async () => {
+test("archives and proves restoration of hidden turn checkpoint refs before removing source", async (t) => {
+  const commandRequests = [];
+  const releaseManagedExecution = installVibe64ManagedExecutionProvider({
+    async runCommand(request, { runLocal }) {
+      commandRequests.push(request);
+      return runLocal();
+    },
+    async stopExecution() {
+      return { ok: true, stopped: false };
+    }
+  });
+  t.after(releaseManagedExecution);
+
   await withTemporaryRoot(async (targetRoot) => {
     const baseCommit = await createGitProject(targetRoot);
     const runtime = new Vibe64SessionRuntime({
@@ -409,5 +422,14 @@ test("archives and proves restoration of hidden turn checkpoint refs before remo
     assert.equal(await git(restoreRoot, ["rev-parse", refs.turnRef]), checkpoint.commit);
     assert.equal(await git(restoreRoot, ["rev-parse", refs.latestRef]), checkpoint.commit);
     assert.equal(await git(restoreRoot, ["show", `${checkpoint.commit}:app.txt`]), "checkpointed only");
+
+    const restoreVerificationCommands = commandRequests.filter(({ args = [] }) => (
+      args.includes("--git-dir") || (args[0] === "init" && args[1] === "--bare")
+    ));
+    assert.equal(restoreVerificationCommands.length, 4);
+    assert.ok(restoreVerificationCommands.every(({ cwd }) => cwd === worktreePath));
+    assert.ok(restoreVerificationCommands.every(({ cwd }) => !cwd.startsWith(
+      runtime.store.paths(sessionId).artifactsRoot
+    )));
   });
 });

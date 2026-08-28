@@ -435,7 +435,7 @@ async function writeCheckpointRecoveryBundle({
 
   const verificationRoot = await mkdtemp(path.join(recoveryRoot, ".checkpoint-restore-"));
   try {
-    const initResult = await runGit(verificationRoot, ["init", "--bare"], {
+    const initResult = await runGit(worktreePath, ["init", "--bare", verificationRoot], {
       allowedRoots: [artifactsRoot],
       timeout: 15_000
     });
@@ -445,7 +445,9 @@ async function writeCheckpointRecoveryBundle({
         "vibe64_worktree_archive_checkpoint_restore_init_failed"
       );
     }
-    const fetchResult = await runGit(verificationRoot, [
+    const fetchResult = await runGit(worktreePath, [
+      "--git-dir",
+      verificationRoot,
       "fetch",
       bundlePath,
       ...refs.map(({ ref }) => `${ref}:${ref}`)
@@ -460,7 +462,13 @@ async function writeCheckpointRecoveryBundle({
       );
     }
     for (const { commit, ref } of refs) {
-      const restored = await runGit(verificationRoot, ["rev-parse", "--verify", ref], {
+      const restored = await runGit(worktreePath, [
+        "--git-dir",
+        verificationRoot,
+        "rev-parse",
+        "--verify",
+        ref
+      ], {
         allowedRoots: [artifactsRoot],
         timeout: 15_000
       });
