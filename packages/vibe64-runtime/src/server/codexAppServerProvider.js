@@ -2226,7 +2226,7 @@ async function startCodexAppServerProcess({
     execution: {
       controlGenerationId: economy ? "" : codexAppServerControlGeneration(normalizedTerminalEnv),
       kind: "assistant",
-      label: economy ? "Economy assistant" : "Assistant",
+      label: "Codex assistant",
       lifecycle: "service",
       operationId: "codex-app-server",
       ownerId: normalizeAgentText(runtimeInstanceId || session?.sessionId || session?.id) ||

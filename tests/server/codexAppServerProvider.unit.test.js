@@ -942,6 +942,7 @@ test("codex provider replaces a runtime whose socket exists but does not answer"
     assert.equal(runtime.reused, false);
     assert.equal(commandCalls.length, 1);
     assert.equal(commandCalls[0].command, "/bin/sh");
+    assert.equal(commandCalls[0].execution.label, "Codex assistant");
     assert.deepEqual(commandCalls[0].args.slice(0, 8), [
       "-c",
       'umask 0007\nexec "$@"',
@@ -2162,6 +2163,7 @@ test("codex economy provider starts from a private empty home and strips project
     assert.deepEqual(runCall.session, {});
     assert.equal(runCall.userKey, "");
     assert.deepEqual(runCall.shimDirs, []);
+    assert.equal(runCall.execution.label, "Codex assistant");
     assert.equal(runCall.baseEnv.CODEX_HOME, economyHome);
     assert.equal(runCall.baseEnv.DB_PASSWORD, "");
     assert.equal(runCall.baseEnv.OPENAI_API_KEY, "");
