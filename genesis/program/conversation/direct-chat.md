@@ -6,7 +6,11 @@ including follow-up guidance while a turn is active.
 ## Sources
 
 - `packages/vibe64-sessions/src/server/service.js`
+- `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
+- `packages/vibe64-terminals/src/server/opencodeServerClient.js`
+- `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
+- `packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js`
 - `packages/vibe64-terminals/src/server/opencodeTerminal.js`
 - `packages/vibe64-terminals/src/server/sessionPromptHints.js`
 - `src/composables/useVibe64AutopilotView.js`
@@ -27,6 +31,16 @@ reply remains ordinary conversation text.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
 
+Open sessions in one workspace share a single running Codex service and a
+single running OpenCode service according to the assistant each session has
+selected. Codex and OpenCode remain independent: a provider service runs while
+at least one matching session is open and stops after the final matching
+session closes. Conversation identity, working directory, command environment,
+model settings, and provider history remain session-specific even though the
+resident provider process is shared. Capability discovery without an open
+session may run a bounded command but does not leave another provider service
+running.
+
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
 the composer's geometry, while text the person actually enters still grows the
@@ -37,3 +51,12 @@ records a durable recovery notice that links the owner to AI Accounts without
 exposing the raw provider credential error. Existing conversation and project
 changes remain available, and the person can retry after the owner verifies a
 replacement key.
+
+## Implementation map
+
+- `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity
+  workspace-wide while carrying each session's directory and environment into
+  its thread requests.
+- `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process
+  lifecycle; directory-scoped clients and `Vibe64SessionEnvironment` preserve
+  each session's working and command boundary.

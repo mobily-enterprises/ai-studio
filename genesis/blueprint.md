@@ -30,7 +30,10 @@ Vibe64 makes machine-facing work dependable. It manages project access,
 credentials, development environments, application processes, previews,
 browser identities, and attachments without putting private machine state into
 the project. It shows clear status and failures and lets people retry or ask the
-agent for help.
+agent for help. Open sessions that choose the same coding-assistant application
+share one running assistant service, and that service stops when its final
+session closes. Short-lived suggestions and focused helper tasks reuse the
+session's chosen service instead of keeping another assistant service running.
 
 Genesis remains the portable authority for what a project is, how its Program
 is explained, which technologies it uses, its environment/resource
