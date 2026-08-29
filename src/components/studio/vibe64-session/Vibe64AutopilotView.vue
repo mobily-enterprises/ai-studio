@@ -380,8 +380,8 @@
               <Vibe64SessionAssistantMenu
                 :access-label="assistantAccessLabel"
                 :access-loading="assistantAccessLoading"
-                :disabled="composerSending || agentActive || !assistantDirectAllowed"
-                :disabled-reason="!assistantDirectAllowed ? assistantRestrictionMessage : ''"
+                :can-configure="assistantSuggestionsCanManage"
+                :disabled="composerSending || agentActive"
                 :session="props.session"
                 :sessions-api-path="props.sessionsApiPath"
               />

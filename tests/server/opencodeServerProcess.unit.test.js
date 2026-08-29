@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   openCodeInlineConfig,
   parseOpenCodeAgentCatalog,
   parseOpenCodeModelCatalog,
+  readOpenCodeCatalog,
   safeOpenCodeEnvironment
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
 
@@ -63,6 +64,66 @@ test("OpenCode finite catalogue output is parsed without a resident server", () 
     "build (primary)",
     JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }])
   ].join("\n"))[0].name, "build");
+});
+
+test("OpenCode cold catalog reads configured providers from isolated temporary auth", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-cold-catalog-"));
+  const privateRoot = path.join(root, "private");
+  const workdir = path.join(root, "workdir");
+  t.after(() => rm(root, { force: true, recursive: true }));
+
+  const catalog = await readOpenCodeCatalog({
+    async commandRunner(request) {
+      const auth = JSON.parse(await readFile(
+        path.join(request.credentialHome.dataRoot, "opencode", "auth.json"),
+        "utf8"
+      ));
+      assert.deepEqual(auth, {
+        "zai-coding-plan": {
+          key: "zai-secret",
+          type: "api"
+        }
+      });
+      assert.equal(JSON.stringify(request.baseEnv).includes("zai-secret"), false);
+      const config = JSON.parse(request.baseEnv.OPENCODE_CONFIG_CONTENT);
+      assert.equal(
+        config.provider["zai-coding-plan"].options.baseURL,
+        "https://api.z.ai/api/coding/paas/v4"
+      );
+      return request.args[0] === "models"
+        ? {
+            ok: true,
+            stdout: [
+              "zai-coding-plan/glm-5.3",
+              JSON.stringify({
+                capabilities: { reasoning: true, toolcall: true },
+                id: "glm-5.3",
+                name: "GLM-5.3",
+                providerID: "zai-coding-plan",
+                status: "active"
+              })
+            ].join("\n")
+          }
+        : {
+            ok: true,
+            stdout: [
+              "build (primary)",
+              JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }])
+            ].join("\n")
+          };
+    },
+    privateRoot,
+    providerConnections: [{
+      apiKey: "zai-secret",
+      canonicalUrl: "https://api.z.ai/api/coding/paas/v4",
+      modelProviderId: "zai-coding-plan"
+    }],
+    workdir
+  });
+
+  assert.equal(catalog.providers.all[0].id, "zai-coding-plan");
+  assert.equal(catalog.providers.default["zai-coding-plan"], "glm-5.3");
+  await assert.rejects(access(privateRoot), { code: "ENOENT" });
 });
 
 test("OpenCode process environment is minimal and injects Vibe64's deny-all helper agent", () => {

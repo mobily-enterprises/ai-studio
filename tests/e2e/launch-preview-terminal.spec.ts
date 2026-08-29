@@ -2013,7 +2013,7 @@ test("session panel shows loading feedback instead of empty create state while s
   await expect(page.getByText("Create a session to start preview.")).toHaveCount(0);
 });
 
-test("AI session settings keeps access visible and engine choices compact", async ({ page }) => {
+test("the chat cog stays a compact selector for the session's available AI", async ({ page }) => {
   await page.setViewportSize({ height: 600, width: 900 });
   await mockLaunchTerminalSocket(page);
   const selectedSession = {
@@ -2040,45 +2040,25 @@ test("AI session settings keeps access visible and engine choices compact", asyn
   });
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-  await page.locator("button[aria-label='AI session settings']:visible").click();
+  await page.locator("button[aria-label='Choose AI']:visible").click();
 
-  const dialog = page.getByRole("dialog");
-  const access = dialog.locator(".vibe64-assistant-dialog__access");
-  const body = dialog.locator(".vibe64-assistant-dialog__body");
-  const engines = dialog.locator(".vibe64-assistant-dialog__engine");
-  await expect(dialog).toBeVisible();
-  await expect(access).toContainText("Personal use");
-  await expect(engines).toHaveCount(2);
-  const engineBoxes = await engines.evaluateAll((elements) => elements.map((element) => {
-    const box = element.getBoundingClientRect();
-    return { height: box.height, top: box.top };
-  }));
-  expect(engineBoxes.every(({ height }) => height <= 48)).toBe(true);
-  expect(Math.abs(engineBoxes[0].top - engineBoxes[1].top)).toBeLessThan(1);
-
-  const accessTop = await access.evaluate((element) => element.getBoundingClientRect().top);
-  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-  await body.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await expect(access).toBeVisible();
-  expect(Math.abs(
-    (await access.evaluate((element) => element.getBoundingClientRect().top)) - accessTop
-  )).toBeLessThan(1);
+  const selector = page.getByLabel("AI session selector");
+  await expect(selector).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(selector.getByLabel("Provider")).toHaveValue("OpenAI");
+  await expect(selector.getByLabel("Model")).toHaveValue("GPT-5.6 Sol");
+  await expect(selector.getByText("OpenCode", { exact: true })).toHaveCount(0);
+  await expect(selector.getByRole("button", { name: "Apply" })).toBeDisabled();
+  const desktopBox = await selector.boundingBox();
+  expect(desktopBox?.width).toBeLessThanOrEqual(360);
+  expect(desktopBox?.height).toBeLessThanOrEqual(400);
 
   await page.setViewportSize({ height: 700, width: 390 });
-  await expect.poll(() => dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  const mobileEngineBoxes = await engines.evaluateAll((elements) => elements.map((element) => {
-    const box = element.getBoundingClientRect();
-    return { height: box.height, top: box.top };
-  }));
-  expect(mobileEngineBoxes.every(({ height }) => height <= 48)).toBe(true);
-  expect(Math.abs(mobileEngineBoxes[0].top - mobileEngineBoxes[1].top)).toBeLessThan(1);
-  await expect(access).toBeVisible();
-  await body.evaluate((element) => {
-    element.scrollTop = 0;
-  });
+  await expect.poll(() => selector.evaluate((element) => (
+    element.scrollWidth <= element.clientWidth
+  ))).toBe(true);
+  const mobileBox = await selector.boundingBox();
+  expect(mobileBox?.width).toBeLessThanOrEqual(358);
 });
 
 test("chat source links open the editor and editor autosaves file changes", async ({ page }) => {

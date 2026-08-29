@@ -116,6 +116,7 @@ function registerRoutes(http, {
     buildInput(request) {
       const query = routes.requestQuery(request);
       return withVibe64User(request, {
+        connectedOnly: firstValue(query.connectedOnly),
         cursor: firstValue(query.cursor),
         engineId: firstValue(query.engineId),
         limit: firstValue(query.limit),

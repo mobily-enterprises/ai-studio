@@ -10,6 +10,10 @@ Each session keeps valuable work recoverable and separate from unrelated work.
 Internal no-op follow-up chatter stays hidden, while completed code-changing
 work ends with one concise, useful account of what happened.
 
+The chat selector stays focused on choosing among AIs that are already
+configured and available. Workspace owners manage AI accounts and add further
+connections in the separate account-management area.
+
 Every project has exactly one source authority. For a GitHub-connected project,
 the configured GitHub branch is authoritative. For a hosted Vibe64-only
 project, Vibe64's own repository is authoritative. For a standalone local

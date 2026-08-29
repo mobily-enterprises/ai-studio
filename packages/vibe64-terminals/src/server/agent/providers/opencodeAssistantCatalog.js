@@ -166,6 +166,7 @@ function openCodeAssistantCapabilities({
     .filter(Boolean)
     .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
   const requestedProviderId = text(input.modelProviderId);
+  const connectedOnly = text(input.connectedOnly).toLowerCase() === "true";
   const search = text(input.search).toLocaleLowerCase();
   const kind = requestedProviderId ? "models" : "providers";
   const limit = pageLimit(input.limit);
@@ -179,11 +180,14 @@ function openCodeAssistantCapabilities({
     (!agent.modelProviderId || agent.modelProviderId === defaultProvider?.id) &&
     (!agent.modelId || agent.modelId === defaultModel?.id)
   )) || null;
+  const selectableProviders = connectedOnly
+    ? providers.filter((provider) => provider.connected)
+    : providers;
 
   let pageProviders;
   let total;
   if (requestedProviderId) {
-    const provider = providers.find((candidate) => candidate.id === requestedProviderId);
+    const provider = selectableProviders.find((candidate) => candidate.id === requestedProviderId);
     const requestedModelId = text(input.modelId);
     const filteredModels = (provider?.models || []).filter((model) => (
       (!requestedModelId || model.id === requestedModelId) &&
@@ -195,7 +199,7 @@ function openCodeAssistantCapabilities({
       models: filteredModels.slice(offset, offset + limit)
     }] : [];
   } else {
-    const filteredProviders = providers.filter((provider) => searchable(
+    const filteredProviders = selectableProviders.filter((provider) => searchable(
       `${provider.label}\n${provider.id}\n${provider.description}`,
       search
     ));

@@ -103,6 +103,44 @@ test("OpenCode catalog searches and pages providers without exposing hidden agen
   );
 });
 
+test("OpenCode catalog can page only providers with current connections", () => {
+  const all = Array.from({ length: 31 }, (_, index) => provider(
+    `provider-${String(index + 1).padStart(2, "0")}`,
+    { name: `Provider ${String(index + 1).padStart(2, "0")}` }
+  ));
+  const definitions = openCodeAssistantCapabilities({
+    agents,
+    input: { limit: 100 },
+    providers: { all, default: {} }
+  });
+  const connectedIds = ["provider-02", "provider-31"];
+  const connections = connectedIds.map((id) => ({
+    modelProviderId: id,
+    providerRevision: definitions.modelProviders.find((candidate) => candidate.id === id).definitionRevision
+  }));
+
+  const connected = openCodeAssistantCapabilities({
+    agents,
+    connections,
+    input: { connectedOnly: "true", limit: 1 },
+    providers: { all, default: {} }
+  });
+  const next = openCodeAssistantCapabilities({
+    agents,
+    connections,
+    input: {
+      connectedOnly: "true",
+      cursor: connected.page.nextCursor,
+      limit: 1
+    },
+    providers: { all, default: {} }
+  });
+
+  assert.equal(connected.page.total, 2);
+  assert.deepEqual(connected.modelProviders.map(({ id }) => id), ["provider-02"]);
+  assert.deepEqual(next.modelProviders.map(({ id }) => id), ["provider-31"]);
+});
+
 test("OpenCode catalog requires reconfirmation when a live provider definition changes", () => {
   const deepseek = provider("deepseek", { modelCount: 3, name: "DeepSeek" });
   const providerResult = {

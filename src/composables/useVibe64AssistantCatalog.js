@@ -28,6 +28,7 @@ function useVibe64AssistantCatalog({
   engineId,
   modelProviderId,
   modelSearch,
+  providerConnectedOnly = false,
   providerCursor,
   providerSearch
 } = {}) {
@@ -75,6 +76,7 @@ function useVibe64AssistantCatalog({
       refetchOnWindowFocus: false
     },
     readQuery: computed(() => ({
+      ...(value(providerConnectedOnly) ? { connectedOnly: "true" } : {}),
       ...(normalizedText(providerCursor) ? { cursor: normalizedText(providerCursor) } : {}),
       engineId: "opencode",
       limit: "25",
@@ -107,6 +109,7 @@ function useVibe64AssistantCatalog({
       refetchOnWindowFocus: false
     },
     readQuery: computed(() => ({
+      ...(value(providerConnectedOnly) ? { connectedOnly: "true" } : {}),
       engineId: normalizedText(engineId),
       limit: "100",
       modelProviderId: normalizedText(modelProviderId),

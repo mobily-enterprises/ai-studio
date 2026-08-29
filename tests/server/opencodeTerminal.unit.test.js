@@ -172,6 +172,7 @@ async function controllerHarness({
   const processStarts = [];
   const processStops = [];
   const commandEnvironmentCalls = [];
+  const catalogReadCalls = [];
   const createdSessions = [];
   const promptCalls = [];
   const publishedSessionChanges = [];
@@ -325,7 +326,8 @@ async function controllerHarness({
         return { aiPolicy: {}, ok: true };
       }
     },
-    async readCatalogCommand() {
+    async readCatalogCommand(options) {
+      catalogReadCalls.push(options);
       return {
         agents,
         providers: catalogProviders
@@ -345,6 +347,7 @@ async function controllerHarness({
   return {
     agentRunEvents,
     assistantMessages,
+    catalogReadCalls,
     commentaryMessages,
     connection,
     commandEnvironmentCalls,
@@ -370,6 +373,26 @@ async function controllerHarness({
     userMessages
   };
 }
+
+test("OpenCode cold catalog reads include every configured provider route", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.capabilities({ engineId: "opencode" });
+
+  assert.equal(harness.processStarts.length, 0);
+  assert.deepEqual(harness.catalogReadCalls[0].providerConnections, [{
+    apiKey: "deepseek-key-one",
+    canonicalUrl: "https://api.deepseek.com",
+    economyModelId: "deepseek-chat",
+    endpointCode: "deepseek_api",
+    fingerprint: `sha256:${"1".repeat(64)}`,
+    modelProviderId: "deepseek"
+  }]);
+});
 
 test("OpenCode leaves starting state when Git identity admission fails", async (t) => {
   const harness = await controllerHarness({

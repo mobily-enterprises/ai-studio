@@ -27,47 +27,57 @@
       "description": "People work with the coding agent through one ordinary project conversation,\nincluding follow-up guidance while a turn is active.",
       "districtId": "subsystem:conversation",
       "id": "operation:conversation/direct-chat",
-      "implementationMap": "- `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity\n  workspace-wide while carrying each session's directory and environment into\n  its thread requests.\n- `codexAppServerCommandBaseEnv()` and\n  `normalizeCodexAppServerTerminalEnv()` pass the curated host and session\n  environment explicitly while withholding the desktop message-bus variables\n  that would let a descendant move itself out of the managed Codex execution\n  scope. The command runner does not merge the host process environment again,\n  and the managed startup shell repeats the exclusion at the final process\n  boundary.\n- `runCodexAuthPreflight()` recreates the private volatile runtime directory\n  before using it, so a shared Codex service can start normally after a host\n  reboot has cleared that directory.\n- `withCodexAppServerProviderLifecycle()` serializes provider attachment,\n  replacement, and final-runtime shutdown so concurrent session closes make\n  one authoritative last-owner decision.\n- `stopOwnedCodexAppServerExecution()` stops the exact managed Codex execution\n  scope and can prove that scope empty after its ordinary resource-history\n  record expires, without treating an unrelated process as the provider.\n- `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process\n  lifecycle. Established session targets and pending starts both retain that\n  process; directory-scoped clients and `Vibe64SessionEnvironment` preserve\n  each session's working and command boundary.\n- `safeOpenCodeEnvironment()` disables project configuration and default\n  plugins while loading Vibe64's single trusted session-environment plugin,\n  so the shared service can route commands through the authenticated session\n  boundary without executing arbitrary project plugins.\n- `Vibe64SessionEnvironment` presents ordinary shell commands rather than\n  Vibe64's transport wrapper in the model-facing instructions and history. At\n  execution it recognizes only canonical invocations of the session's exact\n  trusted wrapper, removes any repeated copies, and applies that wrapper once;\n  persisted provider history remains unchanged.\n- OpenCode's turn monitor detects a successful provider result with no text,\n  queues one tool-free request for the missing final response, and records an\n  explicit failure if that bounded recovery also returns no text.\n- `prepareAgentSessionCommand()` publishes the authenticated session command\n  broker. OpenCode's session environment plugin routes commands through that\n  boundary before execution. Codex can route commands exposed through its\n  pre-tool hook, but optimized Code Mode currently does not emit those command\n  events because of OpenAI Codex issue #23411. While that issue remains,\n  `codexAppServerDeveloperInstructions()` tells Codex to keep supported browser\n  commands PATH-resolved so a managed host's temporary browser-only policy can\n  send them through the broker. That guidance and host policy must be removed\n  when #23411 is fixed; other optimized descendants retain workspace-level\n  ownership. The broker environment applies the same desktop message-bus\n  exclusion so a session-owned descendant remains inside its managed execution\n  scope.",
+      "implementationMap": "- `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity\n  workspace-wide while carrying each session's directory and environment into\n  its thread requests.\n- `codexAppServerCommandBaseEnv()` and\n  `normalizeCodexAppServerTerminalEnv()` pass the curated host and session\n  environment explicitly while withholding the desktop message-bus variables\n  that would let a descendant move itself out of the managed Codex execution\n  scope. The command runner does not merge the host process environment again,\n  and the managed startup shell repeats the exclusion at the final process\n  boundary.\n- `runCodexAuthPreflight()` recreates the private volatile runtime directory\n  before using it, so a shared Codex service can start normally after a host\n  reboot has cleared that directory.\n- `withCodexAppServerProviderLifecycle()` serializes provider attachment,\n  replacement, and final-runtime shutdown so concurrent session closes make\n  one authoritative last-owner decision.\n- `stopOwnedCodexAppServerExecution()` stops the exact managed Codex execution\n  scope and can prove that scope empty after its ordinary resource-history\n  record expires, without treating an unrelated process as the provider.\n- `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process\n  lifecycle. Established session targets and pending starts both retain that\n  process; directory-scoped clients and `Vibe64SessionEnvironment` preserve\n  each session's working and command boundary.\n- `safeOpenCodeEnvironment()` disables project configuration and default\n  plugins while loading Vibe64's single trusted session-environment plugin,\n  so the shared service can route commands through the authenticated session\n  boundary without executing arbitrary project plugins.\n- `readOpenCodeCatalog()` gives a bounded cold catalogue read the configured\n  provider routes and an isolated temporary OpenCode credential store. This\n  lets endpoint-specific providers expose their native model definitions while\n  the resident OpenCode service stays asleep; the temporary store is removed\n  when the read finishes.\n- `Vibe64SessionEnvironment` presents ordinary shell commands rather than\n  Vibe64's transport wrapper in the model-facing instructions and history. At\n  execution it recognizes only canonical invocations of the session's exact\n  trusted wrapper, removes any repeated copies, and applies that wrapper once;\n  persisted provider history remains unchanged.\n- OpenCode's turn monitor detects a successful provider result with no text,\n  queues one tool-free request for the missing final response, and records an\n  explicit failure if that bounded recovery also returns no text.\n- `prepareAgentSessionCommand()` publishes the authenticated session command\n  broker. OpenCode's session environment plugin routes commands through that\n  boundary before execution. Codex can route commands exposed through its\n  pre-tool hook, but optimized Code Mode currently does not emit those command\n  events because of OpenAI Codex issue #23411. While that issue remains,\n  `codexAppServerDeveloperInstructions()` tells Codex to keep supported browser\n  commands PATH-resolved so a managed host's temporary browser-only policy can\n  send them through the broker. That guidance and host policy must be removed\n  when #23411 is fixed; other optimized descendants retain workspace-level\n  ownership. The broker environment applies the same desktop message-bus\n  exclusion so a session-owned descendant remains inside its managed execution\n  scope.",
       "name": "direct-chat",
       "path": "genesis/program/conversation/direct-chat.md",
-      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nMessage delivery and provider work remain visibly distinct. The composer shows\nthe initial send while the message is being accepted, then reports the selected\nassistant as working for the rest of the active turn. The session tab and\nassistant avatar use that same live turn state until completion or interruption.\nWhen an OpenCode provider reports successful completion without a user-facing\nresponse, Vibe64 makes one bounded continuation request for that response. If\nthe provider again returns no response, the turn fails visibly instead of\nappearing to have completed silently.\nOpen sessions in one workspace share a single running Codex service and a\nsingle running OpenCode service according to the assistant each session has\nselected. Codex and OpenCode remain independent: a provider service runs while\nat least one matching session is open and stops after the final matching\nsession closes. Conversation identity, working directory, command environment,\nmodel settings, and provider history remain session-specific even though the\nresident provider process is shared. Capability discovery without an open\nsession may run a bounded command but does not leave another provider service\nrunning. OpenCode shell commands and any descendants they leave running are\nattributed to the originating project session, and closing that session drains\nthose descendants. On a managed host, supported browser commands run through\nCodex's optimized shared command executor are temporarily routed through the\noriginating session boundary, so their browser descendants are attributed to\nthat session and drain when it closes. Other optimized Codex command\ndescendants remain inside the workspace's managed Codex scope because the\nexecutor does not expose their per-command boundary; they are reported with\nthe workspace Codex service and drain when its final session closes.\nContextual prompt suggestions may preview their full text in an otherwise empty\ncomposer without modifying the draft. Showing or hiding that preview preserves\nthe composer's geometry, while text the person actually enters still grows the\ncomposer normally. Selecting a suggestion inserts ordinary editable text.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
+      "publicContract": "The conversation accepts messages, structured answers, attachments, and\nsteering guidance. It streams commentary and the final response, persists the\nconversation in order, restores it after reconnection, and lets the person\ninterrupt the current turn without deleting the session. Agent questions may\nbe answered as free text or through suggested choices while the submitted\nreply remains ordinary conversation text.\nLong user messages remain available in full but initially use a compact preview\nthat each reader can expand or collapse.\nMessage delivery and provider work remain visibly distinct. The composer shows\nthe initial send while the message is being accepted, then reports the selected\nassistant as working for the rest of the active turn. The session tab and\nassistant avatar use that same live turn state until completion or interruption.\nWhen an OpenCode provider reports successful completion without a user-facing\nresponse, Vibe64 makes one bounded continuation request for that response. If\nthe provider again returns no response, the turn fails visibly instead of\nappearing to have completed silently.\nThe chat cog opens a compact selector for the AI used by that session. It shows\nonly currently connected providers and their available models, chooses a\ncompatible conversation agent automatically, and offers the selected model's\nthinking choices when present. Applying a change requires a complete,\ncompatible selection from the current capability catalog. People can choose\namong already connected AIs even when they cannot manage account connections;\nonly people who can manage connections see the shortcut to configure more.\nLoading, retryable catalog failures, and the absence of a connected AI remain\nvisible inside the selector.\nOpen sessions in one workspace share a single running Codex service and a\nsingle running OpenCode service according to the assistant each session has\nselected. Codex and OpenCode remain independent: a provider service runs while\nat least one matching session is open and stops after the final matching\nsession closes. Conversation identity, working directory, command environment,\nmodel settings, and provider history remain session-specific even though the\nresident provider process is shared. Capability discovery without an open\nsession may run a bounded command but does not leave another provider service\nrunning. OpenCode shell commands and any descendants they leave running are\nattributed to the originating project session, and closing that session drains\nthose descendants. On a managed host, supported browser commands run through\nCodex's optimized shared command executor are temporarily routed through the\noriginating session boundary, so their browser descendants are attributed to\nthat session and drain when it closes. Other optimized Codex command\ndescendants remain inside the workspace's managed Codex scope because the\nexecutor does not expose their per-command boundary; they are reported with\nthe workspace Codex service and drain when its final session closes.\nContextual prompt suggestions may preview their full text in an otherwise empty\ncomposer without modifying the draft. Showing or hiding that preview preserves\nthe composer's geometry, while text the person actually enters still grows the\ncomposer normally. Selecting a suggestion inserts ordinary editable text.\nIf an OpenCode provider later rejects a previously saved key, the failed turn\nrecords a durable recovery notice that links the owner to AI Accounts without\nexposing the raw provider credential error. Existing conversation and project\nchanges remain available, and the person can retry after the owner verifies a\nreplacement key.",
       "sourceFileIds": [
+        "file:packages/vibe64-sessions/src/server/inputSchemas.js",
+        "file:packages/vibe64-sessions/src/server/registerRoutes.js",
         "file:packages/vibe64-sessions/src/server/service.js",
         "file:packages/vibe64-runtime/src/server/codexAppServerProvider.js",
         "file:packages/vibe64-runtime/src/server/codexSessionCommandHook.js",
         "file:packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
         "file:packages/vibe64-terminals/src/server/agentSessionCommand.js",
         "file:packages/vibe64-terminals/src/server/codexTerminal.js",
+        "file:packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js",
         "file:packages/vibe64-terminals/src/server/opencodeServerClient.js",
         "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
         "file:packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js",
         "file:packages/vibe64-terminals/src/server/opencodeTerminal.js",
         "file:packages/vibe64-terminals/src/server/sessionPromptHints.js",
+        "file:src/composables/useVibe64AssistantCatalog.js",
         "file:src/composables/useVibe64AutopilotView.js",
         "file:src/composables/useVibe64PromptHints.js",
         "file:src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue",
         "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
         "file:src/components/studio/vibe64-session/Vibe64ConversationLog.vue",
-        "file:src/components/studio/vibe64-session/Vibe64PromptHints.vue"
+        "file:src/components/studio/vibe64-session/Vibe64PromptHints.vue",
+        "file:src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue"
       ],
       "sources": [
+        "packages/vibe64-sessions/src/server/inputSchemas.js",
+        "packages/vibe64-sessions/src/server/registerRoutes.js",
         "packages/vibe64-sessions/src/server/service.js",
         "packages/vibe64-runtime/src/server/codexAppServerProvider.js",
         "packages/vibe64-runtime/src/server/codexSessionCommandHook.js",
         "packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
         "packages/vibe64-terminals/src/server/agentSessionCommand.js",
         "packages/vibe64-terminals/src/server/codexTerminal.js",
+        "packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js",
         "packages/vibe64-terminals/src/server/opencodeServerClient.js",
         "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
         "packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js",
         "packages/vibe64-terminals/src/server/opencodeTerminal.js",
         "packages/vibe64-terminals/src/server/sessionPromptHints.js",
+        "src/composables/useVibe64AssistantCatalog.js",
         "src/composables/useVibe64AutopilotView.js",
         "src/composables/useVibe64PromptHints.js",
         "src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue",
         "src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
         "src/components/studio/vibe64-session/Vibe64ConversationLog.vue",
-        "src/components/studio/vibe64-session/Vibe64PromptHints.vue"
+        "src/components/studio/vibe64-session/Vibe64PromptHints.vue",
+        "src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue"
       ],
       "subsystem": "conversation",
       "title": "Direct agent conversation"
@@ -440,6 +450,16 @@
     {
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/inputSchemas.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/registerRoutes.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-sessions/src/server/service.js"
     },
     {
@@ -470,6 +490,11 @@
     {
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/opencodeServerClient.js"
     },
     {
@@ -491,6 +516,11 @@
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/sessionPromptHints.js"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64AssistantCatalog.js"
     },
     {
       "fromId": "operation:conversation/direct-chat",
@@ -521,6 +551,11 @@
       "fromId": "operation:conversation/direct-chat",
       "kind": "implemented-by",
       "toId": "file:src/components/studio/vibe64-session/Vibe64PromptHints.vue"
+    },
+    {
+      "fromId": "operation:conversation/direct-chat",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue"
     },
     {
       "fromId": "operation:conversation/temporary-assistance",
@@ -788,7 +823,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:efce37da6f3a9aaf5547ccbc43b698321a33382300e143608451e92ab20ef215",
+  "programHash": "sha256:86bcb001b2eba66f76386e69f5a1c8961f31f2ed6087d283aba5c741e598f437",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

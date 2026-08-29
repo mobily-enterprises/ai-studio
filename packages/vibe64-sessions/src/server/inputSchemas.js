@@ -264,6 +264,11 @@ const sessionCreateInputValidator = patchSchema({
 
 const assistantCapabilitiesInputValidator = patchSchema({
   ...optionalUser,
+  connectedOnly: {
+    type: "string",
+    noTrim: false,
+    required: false
+  },
   cursor: {
     type: "string",
     noTrim: false,

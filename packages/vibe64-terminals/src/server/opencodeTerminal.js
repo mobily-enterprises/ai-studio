@@ -745,11 +745,13 @@ function createOpenCodeTerminalController({
       } else {
         const runtime = await projectService.createRuntime({ inspectSource: false });
         const roots = sharedRoots();
+        const providerConnections = await configuredConnections();
         catalog = await readCatalogCommand({
           cacheRoot: roots.cacheRoot,
           command,
           env,
           privateRoot: path.join(roots.root, `catalog-${randomUUID()}`),
+          providerConnections,
           workdir: path.resolve(runtime.projectContextRoot || roots.workdir)
         });
       }

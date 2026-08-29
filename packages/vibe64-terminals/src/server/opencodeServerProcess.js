@@ -5,7 +5,7 @@ import {
   openSync,
   readSync
 } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
@@ -539,6 +539,7 @@ async function readOpenCodeCatalog({
   commandRunner = runVibe64Command,
   env = process.env,
   privateRoot = "",
+  providerConnections = [],
   workdir = ""
 } = {}) {
   const normalizedPrivateRoot = path.resolve(text(privateRoot));
@@ -550,10 +551,25 @@ async function readOpenCodeCatalog({
     mkdir(normalizedPrivateRoot, { mode: 0o700, recursive: true }),
     mkdir(normalizedWorkdir, { recursive: true })
   ]);
+  const providerAuth = Object.fromEntries((Array.isArray(providerConnections) ? providerConnections : [])
+    .map((connection) => [
+      text(connection?.modelProviderId),
+      String(connection?.apiKey || "")
+    ])
+    .filter(([providerId, apiKey]) => providerId && apiKey)
+    .map(([providerId, apiKey]) => [providerId, { key: apiKey, type: "api" }]));
+  if (Object.keys(providerAuth).length > 0) {
+    const authRoot = path.join(normalizedPrivateRoot, "data", "opencode");
+    await mkdir(authRoot, { mode: 0o700, recursive: true });
+    await writeFile(path.join(authRoot, "auth.json"), `${JSON.stringify(providerAuth)}\n`, {
+      mode: 0o600
+    });
+  }
   const processEnv = safeOpenCodeEnvironment(env, {
     cacheRoot,
     dbPath: path.join(normalizedPrivateRoot, "opencode.db"),
-    privateRoot: normalizedPrivateRoot
+    privateRoot: normalizedPrivateRoot,
+    providerConnections
   });
   const run = async (args, label) => {
     const result = await commandRunner({

@@ -1,0 +1,57 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  ACTION_LIST_ASSISTANT_CAPABILITIES
+} from "../../packages/vibe64-sessions/src/server/actions.js";
+import {
+  registerRoutes
+} from "../../packages/vibe64-sessions/src/server/registerRoutes.js";
+import {
+  findRegisteredRoute,
+  routeProjectParams,
+  testReply,
+  testRouteApp,
+  withLocalRequestBypass,
+  withRouteProject
+} from "./vibe64RouteTestHelpers.js";
+
+test("assistant capability routes forward the connected-provider filter", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const app = testRouteApp();
+      registerRoutes(app.http, {
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app"
+      });
+      const route = findRegisteredRoute(app, {
+        method: "GET",
+        path: `${apiRouteBase}/vibe64/assistants/capabilities`
+      });
+      assert.ok(route);
+
+      let action = null;
+      await route.handler({
+        executeAction: async (payload) => {
+          action = payload;
+          return { ok: true };
+        },
+        input: {
+          query: {
+            connectedOnly: "true",
+            engineId: "opencode",
+            limit: "25"
+          }
+        },
+        params: routeProjectParams(),
+        vibe64User: { username: "owner" }
+      }, testReply());
+
+      assert.equal(action.actionId, ACTION_LIST_ASSISTANT_CAPABILITIES);
+      assert.equal(action.input.connectedOnly, "true");
+      assert.equal(action.input.engineId, "opencode");
+      assert.equal(action.input.limit, "25");
+    });
+  });
+});

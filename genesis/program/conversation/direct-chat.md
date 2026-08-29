@@ -5,23 +5,28 @@ including follow-up guidance while a turn is active.
 
 ## Sources
 
+- `packages/vibe64-sessions/src/server/inputSchemas.js`
+- `packages/vibe64-sessions/src/server/registerRoutes.js`
 - `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
 - `packages/vibe64-terminals/src/server/agentCommandEnvironment.js`
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
+- `packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js`
 - `packages/vibe64-terminals/src/server/opencodeServerClient.js`
 - `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
 - `packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js`
 - `packages/vibe64-terminals/src/server/opencodeTerminal.js`
 - `packages/vibe64-terminals/src/server/sessionPromptHints.js`
+- `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
 - `src/composables/useVibe64PromptHints.js`
 - `src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationLog.vue`
 - `src/components/studio/vibe64-session/Vibe64PromptHints.vue`
+- `src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue`
 
 ## Public contract
 
@@ -42,6 +47,16 @@ When an OpenCode provider reports successful completion without a user-facing
 response, Vibe64 makes one bounded continuation request for that response. If
 the provider again returns no response, the turn fails visibly instead of
 appearing to have completed silently.
+
+The chat cog opens a compact selector for the AI used by that session. It shows
+only currently connected providers and their available models, chooses a
+compatible conversation agent automatically, and offers the selected model's
+thinking choices when present. Applying a change requires a complete,
+compatible selection from the current capability catalog. People can choose
+among already connected AIs even when they cannot manage account connections;
+only people who can manage connections see the shortcut to configure more.
+Loading, retryable catalog failures, and the absence of a connected AI remain
+visible inside the selector.
 
 Open sessions in one workspace share a single running Codex service and a
 single running OpenCode service according to the assistant each session has
@@ -101,6 +116,11 @@ replacement key.
   plugins while loading Vibe64's single trusted session-environment plugin,
   so the shared service can route commands through the authenticated session
   boundary without executing arbitrary project plugins.
+- `readOpenCodeCatalog()` gives a bounded cold catalogue read the configured
+  provider routes and an isolated temporary OpenCode credential store. This
+  lets endpoint-specific providers expose their native model definitions while
+  the resident OpenCode service stays asleep; the temporary store is removed
+  when the read finishes.
 - `Vibe64SessionEnvironment` presents ordinary shell commands rather than
   Vibe64's transport wrapper in the model-facing instructions and history. At
   execution it recognizes only canonical invocations of the session's exact
