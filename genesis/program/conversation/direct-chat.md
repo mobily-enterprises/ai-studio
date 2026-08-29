@@ -38,6 +38,10 @@ Message delivery and provider work remain visibly distinct. The composer shows
 the initial send while the message is being accepted, then reports the selected
 assistant as working for the rest of the active turn. The session tab and
 assistant avatar use that same live turn state until completion or interruption.
+When an OpenCode provider reports successful completion without a user-facing
+response, Vibe64 makes one bounded continuation request for that response. If
+the provider again returns no response, the turn fails visibly instead of
+appearing to have completed silently.
 
 Open sessions in one workspace share a single running Codex service and a
 single running OpenCode service according to the assistant each session has
@@ -49,11 +53,13 @@ resident provider process is shared. Capability discovery without an open
 session may run a bounded command but does not leave another provider service
 running. OpenCode shell commands and any descendants they leave running are
 attributed to the originating project session, and closing that session drains
-those descendants. Codex's optimized shared command executor keeps its
-descendants inside the workspace's managed Codex scope, but does not expose the
-per-command boundary needed for exact session attribution; those descendants
-are reported with the workspace Codex service and drain when its final session
-closes.
+those descendants. On a managed host, supported browser commands run through
+Codex's optimized shared command executor are temporarily routed through the
+originating session boundary, so their browser descendants are attributed to
+that session and drain when it closes. Other optimized Codex command
+descendants remain inside the workspace's managed Codex scope because the
+executor does not expose their per-command boundary; they are reported with
+the workspace Codex service and drain when its final session closes.
 
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
@@ -95,11 +101,23 @@ replacement key.
   plugins while loading Vibe64's single trusted session-environment plugin,
   so the shared service can route commands through the authenticated session
   boundary without executing arbitrary project plugins.
+- `Vibe64SessionEnvironment` presents ordinary shell commands rather than
+  Vibe64's transport wrapper in the model-facing instructions and history. At
+  execution it recognizes only canonical invocations of the session's exact
+  trusted wrapper, removes any repeated copies, and applies that wrapper once;
+  persisted provider history remains unchanged.
+- OpenCode's turn monitor detects a successful provider result with no text,
+  queues one tool-free request for the missing final response, and records an
+  explicit failure if that bounded recovery also returns no text.
 - `prepareAgentSessionCommand()` publishes the authenticated session command
   broker. OpenCode's session environment plugin routes commands through that
   boundary before execution. Codex can route commands exposed through its
   pre-tool hook, but optimized Code Mode currently does not emit those command
-  events, so its descendants retain workspace-level rather than session-level
+  events because of OpenAI Codex issue #23411. While that issue remains,
+  `codexAppServerDeveloperInstructions()` tells Codex to keep supported browser
+  commands PATH-resolved so a managed host's temporary browser-only policy can
+  send them through the broker. That guidance and host policy must be removed
+  when #23411 is fixed; other optimized descendants retain workspace-level
   ownership. The broker environment applies the same desktop message-bus
   exclusion so a session-owned descendant remains inside its managed execution
   scope.

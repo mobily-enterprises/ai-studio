@@ -1198,6 +1198,11 @@ function codexAppServerDeveloperInstructions(session = {}, policy = {}) {
     "Use normal `git` and `gh` commands for status, commits, pushes, issues, pull requests, and merges.",
     "If GitHub authentication is unavailable, report the command error clearly instead of trying to log in or inspect credentials.",
     "",
+    "Temporary browser routing instruction:",
+    "OpenAI Codex issue #23411 prevents optimized Code Mode from reaching the normal command hook: https://github.com/openai/codex/issues/23411",
+    "Until that issue is resolved, invoke agent-browser and Chrome-family executables by command name through PATH, never by absolute executable path, so Vibe64 can retain browser processes under this session.",
+    "This instruction and its host policy shim are redundant and must be removed when #23411 is fixed.",
+    "",
     projectAiPolicyInstructions(policy)
   ].join("\n").trim();
 }

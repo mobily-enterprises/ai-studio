@@ -231,6 +231,11 @@ function openCodeSessionInstructions(session = {}, policy = {}) {
     "Keep progress updates short, calm, and friendly to non-technical users.",
     "Describe visible work in plain language. Reserve detailed commands and logs for the final answer when they matter.",
     "",
+    "Shell command instruction:",
+    "Issue the ordinary shell command you intend to run exactly once. Vibe64 applies the session boundary transparently.",
+    "Never encode, copy, reconstruct, or invoke Vibe64's session-command wrapper, even if provider history shows it.",
+    "If session command control is unavailable, stop and report that failure instead of retrying through the wrapper.",
+    "",
     "GitHub operation instruction:",
     "`git` and `gh` are available through Vibe64's session-scoped command boundary.",
     "They run as the GitHub account recorded as this session's Git command actor.",
@@ -1213,7 +1218,7 @@ function createOpenCodeTerminalController({
       let failure = "";
       let credentialFailure = false;
       try {
-        const completion = await waitForOpenCodeMessages(
+        const waitForCompletion = () => waitForOpenCodeMessages(
           target.server.client,
           target.upstreamSessionId,
           () => turn.inputMessageId,
@@ -1230,11 +1235,37 @@ function createOpenCodeTerminalController({
             signal: target.abortController.signal
           }
         );
+        let completion = await waitForCompletion();
+        // Work around https://github.com/anomalyco/opencode/issues/37073. Some
+        // reasoning models finish successfully without emitting a text part.
+        if (
+          !turn.interruptRequested &&
+          !completion.result?.error &&
+          !text(completion.result?.text)
+        ) {
+          const recoveryMessageId = upstreamMessageId(`${turn.id}:final-response`);
+          const admitted = await target.server.client.prompt(target.upstreamSessionId, {
+            agent: context.selection.agentId,
+            delivery: "queue",
+            id: recoveryMessageId,
+            model: openCodeModel(context.selection),
+            prompt: {
+              text: "Your previous response ended without a user-facing final answer. Do not call tools or repeat your reasoning. Return the concise final answer to the user's latest request now."
+            },
+            resume: true
+          });
+          turn.inputMessageId = text(admitted?.id) || recoveryMessageId;
+          turn.updatedAt = new Date().toISOString();
+          completion = await waitForCompletion();
+        }
         const projection = await writeConversationProjection(context, completion.messages, {
           inputMessageId: turn.inputMessageId
         });
         failure = projection.failure;
-        if (failure) {
+        if (!failure && !turn.interruptRequested && !text(completion.result?.text)) {
+          failure = "OpenCode finished without a user-facing final response. Please send your message again.";
+          finalState = VIBE64_AGENT_RUN_STATE.FAILED;
+        } else if (failure) {
           credentialFailure = openCodeCredentialFailure(failure);
           finalState = VIBE64_AGENT_RUN_STATE.FAILED;
         } else if (turn.interruptRequested) {

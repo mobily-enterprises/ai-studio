@@ -59,6 +59,7 @@ const providerRevision = openCodeAssistantCapabilities({
 
 async function controllerHarness({
   assistantParts = [],
+  assistantResponses = [],
   assistantError = null,
   catalogProviders = providerResult,
   commandEnvironmentGate = null,
@@ -178,6 +179,7 @@ async function controllerHarness({
   const switchedModels = [];
   const upstreamSessions = new Map();
   const outputs = new Map();
+  const queuedAssistantResponses = [...assistantResponses];
   let failNextPrompt = false;
   let nextSession = 1;
 
@@ -210,6 +212,9 @@ async function controllerHarness({
       },
       async messages(id) {
         const output = outputs.get(id);
+        const response = output && typeof output === "object" && !Array.isArray(output)
+          ? output
+          : { text: output };
         const promptCall = [...promptCalls].reverse().find((entry) => entry.id === id);
         const created = Date.now();
         return {
@@ -221,8 +226,12 @@ async function controllerHarness({
               type: "user"
             },
             {
-              ...(assistantError ? { error: assistantError } : { text: output }),
-              ...(assistantParts.length ? { content: assistantParts } : {}),
+              ...(response.error || assistantError
+                ? { error: response.error || assistantError }
+                : { text: response.text }),
+              ...((response.content || assistantParts).length
+                ? { content: response.content || assistantParts }
+                : {}),
               id: "msg_assistant",
               time: { completed: created + 1, created: created + 1 },
               type: "assistant"
@@ -238,7 +247,7 @@ async function controllerHarness({
         }
         outputs.set(id, id.startsWith("ses_detached_")
           ? '{"subject":"Add durable OpenCode sessions"}'
-          : "Main turn complete");
+          : queuedAssistantResponses.shift() || "Main turn complete");
         return { admittedSeq: promptCalls.length, id: input.id };
       },
       async providers() {
@@ -470,6 +479,8 @@ test("OpenCode persists a user message only after upstream admission", async (t)
     providerID: "deepseek",
     variant: "high"
   });
+  assert.match(mainPrompt.prompt.text, /Issue the ordinary shell command you intend to run exactly once/u);
+  assert.match(mainPrompt.prompt.text, /Never encode, copy, reconstruct, or invoke Vibe64's session-command wrapper/u);
   const completed = await harness.controller.waitForTurn("session-1", {
     runtime: harness.runtime,
     session: harness.session
@@ -512,6 +523,93 @@ test("OpenCode persists a user message only after upstream admission", async (t)
   assert.equal(idle?.[1]?.payload?.agentRun?.state, "completed");
   assert.equal(idle?.[1]?.payload?.agentSession?.turn?.active, false);
   assert.equal(idle?.[1]?.payload?.agentSession?.turn?.state, "idle");
+});
+
+test("OpenCode recovers a reasoning-only completion into a final answer", async (t) => {
+  const harness = await controllerHarness({
+    assistantResponses: [{
+      content: [{
+        id: "reasoning-only-part",
+        text: "The command completed and the result is 42.",
+        type: "reasoning"
+      }],
+      text: ""
+    }, {
+      text: "The result is 42."
+    }]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Run the command and tell me its result.",
+    messageId: "client-message-reasoning-only"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  const completed = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(completed.state, "completed");
+  assert.equal(harness.promptCalls.length, 2);
+  assert.match(
+    harness.promptCalls[1].input.prompt.text,
+    /previous response ended without a user-facing final answer/u
+  );
+  assert.equal(harness.userMessages.length, 1);
+  assert.equal(harness.thinkingMessages[0].text, "The command completed and the result is 42.");
+  assert.deepEqual(
+    harness.assistantMessages.map((message) => message.text),
+    ["The result is 42."]
+  );
+});
+
+test("OpenCode fails explicitly after two reasoning-only completions", async (t) => {
+  const reasoningOnly = (id) => ({
+    content: [{
+      id,
+      text: "I have the result but did not emit a final answer.",
+      type: "reasoning"
+    }],
+    text: ""
+  });
+  const harness = await controllerHarness({
+    assistantResponses: [
+      reasoningOnly("reasoning-only-first"),
+      reasoningOnly("reasoning-only-second")
+    ]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Run the command and tell me its result.",
+    messageId: "client-message-reasoning-only-twice"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  const completed = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(harness.promptCalls.length, 2);
+  assert.equal(completed.state, "failed");
+  assert.equal(
+    completed.error,
+    "OpenCode finished without a user-facing final response. Please send your message again."
+  );
+  assert.deepEqual(harness.assistantMessages, []);
 });
 
 test("OpenCode shares one lazy server across open sessions and stops it after the last closes", async (t) => {
