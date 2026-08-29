@@ -164,12 +164,21 @@ function unixEndpointForRuntime(runtimeDir) {
 }
 
 function terminalEnvHash(terminalEnv = {}) {
+  const excludedNames = new Set([
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DBUS_STARTER_ADDRESS",
+    "DBUS_STARTER_BUS_TYPE"
+  ]);
   return stableHash(JSON.stringify(Object.entries(terminalEnv)
     .map(([name, value]) => [
       String(name || "").trim(),
       String(value ?? "")
     ])
-    .filter(([name, value]) => name && String(value || ""))
+    .filter(([name, value]) => (
+      name &&
+      String(value || "") &&
+      !excludedNames.has(name)
+    ))
     .sort(([left], [right]) => left.localeCompare(right))));
 }
 
@@ -281,7 +290,11 @@ function managedCodexAppServerArgs(call = {}) {
   assert.equal(call.command, "/bin/sh");
   assert.deepEqual(call.args?.slice(0, 4), [
     "-c",
-    'umask 0007\nexec "$@"',
+    [
+      "umask 0007",
+      "unset DBUS_SESSION_BUS_ADDRESS DBUS_STARTER_ADDRESS DBUS_STARTER_BUS_TYPE",
+      'exec "$@"'
+    ].join("\n"),
     "vibe64-codex-app-server",
     STUDIO_MANAGED_CODEX_COMMAND
   ]);
@@ -1036,6 +1049,9 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
       targetRoot
     };
     const terminalEnv = {
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      DBUS_STARTER_ADDRESS: "unix:path=/run/user/1000/bus",
+      DBUS_STARTER_BUS_TYPE: "session",
       VIBE64_CODEX_GIT_COMMAND_WRAPPER_DIR: gitCommandWrapperHostDir,
       DB_CLIENT: "mysql2",
       DB_HOST: "127.0.0.1",
@@ -1055,6 +1071,12 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     const commandCalls = [];
     const runtime = await ensureCodexAppServerRuntime({
       authStateSignature: "test-auth-state-signature",
+      env: {
+        ...process.env,
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/inherited-bus",
+        DBUS_STARTER_ADDRESS: "unix:path=/run/user/1000/inherited-bus",
+        DBUS_STARTER_BUS_TYPE: "session"
+      },
       readyTimeoutMs: 2000,
       runtimeDir,
       commandRunner: codexAppServerCommandRunner(runtimeDir, commandCalls),
@@ -1087,12 +1109,16 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
     );
     assert.equal(runCall.cwd, workdir);
     assert.equal(runCall.logPath, path.join(runtimeDir, "app-server.log"));
+    assert.equal(runCall.inheritProcessEnv, false);
     assert.equal(runCall.credentialHome.home, toolHomeSource);
     assert.equal(Object.hasOwn(runCall.env || {}, "NPM_CONFIG_PREFIX"), false);
     assert.equal(runCall.baseEnv.DB_HOST, "127.0.0.1");
     assert.equal(runCall.baseEnv.DB_NAME, "codex_app_server_db");
     assert.equal(runCall.baseEnv.DB_PASSWORD, "test-root-password");
     assert.equal(runCall.baseEnv.VIBE64_WORKSPACE, "sas");
+    assert.equal(Object.hasOwn(runCall.baseEnv, "DBUS_SESSION_BUS_ADDRESS"), false);
+    assert.equal(Object.hasOwn(runCall.baseEnv, "DBUS_STARTER_ADDRESS"), false);
+    assert.equal(Object.hasOwn(runCall.baseEnv, "DBUS_STARTER_BUS_TYPE"), false);
     assert.deepEqual(runCall.project, project);
     assert.deepEqual(runCall.session, session);
     assert.equal(runCall.userKey, "merc");
@@ -1102,6 +1128,38 @@ test("codex provider starts one app-server and stores reusable runtime metadata"
       gitCommandWrapperHostDir,
       genesisCommandShimDirectory()
     ]);
+    const startupEnvProbe = await runVibe64Command({
+      ...runCall,
+      args: [
+        "-c",
+        runCall.args[1],
+        "vibe64-codex-app-server-env-probe",
+        process.execPath,
+        "-e",
+        [
+          "console.log(JSON.stringify({",
+          "dbHost: process.env.DB_HOST,",
+          "sessionBus: process.env.DBUS_SESSION_BUS_ADDRESS,",
+          "starterAddress: process.env.DBUS_STARTER_ADDRESS,",
+          "starterType: process.env.DBUS_STARTER_BUS_TYPE",
+          "}));"
+        ].join("")
+      ],
+      baseEnv: {
+        ...runCall.baseEnv,
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/reintroduced-bus",
+        DBUS_STARTER_ADDRESS: "unix:path=/run/user/1000/reintroduced-bus",
+        DBUS_STARTER_BUS_TYPE: "session"
+      },
+      command: "/bin/sh",
+      execution: undefined,
+      logPath: "",
+      mode: "capture"
+    });
+    assert.equal(startupEnvProbe.ok, true, startupEnvProbe.output);
+    assert.deepEqual(JSON.parse(startupEnvProbe.stdout), {
+      dbHost: "127.0.0.1"
+    });
     const envProbe = await runVibe64Command({
       ...runCall,
       execution: undefined,
@@ -2757,6 +2815,9 @@ test("codex provider scopes each thread to its session environment", async () =>
   const provider = new CodexAppServerAgentProvider({
     threadEnv: {
       DATABASE_URL: "mysql://session-database.test/app",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      DBUS_STARTER_ADDRESS: "unix:path=/run/user/1000/bus",
+      DBUS_STARTER_BUS_TYPE: "session",
       SESSION_MARKER: "session-two"
     }
   });
@@ -2917,27 +2978,32 @@ test("codex provider reuses an available connection without another auth preflig
 });
 
 test("codex auth preflight uses the shared runtime directory when no session path is owned", async () => {
-  const runtimeDir = "/run/user/1000/vibe64/agent-providers/codex-app-server";
-  const requests = [];
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server");
+    const requests = [];
+    await assert.rejects(() => access(runtimeDir), { code: "ENOENT" });
 
-  await assertCodexAuthPreflightReady({
-    commandRunner: async (request) => {
-      requests.push(request);
-      return {
-        exitCode: 0,
-        ok: true,
-        output: ""
-      };
-    },
-    runtimeDir
+    await assertCodexAuthPreflightReady({
+      commandRunner: async (request) => {
+        requests.push(request);
+        return {
+          exitCode: 0,
+          ok: true,
+          output: ""
+        };
+      },
+      runtimeDir
+    });
+
+    await access(runtimeDir);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].cwd, runtimeDir);
+    assert.deepEqual(requests[0].allowedRoots, [runtimeDir]);
+    assert.equal(requests[0].envPolicy, "auth");
+    assert.equal(requests[0].inheritProcessEnv, false);
+    assert.equal(requests[0].mode, "capture");
+    assert.equal(requests[0].purpose, "codex");
   });
-
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].cwd, runtimeDir);
-  assert.deepEqual(requests[0].allowedRoots, [runtimeDir]);
-  assert.equal(requests[0].envPolicy, "auth");
-  assert.equal(requests[0].mode, "capture");
-  assert.equal(requests[0].purpose, "codex");
 });
 
 test("codex provider reads every model catalog page with native pagination fields", async () => {

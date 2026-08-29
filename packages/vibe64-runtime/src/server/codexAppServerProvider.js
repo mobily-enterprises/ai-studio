@@ -71,6 +71,11 @@ const CODEX_APP_SERVER_PROCESS_IDENTITY_VERSION = 1;
 const CODEX_APP_SERVER_PROCESS_IDENTITY_PLATFORM = "linux-proc";
 const CODEX_APP_SERVER_PROCESS_RUNTIME_TOKEN_ENV = "VIBE64_CODEX_APP_SERVER_RUNTIME_TOKEN";
 const CODEX_APP_SERVER_PROCESS_COMMAND_HASH_ENV = "VIBE64_CODEX_APP_SERVER_COMMAND_HASH";
+const CODEX_APP_SERVER_DESKTOP_BUS_ENV_NAMES = new Set([
+  "DBUS_SESSION_BUS_ADDRESS",
+  "DBUS_STARTER_ADDRESS",
+  "DBUS_STARTER_BUS_TYPE"
+]);
 const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 60000;
 const CODEX_APP_SERVER_SESSION_COMMAND_HOOK_PATH = fileURLToPath(
   new URL("./codexSessionCommandHook.js", import.meta.url)
@@ -110,6 +115,7 @@ const CODEX_APP_SERVER_MANAGED_UMASK = "0007";
 const CODEX_APP_SERVER_MANAGED_SHELL = "/bin/sh";
 const CODEX_APP_SERVER_MANAGED_STARTUP_SCRIPT = [
   `umask ${CODEX_APP_SERVER_MANAGED_UMASK}`,
+  `unset ${[...CODEX_APP_SERVER_DESKTOP_BUS_ENV_NAMES].join(" ")}`,
   'exec "$@"'
 ].join("\n");
 const CODEX_APP_SERVER_ECONOMY_STARTUP_SCRIPT = [
@@ -994,6 +1000,10 @@ async function runCodexAuthPreflight({
   if (normalizedToolHomeSource) {
     await assertExistingDirectory(normalizedToolHomeSource, "Codex credential home");
   }
+  const normalizedRuntimeDir = normalizeAgentText(runtimeDir);
+  if (normalizedRuntimeDir) {
+    await ensureWritablePrivateDirectory(path.resolve(normalizedRuntimeDir));
+  }
   const baseEnv = codexAppServerCommandBaseEnv({
     env,
     terminalEnv
@@ -1013,6 +1023,7 @@ async function runCodexAuthPreflight({
       credentialHome: codexAppServerCredentialHome(normalizedToolHomeSource, baseEnv),
       cwd: processCwd,
       envPolicy: "auth",
+      inheritProcessEnv: false,
       mode: "capture",
       purpose: "codex",
       runtimes: codexAppServerRuntimes(runtimes),
@@ -1570,7 +1581,11 @@ function normalizeCodexAppServerTerminalEnv(terminalEnv = {}) {
       normalizeAgentText(name),
       String(value ?? "")
     ])
-    .filter(([name, value]) => name && String(value || "")));
+    .filter(([name, value]) => (
+      name &&
+      String(value || "") &&
+      !CODEX_APP_SERVER_DESKTOP_BUS_ENV_NAMES.has(name)
+    )));
 }
 
 function codexAppServerThreadRequestParams(params = {}, threadEnv = {}) {
@@ -1616,10 +1631,14 @@ function codexAppServerCommandBaseEnv({
   env = process.env,
   terminalEnv = {}
 } = {}) {
-  return {
+  const baseEnv = {
     ...env,
     ...normalizeCodexAppServerTerminalEnv(terminalEnv)
   };
+  for (const name of CODEX_APP_SERVER_DESKTOP_BUS_ENV_NAMES) {
+    delete baseEnv[name];
+  }
+  return baseEnv;
 }
 
 function codexAppServerCredentialHome(toolHomeSource = "", baseEnv = {}) {
@@ -2279,6 +2298,7 @@ async function startCodexAppServerProcess({
         stableHash(runtimeDir)
     },
     logPath,
+    inheritProcessEnv: false,
     mode: "detached",
     project: economy ? {} : project,
     purpose: "codex",

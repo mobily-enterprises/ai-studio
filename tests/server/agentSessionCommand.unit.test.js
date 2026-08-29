@@ -74,6 +74,9 @@ test("agent shell commands run as session-owned managed executions and drain on 
       commandBase64: Buffer.from(command, "utf8").toString("base64url"),
       cwd: sourceRoot,
       env: {
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+        DBUS_STARTER_ADDRESS: "unix:path=/run/user/1000/bus",
+        DBUS_STARTER_BUS_TYPE: "session",
         SAFE_ENV: "kept",
         VIBE64_AGENT_SESSION_COMMAND_TOKEN: "must-not-leak"
       },
@@ -93,6 +96,9 @@ test("agent shell commands run as session-owned managed executions and drain on 
     assert.equal(request.cwd, sourceRoot);
     assert.deepEqual(request.allowedRoots, [sourceRoot]);
     assert.equal(request.baseEnv.SAFE_ENV, "kept");
+    assert.equal(Object.hasOwn(request.baseEnv, "DBUS_SESSION_BUS_ADDRESS"), false);
+    assert.equal(Object.hasOwn(request.baseEnv, "DBUS_STARTER_ADDRESS"), false);
+    assert.equal(Object.hasOwn(request.baseEnv, "DBUS_STARTER_BUS_TYPE"), false);
     assert.equal(Object.hasOwn(request.baseEnv, "VIBE64_AGENT_SESSION_COMMAND_TOKEN"), false);
     assert.equal(
       Buffer.from(request.baseEnv.VIBE64_AGENT_SESSION_RUN_COMMAND_BASE64, "base64").toString("utf8"),

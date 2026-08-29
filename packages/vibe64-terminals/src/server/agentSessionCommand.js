@@ -71,6 +71,11 @@ const AGENT_SESSION_CONTROL_ENV_NAMES = new Set([
   VIBE64_AGENT_SESSION_COMMAND_WRAPPER_ENV,
   "VIBE64_EXECUTION_ID"
 ]);
+const AGENT_SESSION_DESKTOP_BUS_ENV_NAMES = new Set([
+  "DBUS_SESSION_BUS_ADDRESS",
+  "DBUS_STARTER_ADDRESS",
+  "DBUS_STARTER_BUS_TYPE"
+]);
 
 const commandServers = new Map();
 const commandServerPrepares = new Map();
@@ -220,6 +225,7 @@ function sanitizedCommandEnvironment(value = {}) {
     .filter(([name]) => (
       name &&
       !AGENT_SESSION_CONTROL_ENV_NAMES.has(name) &&
+      !AGENT_SESSION_DESKTOP_BUS_ENV_NAMES.has(name) &&
       !name.startsWith("VIBE64_CODEX_APP_SERVER_") &&
       name !== "VIBE64_OPENCODE_SESSION_ENV_REGISTRY" &&
       ![

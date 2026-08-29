@@ -47,9 +47,13 @@ session closes. Conversation identity, working directory, command environment,
 model settings, and provider history remain session-specific even though the
 resident provider process is shared. Capability discovery without an open
 session may run a bounded command but does not leave another provider service
-running. Shell commands and any descendants they leave running are attributed
-to the originating project session rather than to the shared provider service,
-and closing that session drains those descendants.
+running. OpenCode shell commands and any descendants they leave running are
+attributed to the originating project session, and closing that session drains
+those descendants. Codex's optimized shared command executor keeps its
+descendants inside the workspace's managed Codex scope, but does not expose the
+per-command boundary needed for exact session attribution; those descendants
+are reported with the workspace Codex service and drain when its final session
+closes.
 
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
@@ -67,6 +71,16 @@ replacement key.
 - `codexAppServerRuntimeOptionsForSession()` keeps the Codex process identity
   workspace-wide while carrying each session's directory and environment into
   its thread requests.
+- `codexAppServerCommandBaseEnv()` and
+  `normalizeCodexAppServerTerminalEnv()` pass the curated host and session
+  environment explicitly while withholding the desktop message-bus variables
+  that would let a descendant move itself out of the managed Codex execution
+  scope. The command runner does not merge the host process environment again,
+  and the managed startup shell repeats the exclusion at the final process
+  boundary.
+- `runCodexAuthPreflight()` recreates the private volatile runtime directory
+  before using it, so a shared Codex service can start normally after a host
+  reboot has cleared that directory.
 - `withCodexAppServerProviderLifecycle()` serializes provider attachment,
   replacement, and final-runtime shutdown so concurrent session closes make
   one authoritative last-owner decision.
@@ -82,5 +96,10 @@ replacement key.
   so the shared service can route commands through the authenticated session
   boundary without executing arbitrary project plugins.
 - `prepareAgentSessionCommand()` publishes the authenticated session command
-  broker. Codex rewrites shell tools through its pre-tool hook, while OpenCode's
-  session environment plugin performs the equivalent rewrite before execution.
+  broker. OpenCode's session environment plugin routes commands through that
+  boundary before execution. Codex can route commands exposed through its
+  pre-tool hook, but optimized Code Mode currently does not emit those command
+  events, so its descendants retain workspace-level rather than session-level
+  ownership. The broker environment applies the same desktop message-bus
+  exclusion so a session-owned descendant remains inside its managed execution
+  scope.
