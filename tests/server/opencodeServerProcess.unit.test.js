@@ -261,6 +261,7 @@ test("OpenCode servers run and drain through one managed execution id", async (t
   assert.deepEqual(stops, [{
     id: executionId,
     options: {
+      allowMissingRecordScopeRecovery: true,
       reason: "opencode-server-stop",
       termTimeoutMs: 3000
     }

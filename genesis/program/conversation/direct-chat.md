@@ -70,6 +70,9 @@ replacement key.
 - `withCodexAppServerProviderLifecycle()` serializes provider attachment,
   replacement, and final-runtime shutdown so concurrent session closes make
   one authoritative last-owner decision.
+- `stopOwnedCodexAppServerExecution()` stops the exact managed Codex execution
+  scope and can prove that scope empty after its ordinary resource-history
+  record expires, without treating an unrelated process as the provider.
 - `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process
   lifecycle. Established session targets and pending starts both retain that
   process; directory-scoped clients and `Vibe64SessionEnvironment` preserve

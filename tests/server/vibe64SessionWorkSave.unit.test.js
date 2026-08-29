@@ -168,6 +168,8 @@ test("work inspection compares the complete session tree with its verified canon
     const project = githubProject(root, fixture.remote);
     const hostileMarker = path.join(project.path, ".git", "HOSTILE");
     const requests = [];
+    let activeCommands = 0;
+    let peakActiveCommands = 0;
     await mkdir(path.dirname(hostileMarker), { recursive: true });
     await writeFile(hostileMarker, "must remain untouched\n", "utf8");
     await writeFile(path.join(session.sourcePath, "committed-locally.txt"), "session work\n", "utf8");
@@ -178,7 +180,13 @@ test("work inspection compares the complete session tree with its verified canon
       project,
       runCommand: async (request) => {
         requests.push(request);
-        return commandRunner(request);
+        activeCommands += 1;
+        peakActiveCommands = Math.max(peakActiveCommands, activeCommands);
+        try {
+          return await commandRunner(request);
+        } finally {
+          activeCommands -= 1;
+        }
       },
       session
     });
@@ -195,6 +203,7 @@ test("work inspection compares the complete session tree with its verified canon
     assert.ok(requests.every((request) => request.execution?.projectSlug === "test-project"));
     assert.ok(requests.every((request) => request.execution?.sessionId === session.sessionId));
     assert.equal(new Set(requests.map((request) => request.execution?.operationId)).size, 1);
+    assert.equal(peakActiveCommands, 1);
     assert.equal(await readFile(hostileMarker, "utf8"), "must remain untouched\n");
     assert.equal(result.dirty, false, "the working tree itself is clean");
     assert.equal(result.unsaved, true, "the complete session tree still differs from canonical");

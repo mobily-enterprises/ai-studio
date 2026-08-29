@@ -128,27 +128,32 @@ function scopedSessionWorkCommand(runCommand, context = {}, project = {}, {
     return runCommand;
   }
   const projectSlug = text(project.slug || project.projectSlug);
-  const scoped = (request = {}) => runCommand({
-    ...request,
-    execution: {
-      ...(request.execution || {}),
-      kind: "job",
-      label,
-      lifecycle: "finite",
-      operationId: text(operationId),
-      ownerId: context.sessionId,
-      projectSlug,
-      sessionId: context.sessionId
-    },
-    project: {
-      ...(request.project || {}),
-      ...(projectSlug ? { slug: projectSlug } : {})
-    },
-    session: {
-      ...(request.session || {}),
-      sessionId: context.sessionId
-    }
-  });
+  let commandTail = Promise.resolve();
+  const scoped = (request = {}) => {
+    const command = commandTail.then(() => runCommand({
+      ...request,
+      execution: {
+        ...(request.execution || {}),
+        kind: "job",
+        label,
+        lifecycle: "finite",
+        operationId: text(operationId),
+        ownerId: context.sessionId,
+        projectSlug,
+        sessionId: context.sessionId
+      },
+      project: {
+        ...(request.project || {}),
+        ...(projectSlug ? { slug: projectSlug } : {})
+      },
+      session: {
+        ...(request.session || {}),
+        sessionId: context.sessionId
+      }
+    }));
+    commandTail = command.then(() => undefined, () => undefined);
+    return command;
+  };
   Object.defineProperty(scoped, SESSION_WORK_COMMAND_SCOPE, { value: true });
   return scoped;
 }

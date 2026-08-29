@@ -30,4 +30,5 @@ already published.
   canonical source mutations across processes.
 - `scopedSessionWorkCommand()` assigns one semantic operation identity plus
   project and session ownership to the commands used by inspection, update,
-  Save, and recovery so a host can present the work as one attributable activity.
+  Save, and recovery, and runs those commands in sequence so one operation does
+  not compete with itself for host admission.

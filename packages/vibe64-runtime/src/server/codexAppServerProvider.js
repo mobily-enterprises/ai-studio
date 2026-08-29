@@ -1290,6 +1290,7 @@ async function stopOwnedCodexAppServerExecution(metadata = {}, options = {}) {
     let executionStop;
     try {
       executionStop = await stopExecution(executionId, {
+        allowMissingRecordScopeRecovery: true,
         killTimeoutMs: options.killTimeoutMs,
         reason: options.reason || "codex-app-server-stop",
         termTimeoutMs: options.termTimeoutMs

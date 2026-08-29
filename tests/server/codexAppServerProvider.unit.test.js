@@ -1360,6 +1360,41 @@ test("codex provider releases verified stopped runtime without stopping expired 
   });
 });
 
+test("codex provider recovers its exact managed scope after resource history expires", async () => {
+  await withTemporaryDirectory(async (baseDir) => {
+    const runtimeDir = path.join(baseDir, "codex-app-server-expired-record");
+    await mkdir(runtimeDir, { recursive: true });
+    const metadata = metadataForRuntime(runtimeDir, { pid: 99999999 });
+    await writeMetadata(runtimeDir, metadata);
+    const stops = [];
+
+    const result = await stopCodexAppServerRuntime({
+      runtimeDir,
+      async stopExecution(executionId, options) {
+        stops.push({ executionId, options });
+        return {
+          executionId,
+          ok: true,
+          scopeEmpty: true,
+          stopped: false
+        };
+      }
+    });
+
+    assert.equal(result.processExitVerified, true);
+    assert.equal(result.runtimeDirRemoved, true);
+    assert.deepEqual(stops, [{
+      executionId: metadata.executionId,
+      options: {
+        allowMissingRecordScopeRecovery: true,
+        killTimeoutMs: undefined,
+        reason: "codex-app-server-stop",
+        termTimeoutMs: undefined
+      }
+    }]);
+  });
+});
+
 test("codex provider does not invent exit proof for malformed runtime metadata", async () => {
   await withTemporaryDirectory(async (baseDir) => {
     const runtimeDir = path.join(baseDir, "codex-app-server-malformed");

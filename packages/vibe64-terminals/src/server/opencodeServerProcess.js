@@ -474,6 +474,7 @@ async function createOpenCodeServerProcess({
       readLogs,
       async stop() {
         const proof = await stopExecution(startResult.execution.id, {
+          allowMissingRecordScopeRecovery: true,
           reason: "opencode-server-stop",
           termTimeoutMs: OPENCODE_STOP_TIMEOUT_MS
         });
