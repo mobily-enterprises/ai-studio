@@ -22,6 +22,8 @@ function vibeManagedEnvPolicyInstruction() {
     "- Development and production Env are separate. Use the scope the task actually requires and never copy a value between scopes without explicit user direction.",
     "- Do not tell the user to create an Env entry manually when the value is available to you and `vibe64-env` can save it. Never invent missing third-party credentials; ask the user for a value when one is genuinely required and unavailable.",
     "- Do not put user Env values or secrets in repository files or edit Vibe64 runtime/session storage. Vibe64 stores user values outside Git and materializes any Genesis-declared environment files.",
+    "- When `TEST_DB_NAME` is present, it designates the one disposable test database for this environment. Connect to it with the existing `DB_HOST`, `DB_PORT`, `DB_USER`, and `DB_PASSWORD` values; create, drop, or recreate only that exact database name.",
+    "- Never invent a timestamped, random, or suffixed test database name, request global database CREATE/DROP authority, or ask for an admin credential. Never treat `DB_NAME` as disposable. Tests that reset `TEST_DB_NAME` must run serially against that database.",
     "- After every successful Env mutation, tell the user exactly which scope and key names were created, updated, or removed, including which ones were stored empty. Never repeat values, and never claim a mutation succeeded unless the command did."
   ].join("\n");
 }

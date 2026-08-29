@@ -36,6 +36,11 @@ test("Vibe64 briefing directs agents to manage scoped Env and report successful 
   assert.match(briefing, /Development and production Env are separate/u);
   assert.match(briefing, /Do not tell the user to create an Env entry manually/u);
   assert.match(briefing, /stores user values outside Git/u);
+  assert.match(briefing, /`TEST_DB_NAME` is present, it designates the one disposable test database/u);
+  assert.match(briefing, /existing `DB_HOST`, `DB_PORT`, `DB_USER`, and `DB_PASSWORD`/u);
+  assert.match(briefing, /Never invent a timestamped, random, or suffixed test database name/u);
+  assert.match(briefing, /Never treat `DB_NAME` as disposable/u);
+  assert.match(briefing, /must run serially against that database/u);
   assert.match(briefing, /tell the user exactly which scope and key names were created, updated, or removed, including which ones were stored empty/u);
   assert.match(briefing, /never claim a mutation succeeded unless the command did/u);
 });
