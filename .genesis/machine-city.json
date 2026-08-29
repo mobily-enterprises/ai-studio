@@ -4589,7 +4589,7 @@
       "title": "applicationDeployment.js"
     },
     {
-      "bytes": 12937,
+      "bytes": 12965,
       "districtId": "directory:packages/vibe64-genesis/src/server",
       "extractors": [
         "javascript"
@@ -4618,7 +4618,7 @@
         "function:packages/vibe64-genesis/src/server/index.js:withVibe64ConversationContract:function:228:1",
         "function:packages/vibe64-genesis/src/server/index.js:renderGenesisPrompt:function:266:1"
       ],
-      "hash": "sha256:dbd1f17860568787114586350fe581502005d3d13e8a30394a089026dcdb123b",
+      "hash": "sha256:de7af806071a270137b9ab6b2df4a07d831578a7603310d9c2a679f7590c16e1",
       "id": "file:packages/vibe64-genesis/src/server/index.js",
       "internalFunctionCount": 3,
       "language": "javascript",
@@ -10080,17 +10080,17 @@
         "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess:function:316:1",
         "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.readLogs:function:362:3",
         "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.stop:function:388:3",
-        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.exited:method:470:7",
-        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.stop:method:476:7",
-        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.readLogs:method:521:7",
-        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog:function:536:1",
-        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog.run:function:558:15"
+        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.exited:method:469:7",
+        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.stop:method:475:7",
+        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.readLogs:method:520:7",
+        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog:function:535:1",
+        "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog.run:function:557:15"
       ],
-      "hash": "sha256:30b74120923a713d4ca0bdb1417c8a677ec60d3d61be881935e77c262f5494f6",
+      "hash": "sha256:21be6038e8e4268326a430f1160face99e7367c3fdec6f36079ba7a20df8b715",
       "id": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "internalFunctionCount": 10,
       "language": "javascript",
-      "lines": 620,
+      "lines": 619,
       "mode": 33188,
       "path": "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "presentationCampusId": "presentation-campus:packages:packages/vibe64-terminals",
@@ -17000,7 +17000,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:f977af6f6cee804df648a9270ad07c20007c8e6b3ab23bc8e21614ebe5c4af7c",
+  "codeHash": "sha256:b07173ba85728c68de09a060223fd1d7fa639dfdc6cd486348997b7e4cbebba8",
   "diagnostics": [],
   "districts": [
     {
@@ -108280,10 +108280,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.exited:method:470:7",
+      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.exited:method:469:7",
       "kind": "method",
       "language": "javascript",
-      "line": 470,
+      "line": 469,
       "name": "exited",
       "parameters": [],
       "path": "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
@@ -108299,10 +108299,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.stop:method:476:7",
+      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.stop:method:475:7",
       "kind": "method",
       "language": "javascript",
-      "line": 476,
+      "line": 475,
       "name": "stop",
       "parameters": [],
       "path": "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
@@ -108318,10 +108318,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.readLogs:method:521:7",
+      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:createOpenCodeServerProcess.readLogs:method:520:7",
       "kind": "method",
       "language": "javascript",
-      "line": 521,
+      "line": 520,
       "name": "readLogs",
       "parameters": [],
       "path": "packages/vibe64-terminals/src/server/opencodeServerProcess.js",
@@ -108337,10 +108337,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog:function:536:1",
+      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog:function:535:1",
       "kind": "function",
       "language": "javascript",
-      "line": 536,
+      "line": 535,
       "name": "readOpenCodeCatalog",
       "parameters": [
         "{\n  cacheRoot = \"\",\n  command = \"opencode\",\n  commandRunner = runVibe64Command,\n  env = process.env,\n  privateRoot = \"\",\n  workdir = \"\"\n} = {}"
@@ -108358,10 +108358,10 @@
       "extractor": "javascript",
       "fileId": "file:packages/vibe64-terminals/src/server/opencodeServerProcess.js",
       "generator": false,
-      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog.run:function:558:15",
+      "id": "function:packages/vibe64-terminals/src/server/opencodeServerProcess.js:readOpenCodeCatalog.run:function:557:15",
       "kind": "function",
       "language": "javascript",
-      "line": 558,
+      "line": 557,
       "name": "run",
       "parameters": [
         "args",

@@ -83,6 +83,7 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
     },
     password: "loopback-password",
     privateRoot: "/private/session",
+    sessionEnvironmentRegistry: "/run/vibe64/opencode-sessions.json",
     shimDirs: ["relative-shim", "/managed/shims"]
   });
 
@@ -95,9 +96,16 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
   assert.equal(env.VIBE64_GIT_COMMAND_SOCKET, "/run/vibe64/git.sock");
   assert.equal(env.OPENCODE_DB, "/state/opencode.sqlite");
   assert.equal(env.OPENCODE_SERVER_PASSWORD, "loopback-password");
-  assert.equal(env.OPENCODE_PURE, "1");
+  assert.equal(env.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
+  assert.equal(env.OPENCODE_PURE, undefined);
+  assert.equal(
+    env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY,
+    "/run/vibe64/opencode-sessions.json"
+  );
 
   const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(config.plugin.length, 1);
+  assert.match(config.plugin[0], /^file:.*opencodeSessionEnvironmentPlugin\.js$/u);
   assert.deepEqual(config.agent[OPENCODE_ECONOMY_AGENT_ID], {
     description: "Vibe64 bounded helper turns without tools.",
     hidden: true,
@@ -235,6 +243,9 @@ test("OpenCode servers run and drain through one managed execution id", async (t
   assert.equal(request.execution.ownerId, "session-1");
   assert.equal(request.execution.projectSlug, "catalogue");
   assert.equal(request.execution.sessionId, "session-1");
+  assert.equal(request.args.includes("--pure"), false);
+  assert.equal(request.baseEnv.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
+  assert.equal(request.baseEnv.OPENCODE_PURE, undefined);
   assert.match(
     request.args[1],
     /export VIBE64_CODEX_GIT_COMMAND_NO_STDIN_PARENT_PID=\$\$/u

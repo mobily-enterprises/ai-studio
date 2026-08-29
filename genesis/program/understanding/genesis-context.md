@@ -15,7 +15,9 @@ New projects begin with Genesis and existing repositories can be adopted without
 moving their source. Agent turns receive Genesis task guidance. People can
 refresh and explore the detailed Machine City and explanatory Program City,
 navigate subsystems and operations to their participating files, and open those
-files for editing or discussion. A person's first City visit in a browser gives
+files for editing or discussion. Task guidance names Genesis operations without
+assuming a machine-global executable and uses the repository's pinned Genesis
+package. A person's first City visit in a browser gives
 dismissible guidance for trackpad, mouse, and keyboard movement, rotation, and
 zoom. Exploring the City does not create or submit an assistant prompt. Routine
 automatic follow-ups that produce no result remain hidden, but an explicitly

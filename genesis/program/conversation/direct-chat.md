@@ -74,6 +74,10 @@ replacement key.
   lifecycle. Established session targets and pending starts both retain that
   process; directory-scoped clients and `Vibe64SessionEnvironment` preserve
   each session's working and command boundary.
+- `safeOpenCodeEnvironment()` disables project configuration and default
+  plugins while loading Vibe64's single trusted session-environment plugin,
+  so the shared service can route commands through the authenticated session
+  boundary without executing arbitrary project plugins.
 - `prepareAgentSessionCommand()` publishes the authenticated session command
   broker. Codex rewrites shell tools through its pre-tool hook, while OpenCode's
   session environment plugin performs the equivalent rewrite before execution.
