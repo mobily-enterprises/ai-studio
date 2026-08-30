@@ -27,6 +27,7 @@ import {
 
 const SESSION_RENEWAL_POLL_INTERVAL_MS = 1_200;
 const SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS = 5_000;
+const SESSION_RENEWAL_RETRY_POLL_INTERVAL_MS = 60_000;
 const SESSION_RENEWAL_DRAFT_STORAGE_PREFIX = "vibe64:session-renewal-draft";
 
 function renewalRevision(value = null) {
@@ -853,13 +854,16 @@ function useVibe64SessionRenewal({
     ) {
       return;
     }
+    const pollIntervalMs = maintenanceNeedsRetry.value
+      ? SESSION_RENEWAL_RETRY_POLL_INTERVAL_MS
+      : open.value
+        ? SESSION_RENEWAL_POLL_INTERVAL_MS
+        : SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS;
     pollTimer = setTimeout(async () => {
       pollTimer = null;
       await reload().catch(() => null);
       schedulePoll();
-    }, open.value
-      ? SESSION_RENEWAL_POLL_INTERVAL_MS
-      : SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS);
+    }, pollIntervalMs);
   }
 
   watch([projectSlug, sessionId], () => {
@@ -962,6 +966,7 @@ export {
   SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS,
   SESSION_RENEWAL_DRAFT_STORAGE_PREFIX,
   SESSION_RENEWAL_POLL_INTERVAL_MS,
+  SESSION_RENEWAL_RETRY_POLL_INTERVAL_MS,
   renewalDraftStorageKey,
   renewalHandoverValidationMessage,
   renewalRevision,

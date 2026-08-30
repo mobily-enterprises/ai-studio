@@ -18,8 +18,6 @@ import { useVibe64AppPage } from "@/composables/useVibe64AppPage.js";
 
 const githubActorHostId = "studio-home-shell-github-actor";
 const githubActorTeleportTarget = `#${githubActorHostId}`;
-const saveWorkHostId = "studio-home-shell-save-work";
-const saveWorkTeleportTarget = `#${saveWorkHostId}`;
 
 const {
   chatCollapsed,
@@ -158,13 +156,7 @@ const {
       </div>
     </template>
     <template #top-right>
-      <div class="studio-home-shell-actions">
-        <div
-          :id="saveWorkHostId"
-          class="studio-home-shell-save-work-host"
-        />
-        <Vibe64AuthSettingsButton />
-      </div>
+      <Vibe64AuthSettingsButton />
     </template>
     <section class="generated-ui-screen generated-ui-screen--studio studio-screen d-flex flex-column ga-3">
       <v-alert
@@ -192,7 +184,6 @@ const {
               :project-context="projectSelectionSlotProps?.projectSelection?.currentProject || {}"
               :preview-toolbar-teleport-target="previewToolbarTeleportTarget"
               :project-pane="projectPane"
-              :save-work-teleport-target="saveWorkTeleportTarget"
               @title-change="emitPageTitle"
               @chat-attention="setChatCollapsed(false)"
               @project-attention="showProjectPane"
@@ -470,28 +461,6 @@ const {
   background: var(--studio-control-active-bg);
 }
 
-.studio-home-shell-actions {
-  align-items: center;
-  display: flex;
-  gap: 0.35rem;
-  justify-content: flex-end;
-  margin-left: auto;
-  max-width: min(48rem, 72vw);
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.studio-home-shell-save-work-host {
-  align-items: center;
-  display: flex;
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.studio-home-shell-save-work-host:empty {
-  display: none;
-}
-
 @media (min-width: 981px) {
   .studio-screen__gate-scroll :deep(.project-selection-gate .studio-ai-sessions--autopilot) {
     padding: 0;
@@ -577,11 +546,6 @@ const {
   .studio-home-shell-project-selector {
     font-size: 0.95rem;
     max-width: calc(100vw - 16rem);
-  }
-
-  .studio-home-shell-actions {
-    gap: 0.25rem;
-    max-width: calc(100vw - 9rem);
   }
 
   .studio-home-shell-project-controls {

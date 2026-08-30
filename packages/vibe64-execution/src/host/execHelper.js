@@ -1,5 +1,5 @@
 #!/opt/vibe64/runtime-packs/node26/bin/node
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   chownSync,
@@ -13,6 +13,7 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+import { createConnection } from "node:net";
 import process from "node:process";
 
 const INPUT_LIMIT_BYTES = 1024 * 1024;
@@ -110,7 +111,7 @@ main().catch((error) => {
 
 async function main() {
   if (process.argv[2] === "run-managed") {
-    runManagedExecutionPayload(process.argv[3] || "");
+    await runManagedExecutionPayload(process.argv[3] || "");
     return;
   }
   if (process.argv[2] !== "execute") {
@@ -215,6 +216,10 @@ function handleManagedExecutionOperation(payload = {}, requestPayloadPath = "") 
   if (lifecycle !== expectedLifecycle) {
     throw new Error("Vibe64 exec helper rejected a managed execution lifecycle mismatch.");
   }
+  const controllerLeaseName = managedExecutionControllerLeaseName(
+    payload.controllerLeaseName,
+    lifecycle
+  );
   const targetUser = managedExecutionTargetUser(payload, owner);
   const commandOperation = String(payload.commandOperation || "").trim();
   const cwd = resolveAllowedCwd(payload.cwd || "", owner.username, {
@@ -272,6 +277,7 @@ function handleManagedExecutionOperation(payload = {}, requestPayloadPath = "") 
   writeFileSync(runnerPayloadPath, `${JSON.stringify({
     args,
     command,
+    controllerLeaseName,
     cwd,
     env,
     inputBase64: String(payload.inputBase64 || ""),
@@ -342,7 +348,7 @@ function consumeManagedExecutionRequestPayload(payloadPath = "", owner = {}) {
   unlinkSync(resolved);
 }
 
-function runManagedExecutionPayload(payloadPath = "") {
+async function runManagedExecutionPayload(payloadPath = "") {
   const resolved = path.resolve(String(payloadPath || ""));
   const input = readFileSync(resolved, "utf8");
   unlinkSync(resolved);
@@ -357,34 +363,128 @@ function runManagedExecutionPayload(payloadPath = "") {
   if (!command || /[\r\n]/u.test(command)) {
     throw new Error("Vibe64 managed execution runner rejected an invalid command.");
   }
+  const controllerLeaseName = managedExecutionControllerLeaseName(
+    payload.controllerLeaseName,
+    payload.controllerLeaseName ? "service" : ""
+  );
+  const controllerLease = controllerLeaseName
+    ? await connectManagedExecutionController(controllerLeaseName)
+    : null;
   process.umask(0o007);
-  const child = spawnSync(command, Array.isArray(payload.args) ? payload.args.map(String) : [], {
-    cwd: String(payload.cwd || "/"),
-    env: payload.env && typeof payload.env === "object" && !Array.isArray(payload.env)
-      ? payload.env
-      : {},
-    ...(payload.inputPresent === true
-      ? {
-          input: Buffer.from(String(payload.inputBase64 || ""), "base64"),
-          stdio: ["pipe", "inherit", "inherit"]
-        }
-      : {
-          stdio: "inherit"
-        })
-  });
-  if (child.error) {
-    throw child.error;
+  let child = null;
+  let terminationTimer = null;
+  let controllerLeaseClosed = false;
+  const stopForControllerLoss = () => {
+    controllerLeaseClosed = true;
+    if (child && terminationTimer === null) {
+      terminationTimer = terminateManagedExecutionChild(child);
+    }
+  };
+  controllerLease?.once("close", stopForControllerLoss);
+  try {
+    child = spawn(command, Array.isArray(payload.args) ? payload.args.map(String) : [], {
+      cwd: String(payload.cwd || "/"),
+      detached: Boolean(controllerLease),
+      env: payload.env && typeof payload.env === "object" && !Array.isArray(payload.env)
+        ? payload.env
+        : {},
+      stdio: payload.inputPresent === true
+        ? ["pipe", "inherit", "inherit"]
+        : "inherit"
+    });
+    if (payload.inputPresent === true) {
+      child.stdin.end(Buffer.from(String(payload.inputBase64 || ""), "base64"));
+    }
+    if (controllerLeaseClosed) {
+      terminationTimer = terminateManagedExecutionChild(child);
+    }
+    const outcome = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (status, signal) => resolve({ signal, status }));
+    });
+    const status = typeof outcome.status === "number" ? outcome.status : 1;
+    writeManagedExecutionResult(path.dirname(resolved), {
+      ...managedRunnerCgroupMeasurements(),
+      executionId: managedExecutionId(payload.executionId),
+      execMainCode: outcome.signal ? "killed" : "exited",
+      execMainStatus: outcome.signal || String(status),
+      result: outcome.signal ? "signal" : status === 0 ? "success" : "exit-code",
+      signal: String(outcome.signal || "")
+    });
+    process.exitCode = status;
+  } finally {
+    if (terminationTimer !== null) {
+      clearTimeout(terminationTimer);
+    }
+    controllerLease?.off("close", stopForControllerLoss);
+    controllerLease?.destroy();
   }
-  const status = typeof child.status === "number" ? child.status : 1;
-  writeManagedExecutionResult(path.dirname(resolved), {
-    ...managedRunnerCgroupMeasurements(),
-    executionId: managedExecutionId(payload.executionId),
-    execMainCode: child.signal ? "killed" : "exited",
-    execMainStatus: child.signal || String(status),
-    result: child.signal ? "signal" : status === 0 ? "success" : "exit-code",
-    signal: String(child.signal || "")
+}
+
+function managedExecutionControllerLeaseName(value = "", lifecycle = "") {
+  const leaseName = String(value || "");
+  if (lifecycle !== "service") {
+    if (leaseName) {
+      throw new Error("Vibe64 exec helper rejected a controller lease on a finite execution.");
+    }
+    return "";
+  }
+  if (!/^\0vibe64-resource-controller-[a-z][a-z0-9-]{0,62}$/u.test(leaseName)) {
+    throw new Error("Vibe64 exec helper rejected an invalid managed service controller lease.");
+  }
+  return leaseName;
+}
+
+function connectManagedExecutionController(leaseName = "") {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ path: leaseName });
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("Vibe64 managed service could not attach to its controller lease."));
+    }, 3000);
+    timeout.unref?.();
+    socket.once("connect", () => {
+      clearTimeout(timeout);
+      socket.removeListener("error", onError);
+      socket.on("error", () => socket.destroy());
+      resolve(socket);
+    });
+    socket.once("error", onError);
+
+    function onError(error) {
+      clearTimeout(timeout);
+      socket.destroy();
+      reject(new Error(`Vibe64 managed service controller lease is unavailable: ${error?.code || error}`));
+    }
   });
-  process.exit(status);
+}
+
+function terminateManagedExecutionChild(child = null) {
+  signalManagedExecutionChild(child, "SIGTERM");
+  const timer = setTimeout(() => signalManagedExecutionChild(child, "SIGKILL"), 5000);
+  timer.unref?.();
+  return timer;
+}
+
+function signalManagedExecutionChild(child = null, signal = "SIGTERM") {
+  const pid = Number(child?.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 1) {
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (error?.code === "ESRCH") {
+      return;
+    }
+    try {
+      child.kill(signal);
+    } catch (fallbackError) {
+      if (fallbackError?.code !== "ESRCH") {
+        process.stderr.write("Vibe64 managed service process tree could not be stopped.\n");
+      }
+    }
+  }
 }
 
 function configureManagedExecutionWorkSlice(owner = {}, {

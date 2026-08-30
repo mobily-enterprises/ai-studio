@@ -34,7 +34,10 @@ Vibe64 makes machine-facing work dependable. It manages project access,
 credentials, development environments, application processes, previews,
 browser identities, and attachments without putting private machine state into
 the project. It shows clear status and failures and lets people retry or ask the
-agent for help. Open sessions that choose the same coding-assistant application
+agent for help. Non-urgent background checks favor useful freshness over
+constant polling: hidden views stop checks that serve only that view, returning
+to a view refreshes it promptly, and repeated failures slow recovery checks.
+Open sessions that choose the same coding-assistant application
 share one running assistant service, and that service stops when its final
 session closes. Short-lived suggestions and focused helper tasks reuse the
 session's chosen service instead of keeping another assistant service running.

@@ -17,26 +17,6 @@
         <span>{{ sessionGithubActor.displayLabel }}</span>
       </div>
     </Teleport>
-    <Teleport
-      v-if="saveWorkHeaderVisible"
-      :to="props.saveWorkTeleportTarget"
-    >
-      <v-btn
-        :aria-busy="saveWorkSending ? 'true' : undefined"
-        :aria-label="saveWorkHeaderAriaLabel"
-        class="studio-autopilot__save-work"
-        :color="saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'primary' : undefined)"
-        :disabled="saveWorkDisabled"
-        :prepend-icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"
-        size="small"
-        :title="saveWorkTitle"
-        type="button"
-        variant="tonal"
-        @click="requestSaveWork"
-      >
-        <span class="studio-autopilot__save-work-label">{{ saveWorkHeaderLabel }}</span>
-      </v-btn>
-    </Teleport>
     <section
       ref="mainChat"
       class="studio-autopilot__chat-panel"
@@ -56,6 +36,21 @@
           @select-session="activateRealSession"
         />
 
+        <v-btn
+          v-if="saveWorkHeaderVisible"
+          :aria-busy="saveWorkSending ? 'true' : undefined"
+          :aria-label="saveWorkHeaderAriaLabel"
+          class="studio-autopilot__save-work"
+          :color="saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'primary' : undefined)"
+          :disabled="saveWorkDisabled"
+          height="48"
+          :icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"
+          :title="saveWorkTitle"
+          type="button"
+          variant="tonal"
+          width="48"
+          @click="requestSaveWork"
+        />
         <div class="studio-autopilot__header-actions studio-autopilot__header-actions--compact">
           <v-menu
             location="bottom end"
@@ -881,7 +876,6 @@ const {
   saveWorkDisabled,
   saveWorkError,
   saveWorkHeaderAriaLabel,
-  saveWorkHeaderLabel,
   saveWorkHeaderVisible,
   saveWorkCanResolveWithTemporaryAi,
   saveWorkOperation,
@@ -1410,19 +1404,6 @@ function requestSessionRenewal(returnFocusTarget = null) {
 
 .studio-autopilot__save-work {
   flex: 0 0 auto;
-  min-width: 5rem;
-}
-
-@media (max-width: 600px) {
-  .studio-autopilot__save-work {
-    min-width: 2.5rem;
-    padding-inline: 0.5rem;
-    width: 2.5rem;
-  }
-
-  .studio-autopilot__save-work-label {
-    display: none;
-  }
 }
 
 .studio-autopilot__project-panel,
@@ -1492,11 +1473,6 @@ function requestSessionRenewal(returnFocusTarget = null) {
 }
 
 @media (pointer: coarse) {
-  .studio-autopilot__save-work {
-    min-height: 3rem;
-    min-width: 3rem;
-  }
-
   .studio-autopilot__composer-action {
     min-height: 3rem;
     min-width: 3rem;

@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 
 const componentPath = path.resolve("src/components/studio/vibe64-session/Vibe64AutopilotView.vue");
 const composablePath = path.resolve("src/composables/useVibe64AutopilotView.js");
-const appPagePath = path.resolve("src/pages/app/project/[slug].vue");
-const sessionPanelPath = path.resolve("src/components/studio/Vibe64SessionPanel.vue");
 const promptTextareaPath = path.resolve(
   "src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue"
 );
@@ -48,16 +46,13 @@ describe("Vibe64 direct session view", () => {
   it("offers native confirmed Save with temporary action output, not an AI prompt", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
-    const appPage = fs.readFileSync(appPagePath, "utf8");
-    const sessionPanel = fs.readFileSync(sessionPanelPath, "utf8");
-    const runtimeHost = fs.readFileSync(runtimeHostPath, "utf8");
     const combined = `${component}\n${composable}`;
 
     expect(composable).toContain("saveWorkActionLabel");
-    expect(component).toContain(':to="props.saveWorkTeleportTarget"');
     expect(component).toContain('v-if="saveWorkHeaderVisible"');
     expect(component).toContain("saveWorkHeaderAriaLabel");
-    expect(component).toContain("saveWorkHeaderLabel");
+    expect(component).not.toContain("saveWorkHeaderLabel");
+    expect(component).not.toContain("saveWorkTeleportTarget");
     expect(component).toContain(':aria-busy="saveWorkSending ? \'true\' : undefined"');
     expect(component).not.toContain(':loading="saveWorkSending"');
     expect(component).toContain(":icon=\"mdiIncognito\"");
@@ -97,18 +92,11 @@ describe("Vibe64 direct session view", () => {
       component.indexOf('<header class="studio-autopilot__session-header">'),
       component.indexOf("</header>")
     );
-    expect(sessionHeader).not.toContain("studio-autopilot__save-work");
-    const saveHostIndex = appPage.indexOf('class="studio-home-shell-save-work-host"');
-    const accountSettingsIndex = appPage.indexOf("<Vibe64AuthSettingsButton", saveHostIndex);
-    expect(saveHostIndex).toBeGreaterThan(-1);
-    expect(accountSettingsIndex).toBeGreaterThan(saveHostIndex);
-    expect(appPage).toContain(':save-work-teleport-target="saveWorkTeleportTarget"');
-    expect(sessionPanel).toContain(
-      ':save-work-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.saveWorkTeleportTarget : \'\'"'
-    );
-    expect(runtimeHost).toContain(':save-work-teleport-target="props.saveWorkTeleportTarget"');
-    expect(component).toMatch(/@media \(max-width: 600px\)[\s\S]*\.studio-autopilot__save-work-label \{[\s\S]*display: none;/u);
-    expect(component).toMatch(/@media \(pointer: coarse\)[\s\S]*\.studio-autopilot__save-work \{[\s\S]*min-height: 3rem;[\s\S]*min-width: 3rem;/u);
+    expect(sessionHeader).toContain("studio-autopilot__save-work");
+    expect(sessionHeader).toContain(':icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"');
+    expect(sessionHeader).toContain('height="48"');
+    expect(sessionHeader).toContain('width="48"');
+    expect(sessionHeader).not.toContain("studio-autopilot__save-work-label");
   });
 
   it("keeps temporary AI unmistakable, ephemeral, multi-task, and attachment-owned", () => {

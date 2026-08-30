@@ -282,6 +282,8 @@ describe("useAccountAuthSessions", () => {
 
   it("backs off auth-session polling after transport failures", async () => {
     const { pollFailureBackoffMs } = await importAccountAuthSessions();
+    expect(pollFailureBackoffMs(1, 30_000)).toBe(60_000);
+    expect(pollFailureBackoffMs(10, 30_000)).toBe(300_000);
     let now = 1_000;
     const accounts = {
       loadError: "",

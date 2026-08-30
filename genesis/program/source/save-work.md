@@ -26,7 +26,9 @@ already published.
 While Save runs, the workspace shows one compact progress line. Opening its
 details reveals the bounded command history and keeps it available after Save
 finishes until hidden. A successful Save left compact disappears on completion;
-a failed Save remains visible with its recovery actions.
+a failed Save remains visible with its recovery actions. The selected session's
+icon-only Save or Update action stays in the chat header beside the session it
+will affect, rather than occupying the application-wide toolbar.
 
 ## Implementation map
 

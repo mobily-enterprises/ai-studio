@@ -172,7 +172,6 @@
         :preview-toolbar-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.previewToolbarTeleportTarget : ''"
         :prompt-hint-policy="promptHintPolicy"
         :project-pane="projectPane"
-        :save-work-teleport-target="runtimeSessionId === selection.selectedSessionId ? props.saveWorkTeleportTarget : ''"
         :toolbar-sessions="toolbar.sessions"
         @busy-change="setRuntimeBusy"
         @chat-attention="emitChatAttention"

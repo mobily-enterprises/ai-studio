@@ -1271,9 +1271,8 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkConfirmOpen.value).toBe(false);
   });
 
-  it("projects the selected session Save action only into an active configured app-bar host", async () => {
+  it("shows the Save action only in the active session chat", async () => {
     const { props, view } = await createViewWithProps({
-      saveWorkTeleportTarget: "#save-host",
       workState: {
         unsaved: true,
         updateAvailable: false,
@@ -1283,28 +1282,21 @@ describe("useVibe64AutopilotView direct chat", () => {
 
     expect(view.saveWorkHeaderVisible.value).toBe(true);
     expect(view.saveWorkHeaderAriaLabel.value).toBe("Save selected session work");
-    expect(view.saveWorkHeaderLabel.value).toBe("Save");
 
     props.active = false;
     await nextTick();
     expect(view.saveWorkHeaderVisible.value).toBe(false);
 
     props.active = true;
-    props.saveWorkTeleportTarget = "";
-    await nextTick();
-    expect(view.saveWorkHeaderVisible.value).toBe(false);
-
-    props.saveWorkTeleportTarget = "#save-host";
     props.session = null;
     await nextTick();
     expect(view.saveWorkHeaderVisible.value).toBe(false);
   });
 
-  it("uses stable short Save and Update labels while their operations are pending", async () => {
+  it("keeps icon-only Save and Update accessible names stable while pending", async () => {
     const saveResult = deferredResult();
     const save = await createView({
       saveSessionWork: vi.fn(() => saveResult.promise),
-      saveWorkTeleportTarget: "#save-host",
       workState: {
         unsaved: true,
         updateAvailable: false,
@@ -1315,13 +1307,11 @@ describe("useVibe64AutopilotView direct chat", () => {
     const saving = save.confirmSaveWork();
     await nextTick();
     expect(save.saveWorkHeaderAriaLabel.value).toBe("Save selected session work");
-    expect(save.saveWorkHeaderLabel.value).toBe("Saving…");
     saveResult.resolve({ ok: true, status: "saved" });
     await expect(saving).resolves.toEqual({ ok: true, status: "saved" });
 
     const updateResult = deferredResult();
     const update = await createView({
-      saveWorkTeleportTarget: "#save-host",
       updateSessionWork: vi.fn(() => updateResult.promise),
       workState: {
         unsaved: true,
@@ -1332,7 +1322,6 @@ describe("useVibe64AutopilotView direct chat", () => {
     const updating = update.requestSaveWork();
     await nextTick();
     expect(update.saveWorkHeaderAriaLabel.value).toBe("Update selected session (rebase)");
-    expect(update.saveWorkHeaderLabel.value).toBe("Updating…");
     updateResult.resolve({ ok: true, status: "updated" });
     await expect(updating).resolves.toEqual({ ok: true, status: "updated" });
   });

@@ -20,7 +20,6 @@
       :refresh-session-work="refreshWorkState"
       :retry-workspace-setup="retryWorkspaceSetup"
       :save-session-work="saveSessionWork"
-      :save-work-teleport-target="props.saveWorkTeleportTarget"
       :session-abandon="dialogs.abandon"
       :session-renewal="sessionRenewal"
       :session="selection.selectedSession"
@@ -129,10 +128,6 @@ const props = defineProps({
       version: 0
     }),
     type: Object
-  },
-  saveWorkTeleportTarget: {
-    default: "",
-    type: String
   },
   projectContext: {
     default: () => ({}),

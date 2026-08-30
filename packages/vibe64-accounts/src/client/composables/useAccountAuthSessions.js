@@ -8,7 +8,7 @@ import {
 } from "../lib/accountsGateApi.js";
 
 const DEFAULT_RECOVERY_POLL_INTERVAL_MS = 30_000;
-const MAX_POLL_FAILURE_BACKOFF_MS = 10_000;
+const MAX_POLL_FAILURE_BACKOFF_MS = 5 * 60_000;
 const AUTH_DEBUG_MARKER = "VIBE64_ACCOUNTS_DEBUG";
 const AUTH_DEBUG_QUERY_PARAM = "vibe64_accounts_debug";
 const AUTH_DEBUG_STORAGE_KEY = "vibe64:accounts-debug";

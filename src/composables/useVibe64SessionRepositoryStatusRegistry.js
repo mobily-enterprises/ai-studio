@@ -19,9 +19,9 @@ import {
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 
 const DEFAULT_MAX_CONCURRENCY = 2;
-const DEFAULT_STALE_AFTER_MS = 60_000;
-const DEFAULT_STALE_CHECK_INTERVAL_MS = 15_000;
-const DEFAULT_CANONICAL_CHECK_INTERVAL_MS = 30_000;
+const DEFAULT_STALE_AFTER_MS = 5 * 60_000;
+const DEFAULT_STALE_CHECK_INTERVAL_MS = 60_000;
+const DEFAULT_CANONICAL_CHECK_INTERVAL_MS = 5 * 60_000;
 function createVibe64SessionRepositoryStatusQueue({
   maxConcurrency = DEFAULT_MAX_CONCURRENCY,
   now = () => Date.now(),
@@ -434,10 +434,11 @@ function useVibe64SessionRepositoryStatusRegistry({
     })
   });
 
+  const browserDocument = typeof document === "undefined" ? null : document;
   const interval = typeof window === "undefined"
     ? null
     : window.setInterval(() => {
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        if (browserDocument?.visibilityState === "hidden") {
           return;
         }
         inspectVisible();
@@ -445,14 +446,23 @@ function useVibe64SessionRepositoryStatusRegistry({
   const canonicalInterval = typeof window === "undefined"
     ? null
     : window.setInterval(() => {
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        if (browserDocument?.visibilityState === "hidden") {
           return;
         }
         void checkCanonical(selectedId.value);
       }, DEFAULT_CANONICAL_CHECK_INTERVAL_MS);
+  const refreshWhenVisible = () => {
+    if (browserDocument?.visibilityState !== "visible") {
+      return;
+    }
+    inspectVisible({ force: true });
+    void checkCanonical(selectedId.value, { force: true });
+  };
+  browserDocument?.addEventListener("visibilitychange", refreshWhenVisible);
 
   onScopeDispose(() => {
     disposed = true;
+    browserDocument?.removeEventListener("visibilitychange", refreshWhenVisible);
     if (interval !== null) {
       window.clearInterval(interval);
     }

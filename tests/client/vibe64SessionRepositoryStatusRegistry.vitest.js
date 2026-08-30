@@ -2,6 +2,7 @@ import { effectScope, nextTick, reactive, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const registryHarness = vi.hoisted(() => ({
+  documentListeners: new Map(),
   intervalCallbacks: [],
   realtimeEvents: [],
   requests: []
@@ -39,10 +40,19 @@ import {
 
 describe("session repository status registry", () => {
   beforeEach(() => {
+    registryHarness.documentListeners.clear();
     registryHarness.intervalCallbacks.length = 0;
     registryHarness.realtimeEvents.length = 0;
     registryHarness.requests.length = 0;
-    vi.stubGlobal("document", { visibilityState: "visible" });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn((event, callback) => {
+        registryHarness.documentListeners.set(event, callback);
+      }),
+      removeEventListener: vi.fn((event) => {
+        registryHarness.documentListeners.delete(event);
+      }),
+      visibilityState: "visible"
+    });
     vi.stubGlobal("window", {
       clearInterval: vi.fn(),
       setInterval: vi.fn((callback) => {
@@ -295,5 +305,31 @@ describe("session repository status registry", () => {
     expect(repositoryStatusRealtimeShouldRefresh({ reason: "repository-canonical-changed" })).toBe(true);
     expect(repositoryStatusRealtimeShouldRefresh({ reason: "session-repository-checked" })).toBe(true);
     expect(repositoryStatusRealtimeShouldRefresh({ reason: "codex-app-server-live-progress" })).toBe(false);
+  });
+
+  it("refreshes repository fallbacks once when a hidden tab becomes visible", async () => {
+    const scope = effectScope();
+    scope.run(() => useVibe64SessionRepositoryStatusRegistry({
+      selectedSessionId: ref("session-a"),
+      sessions: ref([
+        { sessionId: "session-a", status: "active" },
+        { sessionId: "session-b", status: "active" }
+      ]),
+      sessionsApiPath: ref("/api/app/sample/vibe64/sessions")
+    }));
+    await settleRegistryRequests();
+    registryHarness.requests.length = 0;
+
+    document.visibilityState = "visible";
+    registryHarness.documentListeners.get("visibilitychange")();
+    await settleRegistryRequests();
+
+    expect(registryHarness.requests.map(({ options, path }) => [options.method, path])).toEqual([
+      ["GET", "/api/app/sample/vibe64/sessions/session-b/work"],
+      ["POST", "/api/app/sample/vibe64/sessions/session-a/updates/check"],
+      ["GET", "/api/app/sample/vibe64/sessions/session-a/work"]
+    ]);
+    scope.stop();
+    expect(registryHarness.documentListeners.has("visibilitychange")).toBe(false);
   });
 });

@@ -119,7 +119,7 @@ describe("useVibe64ChatColumnResize", () => {
     );
   });
 
-  it("contains chat chrome while app-bar Save follows the viewport", () => {
+  it("contains chat chrome and its icon-only Save action", () => {
     const filename = "src/components/studio/vibe64-session/Vibe64AutopilotView.vue";
     const source = readFileSync(filename, "utf8");
     const descriptor = parse(source, { filename }).descriptor;
@@ -136,8 +136,9 @@ describe("useVibe64ChatColumnResize", () => {
     expect(result.code).toMatch(/studio-autopilot__session-header[^}]*box-sizing:\s*border-box/u);
     expect(result.code).toMatch(/studio-autopilot__composer[^}]*box-sizing:\s*border-box/u);
     expect(result.code).toMatch(/studio-autopilot__project-panel[^}]*contain:\s*strict/u);
-    expect(result.code).toMatch(/@media \(max-width: 600px\)[\s\S]*studio-autopilot__save-work[^}]*width:\s*2\.5rem/u);
-    expect(result.code).toMatch(/@media \(pointer: coarse\)[\s\S]*studio-autopilot__save-work[^}]*min-height:\s*3rem;[^}]*min-width:\s*3rem/u);
+    expect(source).toContain('class="studio-autopilot__save-work"');
+    expect(source).toContain(':icon="saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline"');
+    expect(source).not.toContain("studio-autopilot__save-work-label");
     expect(source).not.toContain("Answer the assistant's questions");
   });
 

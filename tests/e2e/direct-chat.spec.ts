@@ -238,13 +238,10 @@ test.describe("direct chat", () => {
 
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-    const saveHost = page.locator(".studio-home-shell-save-work-host");
-    const saveButton = saveHost.getByRole("button", { name: "Save selected session work", exact: true });
+    const sessionChat = page.getByRole("region", { name: "Session chat" });
+    const saveButton = sessionChat.getByRole("button", { name: "Save selected session work", exact: true });
     await expect(saveButton).toBeVisible();
-    await expect(page.locator(".studio-autopilot__session-header").getByRole("button", {
-      name: "Save work",
-      exact: true
-    })).toHaveCount(0);
+    await expect(page.locator(".studio-home-shell-save-work-host")).toHaveCount(0);
     await saveButton.click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -276,53 +273,42 @@ test.describe("direct chat", () => {
     await expect(page.getByRole("button", { name: "Save selected session work", exact: true })).toBeDisabled();
   });
 
-  test.describe("app-bar Save on a phone", () => {
+  test.describe("session-chat Save on a phone", () => {
     test.use({
       hasTouch: true,
       viewport: { height: 844, width: 390 }
     });
 
-    test("keeps one icon-only selected-session action before Account settings", async ({ page }) => {
+    test("keeps one icon-only selected-session action in the chat header", async ({ page }) => {
       await mockDirectChat(page);
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-      const saveHost = page.locator(".studio-home-shell-save-work-host");
-      const saveButton = saveHost.getByRole("button", { name: "Save selected session work", exact: true });
+      const sessionHeader = page.getByRole("region", { name: "Session chat" }).locator(".studio-autopilot__session-header");
+      const saveButton = sessionHeader.getByRole("button", { name: "Save selected session work", exact: true });
       await expect(saveButton).toBeVisible();
-      await expect(saveButton.locator(".studio-autopilot__save-work-label")).toBeHidden();
+      await expect(saveButton).toHaveText("");
       const bounds = await saveButton.boundingBox();
       expect(bounds?.height).toBeGreaterThanOrEqual(48);
       expect(bounds?.width).toBeGreaterThanOrEqual(48);
       expect(await page.evaluate(() => (
         document.documentElement.scrollWidth <= window.innerWidth
       ))).toBe(true);
-      expect(await page.evaluate(() => {
-        const save = document.querySelector(".studio-home-shell-save-work-host");
-        const account = document.querySelector(".vibe64-auth-settings");
-        return Boolean(save && account && (
-          save.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING
-        ));
-      })).toBe(true);
+      await expect(page.locator(".studio-home-shell-save-work-host")).toHaveCount(0);
     });
   });
 
   for (const width of [960, 1600]) {
-    test(`keeps the short Save label and session-strip space at ${width}px`, async ({ page }) => {
+    test(`keeps icon-only Save inside the session strip at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ height: 900, width });
       await mockDirectChat(page);
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-      const saveButton = page.locator(".studio-home-shell-save-work-host").getByRole("button", {
+      const saveButton = page.getByRole("region", { name: "Session chat" }).getByRole("button", {
         name: "Save selected session work",
         exact: true
       });
       await expect(saveButton).toBeVisible();
-      await expect(saveButton.locator(".studio-autopilot__save-work-label")).toHaveText("Save");
-      await expect(saveButton.locator(".studio-autopilot__save-work-label")).toBeVisible();
-      await expect(page.locator(".studio-autopilot__session-header").getByRole("button", {
-        name: "Save work",
-        exact: true
-      })).toHaveCount(0);
+      await expect(saveButton).toHaveText("");
       expect(await page.evaluate(() => (
         document.documentElement.scrollWidth <= window.innerWidth
       ))).toBe(true);
@@ -339,27 +325,27 @@ test.describe("direct chat", () => {
     });
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
 
-    const saveHost = page.locator(".studio-home-shell-save-work-host");
-    const visibleChat = page.getByRole("region", { name: "Session chat" });
-    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    const visibleChat = page.locator(".studio-autopilot__chat-panel:visible");
+    const saveButton = visibleChat.getByRole("button", { name: "Save selected session work" });
+    await expect(saveButton).toHaveCount(1);
     await visibleChat.locator('[aria-label^="Direct chat."]').click();
-    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await expect(saveButton).toHaveCount(1);
     await visibleChat.locator('[aria-label^="Second session."]').click();
-    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await expect(saveButton).toHaveCount(1);
 
-    await saveHost.getByRole("button", { name: "Save selected session work" }).click();
+    await saveButton.click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
     await expect.poll(() => saves).toEqual(["direct-chat-session-b"]);
 
     await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await expect(saveButton).toHaveCount(1);
     await page.goBack();
     await expect(page).toHaveURL(`${BASE_URL}${DASHBOARD_PATH}/env`);
-    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await expect(saveButton).toHaveCount(1);
     await page.goForward();
     await expect(page).toHaveURL(`${BASE_URL}${DEVELOPMENT_PATH}`);
-    await expect(saveHost.getByRole("button", { name: "Save selected session work" })).toHaveCount(1);
+    await expect(saveButton).toHaveCount(1);
   });
 
   test.describe("temporary AI mobile navigation", () => {

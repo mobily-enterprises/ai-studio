@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
+import { createServer } from "node:net";
 import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
@@ -394,6 +395,99 @@ test("managed runner preserves final counters after a successful transient unit 
     assert.ok(Number(result.memoryPeak) > 0);
     assert.ok(Number(result.tasksPeak) > 0);
   } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("managed service runner stops its process tree when the owning controller disappears", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "v64-managed-controller-lease-"));
+  const leaseName = `\0vibe64-resource-controller-runner-${process.pid}`;
+  const sockets = new Set();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  const pidPath = path.join(root, "pids.txt");
+  let managedPids = [];
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen({ path: leaseName }, resolve);
+    });
+    const executionId = randomUUID();
+    const payloadPath = path.join(root, "command.json");
+    await writeFile(payloadPath, `${JSON.stringify({
+      args: ["-e", [
+        "const { spawn } = require('node:child_process');",
+        "const { writeFileSync } = require('node:fs');",
+        "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        `writeFileSync(${JSON.stringify(pidPath)}, process.pid + ' ' + grandchild.pid);`,
+        "setInterval(() => {}, 1000);"
+      ].join("\n")],
+      command: process.execPath,
+      controllerLeaseName: leaseName,
+      cwd: root,
+      env: { PATH: process.env.PATH },
+      executionId,
+      inputBase64: "",
+      inputPresent: false,
+      schema: "vibe64.managed-execution.command",
+      schemaVersion: 1
+    })}\n`, "utf8");
+    const runner = spawn(process.execPath, [EXEC_HELPER, "run-managed", payloadPath], {
+      cwd: root,
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    let stderr = "";
+    runner.stderr.on("data", (chunk) => {
+      stderr += String(chunk || "");
+    });
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        managedPids = String(await readFile(pidPath, "utf8"))
+          .trim()
+          .split(/\s+/u)
+          .map(Number);
+        break;
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    assert.equal(managedPids.length, 2, stderr);
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+
+    const exitCode = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Managed runner did not stop after lease loss.")), 8000);
+      runner.once("close", (code) => {
+        clearTimeout(timeout);
+        resolve(code);
+      });
+    });
+    assert.equal(exitCode, 1, stderr);
+    for (const pid of managedPids) {
+      assert.throws(
+        () => process.kill(pid, 0),
+        (error) => error?.code === "ESRCH"
+      );
+    }
+  } finally {
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+    await new Promise((resolve) => server.close(() => resolve()));
+    for (const pid of managedPids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (error) {
+        assert.equal(error?.code, "ESRCH");
+      }
+    }
     await rm(root, { force: true, recursive: true });
   }
 });

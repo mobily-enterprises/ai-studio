@@ -10,6 +10,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
+- `packages/vibe64-execution/src/host/execHelper.js`
 - `packages/vibe64-execution/src/server/engines/helperClient.js`
 - `packages/vibe64-terminals/src/server/agentCommandEnvironment.js`
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
@@ -78,7 +79,10 @@ Open sessions in one workspace share a single running Codex service and a
 single running OpenCode service according to the assistant each session has
 selected. Codex and OpenCode remain independent: a provider service runs while
 at least one matching session is open and stops after the final matching
-session closes. Conversation identity, working directory, command environment,
+session closes. On a managed host, the provider also remains attached to the
+exact Vibe64 server controller that started it; if that controller disappears,
+the provider's complete process tree stops rather than surviving as an orphan.
+Conversation identity, working directory, command environment,
 model settings, and provider history remain session-specific even though the
 resident provider process is shared. Capability discovery without an open
 session may run a bounded command but does not leave another provider service
@@ -165,6 +169,8 @@ replacement key.
   ordinary input transport does not repeat assistant-selection authorization.
 - `helperOperationForRequest()` keeps assistant PTYs on the project command
   policy instead of the home-only account-login policy.
+- `runManagedExecutionPayload()` holds a managed service's controller lease and
+  terminates the detached service process group if that lease closes.
 - `vite.config.mjs` temporarily preserves xterm identifiers and syntax because
   re-minifying xterm 6.0.0 breaks terminal query parsing under
   xtermjs/xterm.js#5800. Remove the workaround after Vibe64 upgrades to a fixed

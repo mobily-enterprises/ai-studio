@@ -47,6 +47,7 @@ vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
 
 import {
   SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS,
+  SESSION_RENEWAL_RETRY_POLL_INTERVAL_MS,
   useVibe64SessionRenewal
 } from "../../src/composables/useVibe64SessionRenewal.js";
 
@@ -875,7 +876,7 @@ describe("useVibe64SessionRenewal", () => {
 
     try {
       expect(vi.getTimerCount()).toBe(1);
-      await vi.advanceTimersByTimeAsync(SESSION_RENEWAL_BACKGROUND_POLL_INTERVAL_MS);
+      await vi.advanceTimersByTimeAsync(SESSION_RENEWAL_RETRY_POLL_INTERVAL_MS);
       await nextTick();
 
       expect(renewalHarness.endpoint.reload).toHaveBeenCalledOnce();
