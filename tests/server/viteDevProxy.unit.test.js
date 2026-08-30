@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import viteConfig from "../../vite.config.mjs";
 
+test("Vite preserves xterm identifiers until xtermjs issue 5800 is fixed", () => {
+  assert.equal(viteConfig.esbuild?.minifyIdentifiers, false);
+  assert.equal(viteConfig.esbuild?.minifySyntax, false);
+});
+
 test("Vite sends only the local app entry route through the backend", () => {
   const proxyEntries = viteConfig.server?.proxy || {};
   const appEntryPattern = Object.keys(proxyEntries).find((pattern) =>

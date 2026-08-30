@@ -165,8 +165,14 @@ function useVibe64AssistantAccess({
     "Message suggestions could not be loaded."
   ) || assistantAccessText(suggestionsResource.loadError.value));
   const initialAccessLoading = computed(() => Boolean(
+    readRefOrGetterValue(active) !== false &&
     !access.value &&
-    (accessResource.isInitialLoading.value || accessResource.isLoading.value)
+    !accessError.value &&
+    (
+      !enabled.value ||
+      accessResource.isInitialLoading.value ||
+      accessResource.isLoading.value
+    )
   ));
   const restrictionMessage = computed(() => {
     if (canRequestMessage.value) {

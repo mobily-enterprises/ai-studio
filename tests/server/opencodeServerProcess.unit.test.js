@@ -257,6 +257,14 @@ test("OpenCode servers run and drain through one managed execution id", async (t
   const server = await createOpenCodeServerProcess({
     commandRunner: async (request) => {
       requests.push(request);
+      if (request.mode === "pty") {
+        return {
+          commandPreview: request.terminal.commandPreview,
+          id: "opencode-terminal-1",
+          ok: true,
+          status: "running"
+        };
+      }
       return {
         execution: { ...request.execution, id: executionId },
         ok: true,
@@ -316,6 +324,36 @@ test("OpenCode servers run and drain through one managed execution id", async (t
   assert.equal(request.baseEnv.OPENCODE_DB, path.join(root, "state", "opencode.db"));
   assert.equal(request.credentialHome.home, path.join(privateRoot, "home"));
   assert.equal(server.executionId, executionId);
+
+  const attached = await server.startAttachedTerminal({
+    metadata: { sessionId: "session-1" },
+    namespace: "vibe64-opencode:project:session-1",
+    session: { sessionId: "session-1" },
+    upstreamSessionId: "ses_vibe64_session_1",
+    workdir: root
+  });
+  assert.equal(attached.id, "opencode-terminal-1");
+  assert.equal(requests.length, 2);
+  const terminalRequest = requests[1];
+  assert.equal(terminalRequest.mode, "pty");
+  assert.equal(terminalRequest.command, "opencode");
+  assert.deepEqual(terminalRequest.args, [
+    "attach",
+    "http://127.0.0.1:43210",
+    "--dir",
+    root,
+    "--session",
+    "ses_vibe64_session_1",
+    "--pure"
+  ]);
+  assert.equal(terminalRequest.baseEnv.OPENCODE_SERVER_PASSWORD, request.baseEnv.OPENCODE_SERVER_PASSWORD);
+  assert.equal(terminalRequest.args.includes(terminalRequest.baseEnv.OPENCODE_SERVER_PASSWORD), false);
+  assert.equal(terminalRequest.inheritProcessEnv, false);
+  assert.equal(terminalRequest.execution.kind, "terminal");
+  assert.equal(terminalRequest.execution.lifecycle, "interactive");
+  assert.equal(terminalRequest.execution.sessionId, "session-1");
+  assert.equal(terminalRequest.terminal.namespace, "vibe64-opencode:project:session-1");
+  assert.equal(terminalRequest.terminal.reuseRunning, true);
 
   const proof = await server.stop();
   assert.equal(proof.exited, true);

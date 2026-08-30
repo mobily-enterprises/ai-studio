@@ -9,6 +9,7 @@
     }"
   >
     <Teleport
+      v-if="visible"
       defer
       :disabled="!toolbarTeleportTarget"
       :to="toolbarTeleportTarget || 'body'"
@@ -261,6 +262,16 @@
                 :title="action.label || action.href"
                 variant="text"
                 @click="openAction(action)"
+              />
+
+              <v-btn
+                v-if="terminalVisible"
+                aria-label="Show run output"
+                :icon="mdiConsoleLine"
+                size="small"
+                title="Show run output"
+                variant="text"
+                @click="showLaunchLog"
               />
 
               <v-btn
@@ -570,26 +581,22 @@
           {{ launchStatusDetailText }}
         </code>
       </div>
-      <Vibe64Terminal
+      <Vibe64LongRunningTerminal
         v-if="embeddedTerminalSurfaceVisible"
-        :collapsible="true"
         :command-preview="terminalCommandPreview"
         :error="terminalError"
-        :expanded="terminalExpanded"
         fill
-        mobile-takeover
+        :open="terminalExpanded"
         presentation="inline"
-        :show-close="false"
         show-copy
         :stage="terminalSubtitle"
         :status="terminalStatus"
-        :subtitle="terminalExpanded ? terminalSubtitle : ''"
+        :subtitle="terminalSubtitle"
         surface-class="vibe64-launch-controls__terminal vibe64-launch-controls__terminal--embedded"
         :surface-style="embeddedTerminalStyle"
         :terminal="terminal"
         :title="terminalTitle"
-        :visible="true"
-        @update:expanded="setTerminalExpanded"
+        @update:open="setTerminalExpanded"
       >
         <template #actions-before>
           <v-btn
@@ -604,28 +611,24 @@
             Restart preview
           </v-btn>
         </template>
-      </Vibe64Terminal>
+      </Vibe64LongRunningTerminal>
     </div>
 
-    <Vibe64Terminal
-      v-if="!embeddedPreview && terminalSurfaceVisible"
-      :collapsible="true"
+    <Vibe64LongRunningTerminal
+      v-if="!embeddedPreview && terminalWindowVisible"
       :command-preview="terminalCommandPreview"
       :error="terminalError"
-      :expanded="terminalExpanded"
       :floating-storage-key="terminalWindowStorageKey"
-      mobile-takeover
-      :presentation="terminalWindowVisible ? 'floating' : 'minimized'"
-      :show-close="false"
+      :open="terminalExpanded"
+      presentation="floating"
       show-copy
       :stage="terminalSubtitle"
       :status="terminalStatus"
-      :subtitle="terminalExpanded ? terminalSubtitle : ''"
+      :subtitle="terminalSubtitle"
       surface-class="vibe64-launch-controls__terminal"
       :terminal="terminal"
       :title="terminalTitle"
-      :visible="true"
-      @update:expanded="setTerminalExpanded"
+      @update:open="setTerminalExpanded"
     />
 
     <v-dialog
@@ -728,7 +731,7 @@ import {
   mdiRoutes,
   mdiWebClock
 } from "@mdi/js";
-import Vibe64Terminal from "@/components/studio/Vibe64Terminal.vue";
+import Vibe64LongRunningTerminal from "@/components/studio/Vibe64LongRunningTerminal.vue";
 import {
   useVibe64OutputControlsSurface
 } from "@/composables/useVibe64OutputControlsSurface.js";
@@ -913,9 +916,9 @@ const {
   terminalStatus,
   terminalSubtitle,
   terminalTitle,
+  terminalVisible,
   terminalWindowStorageKey,
   terminalWindowVisible,
-  terminalSurfaceVisible,
   toolbarTeleportTarget,
   visible
 } = useVibe64OutputControlsSurface(props);
@@ -1661,6 +1664,13 @@ onBeforeUnmount(() => {
     min-width: min(13rem, 58vw);
   }
 
+}
+
+@media (min-width: 721px) and (max-width: 980px) {
+  .vibe64-launch-controls__terminal--embedded {
+    margin-top: calc(var(--v-layout-top, 4rem) + 0.65rem) !important;
+    max-height: calc(100% - var(--v-layout-top, 4rem) - 1.3rem) !important;
+  }
 }
 
 @keyframes vibe64-launch-status-pulse {

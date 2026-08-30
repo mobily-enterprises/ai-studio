@@ -21,12 +21,10 @@
       type="file"
       @change="handleTerminalAttachmentFileSelection"
     >
-    <Vibe64Terminal
-      :collapsible="displayMode !== 'headless'"
+    <Vibe64InteractiveTerminal
       :command-preview="terminalCommandPreview"
       :error="terminalError"
       :error-title="terminalErrorTitle"
-      :expanded="expanded"
       fill
       height="100%"
       mobile-takeover
@@ -35,14 +33,14 @@
       :show-interrupt="!readOnly"
       :stage="terminalSubtitle"
       :status="terminalStatus"
-      :subtitle="expanded ? terminalSubtitle : ''"
+      :subtitle="terminalSubtitle"
       :terminal="terminalController"
       title="Codex terminal"
       :visible="terminalStreamActive"
+      @clean-exit="closeTerminal"
       @close="closeTerminal"
       @copy="handleTerminalCopy"
       @interrupt="handleTerminalInterrupt"
-      @update:expanded="updateTerminalExpanded"
     >
       <template #error-actions>
         <v-btn
@@ -96,7 +94,7 @@
         </div>
 
         <div v-if="showTerminalStartPanel" class="vibe64-codex-session__start-panel">
-          <v-sheet class="vibe64-codex-session__start-card" rounded="lg" elevation="8" role="status">
+          <v-sheet class="vibe64-codex-session__start-card" rounded="lg" elevation="4" role="status">
             <div class="vibe64-codex-session__start-icon">
               <v-icon :icon="terminalStartIcon" size="30" />
             </div>
@@ -145,7 +143,7 @@
           {{ status }}
         </v-chip>
       </template>
-    </Vibe64Terminal>
+    </Vibe64InteractiveTerminal>
   </div>
 </template>
 
@@ -163,7 +161,7 @@ import {
 import {
   VIBE64_ACCOUNTS_CHANGED_EVENT
 } from "@local/vibe64-accounts/client";
-import Vibe64Terminal from "@/components/studio/Vibe64Terminal.vue";
+import Vibe64InteractiveTerminal from "@/components/studio/Vibe64InteractiveTerminal.vue";
 import Vibe64AttachmentQueue from "@/components/studio/vibe64-session/Vibe64AttachmentQueue.vue";
 import { useVibe64Terminal } from "@/composables/useVibe64Terminal.js";
 import {
@@ -235,7 +233,6 @@ const emit = defineEmits([
 const codexCommands = useVibe64CodexCommands();
 
 const copyStatus = ref("");
-const expanded = ref(false);
 const componentMounted = ref(false);
 const terminalAttachmentFileInput = ref(null);
 const staleTerminalSessionIds = ref(new Set());
@@ -487,7 +484,6 @@ function handleTerminalAttachmentDrop(event) {
   if (!terminalAttachmentsEnabled.value) {
     return;
   }
-  expanded.value = true;
   void handleAttachmentDrop(event);
 }
 const terminalCanStart = computed(() => Boolean(canStartTerminal.value));
@@ -560,10 +556,6 @@ const showTerminalStartPanel = computed(() => (
     )
   )
 ));
-
-function defaultExpanded() {
-  return false;
-}
 
 function handleTerminalCopy() {
   copyStatus.value = "Terminal text copied.";
@@ -747,7 +739,6 @@ async function recoverCodexTerminalAfterAccountReconnect() {
   resetTerminalSessionState();
   resetTerminalDisplay();
   resetTerminalOutput();
-  expanded.value = true;
   await ensureTerminalReady();
 }
 
@@ -815,22 +806,9 @@ async function sendEscape() {
   });
 }
 
-function updateTerminalExpanded(value) {
-  expanded.value = Boolean(value);
-  if (expanded.value && hasTerminalSession.value) {
-    void connectAttachedTerminal().catch((error) => {
-      terminalError.value = terminalError.value || String(error?.message || error || "Terminal stream failed to connect.");
-    });
-  }
-}
-
 async function focusTerminal() {
   if (!hasTerminalSession.value) {
     return false;
-  }
-  if (!expanded.value) {
-    expanded.value = true;
-    await nextTick();
   }
   return focusTerminalUi();
 }
@@ -1010,7 +988,6 @@ async function restartTerminal() {
     return;
   }
   terminalError.value = "";
-  expanded.value = true;
   if (!(await closeTerminal())) {
     return;
   }
@@ -1031,7 +1008,6 @@ watch(sessionId, (nextSessionId, previousSessionId) => {
   staleTerminalSessionIds.value = new Set();
   resetAttachmentDragState();
   clearAttachmentStatus();
-  expanded.value = defaultExpanded();
 });
 
 watch(canUseTerminal, (ready) => {
@@ -1065,7 +1041,6 @@ watch(terminalDisplayActive, (visible, previousVisible) => {
 
 onMounted(() => {
   componentMounted.value = true;
-  expanded.value = defaultExpanded();
   connectTerminalWhenReady();
 });
 
@@ -1126,7 +1101,7 @@ defineExpose({
 }
 
 .vibe64-codex-session__start-panel {
-  background: rgba(14, 18, 25, 0.8);
+  background: rgba(var(--v-theme-scrim), 0.8);
   z-index: 3;
 }
 
@@ -1143,7 +1118,7 @@ defineExpose({
 .vibe64-codex-session__start-icon {
   align-items: center;
   background: rgba(var(--v-theme-primary), 0.14);
-  border-radius: 999px;
+  border-radius: 50%;
   color: rgb(var(--v-theme-primary));
   display: flex;
   height: 3rem;
@@ -1195,7 +1170,7 @@ defineExpose({
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .vibe64-codex-session__start-card :deep(.v-btn) {
+  .vibe64-codex-session__start-action {
     grid-column: 1 / -1;
     width: 100%;
   }

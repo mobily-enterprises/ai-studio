@@ -67,7 +67,7 @@ const VIBE64_SESSION_TOOL_DEFINITIONS = deepFreeze([
     label: "AI Terminal",
     order: 700,
     routeSegment: "ai-terminal",
-    title: "Open the active session Codex terminal"
+    title: "Open the active session AI terminal"
   }
 ]);
 

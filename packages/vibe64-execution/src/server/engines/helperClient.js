@@ -43,7 +43,11 @@ function helperPayload({
 }
 
 function helperOperationForRequest(request = {}) {
-  if (request.mode === "pty" && request.envPolicy === "auth") {
+  if (
+    request.mode === "pty" &&
+    request.envPolicy === "auth" &&
+    !["assistant", "codex"].includes(request.purpose)
+  ) {
     return "account-auth-terminal";
   }
   if (

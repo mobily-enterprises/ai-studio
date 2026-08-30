@@ -1211,3 +1211,61 @@ test("session agent manager leaves non-AI reads and cleanup available on persona
 
   assert.deepEqual(calls, ["read", "close"]);
 });
+
+test("session agent manager treats input to an authorized terminal as bound transport", async () => {
+  const accessReads = [];
+  const terminalWrites = [];
+  const session = {
+    metadata: {
+      [VIBE64_ASSISTANT_SELECTION_METADATA]: JSON.stringify({
+        agentId: "build",
+        catalogRevision,
+        engineId: "opencode",
+        modelId: "model-1",
+        modelProviderId: "deepseek",
+        schema: "vibe64.assistant-selection.v1",
+        variantId: "high"
+      })
+    },
+    sessionId: "session-1"
+  };
+  const manager = createSessionAgentManager({
+    readAssistantAccess: async (context) => {
+      accessReads.push(context);
+      return { available: true, ownerOnly: false };
+    },
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server"
+    }, {
+      id: "opencode",
+      transportId: "opencode_server",
+      async startTerminal() {
+        return { id: "terminal-1", ok: true, status: "running" };
+      },
+      async writeTerminal(context, input) {
+        terminalWrites.push({ context, input });
+        return { ok: true, written: true };
+      }
+    }]
+  });
+
+  await manager.startTerminal(session.sessionId, {}, {
+    session,
+    vibe64User: { role: "owner", username: "owner" }
+  });
+  const result = await manager.writeTerminal(
+    session.sessionId,
+    "terminal-1",
+    "\u0003"
+  );
+
+  assert.equal(accessReads.length, 1);
+  assert.equal(accessReads[0].modelProviderId, "deepseek");
+  assert.equal(manager.binding(session.sessionId), "opencode");
+  assert.equal(terminalWrites.length, 1);
+  assert.equal(terminalWrites[0].context.providerId, "opencode");
+  assert.equal(terminalWrites[0].context.assistantAccess, null);
+  assert.equal(terminalWrites[0].input.data, "\u0003");
+  assert.equal(result.providerId, "opencode");
+});

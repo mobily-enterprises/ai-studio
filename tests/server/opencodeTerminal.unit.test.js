@@ -10,6 +10,9 @@ import {
   serializeVibe64AssistantSelection
 } from "../../packages/vibe64-runtime/src/shared/index.js";
 import {
+  startTerminalSession
+} from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
+import {
   openCodeAssistantCapabilities
 } from "../../packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js";
 import {
@@ -65,6 +68,7 @@ async function controllerHarness({
   commandEnvironmentGate = null,
   gitActorFailure = null,
   providerEvents = [],
+  realAttachedTerminal = false,
   withCommandBoundary = false
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
@@ -171,6 +175,7 @@ async function controllerHarness({
   };
   const processStarts = [];
   const processStops = [];
+  const terminalStarts = [];
   const commandEnvironmentCalls = [];
   const catalogReadCalls = [];
   const createdSessions = [];
@@ -303,6 +308,26 @@ async function controllerHarness({
         client: client(),
         options,
         workdir: options.workdir,
+        async startAttachedTerminal(input) {
+          terminalStarts.push(input);
+          if (realAttachedTerminal) {
+            return startTerminalSession({
+              args: ["-e", "setInterval(() => {}, 1000)"],
+              command: process.execPath,
+              commandPreview: "opencode attach",
+              cwd: sourceRoot,
+              maxRunning: 1,
+              namespace: input.namespace,
+              reuseRunning: true
+            });
+          }
+          return {
+            commandPreview: "opencode attach",
+            id: `opencode-terminal-${terminalStarts.length}`,
+            ok: true,
+            status: "running"
+          };
+        },
         async stop() {
           processStops.push(options);
           return { exited: true, signal: "SIGTERM" };
@@ -368,6 +393,7 @@ async function controllerHarness({
     switchedAgents,
     switchedModels,
     systemMessages,
+    terminalStarts,
     thinkingMessages,
     upstreamSessions,
     userMessages
@@ -1267,4 +1293,55 @@ test("OpenCode receives the same complete session command boundary as Codex", as
   });
   assert.deepEqual(registry.sessions[0].pathEntries, ["/managed/wrappers"]);
   assert.equal(registry.sessions[0].sessionId, "session-1");
+});
+
+test("OpenCode starts its interactive terminal by attaching to the session's native history", async (t) => {
+  const harness = await controllerHarness({ withCommandBoundary: true });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const terminal = await harness.controller.startTerminal("session-1", {}, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(terminal.ok, true);
+  assert.equal(terminal.id, "opencode-terminal-1");
+  assert.equal(harness.terminalStarts.length, 1);
+  assert.equal(harness.terminalStarts[0].session, harness.session);
+  assert.equal(harness.terminalStarts[0].workdir, path.join(
+    harness.root,
+    "sessions",
+    "active",
+    "session-1",
+    "source"
+  ));
+  assert.match(harness.terminalStarts[0].namespace, /vibe64-opencode.*session-1/u);
+  assert.match(harness.terminalStarts[0].upstreamSessionId, /^ses_vibe64_/u);
+});
+
+test("OpenCode reuses the session's running interactive terminal", async (t) => {
+  const harness = await controllerHarness({
+    realAttachedTerminal: true,
+    withCommandBoundary: true
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  };
+
+  const first = await harness.controller.startTerminal("session-1", {}, options);
+  const second = await harness.controller.startTerminal("session-1", {}, options);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.id, first.id);
+  assert.equal(harness.terminalStarts.length, 1);
 });

@@ -186,6 +186,7 @@ vi.mock("@/components/studio/StudioErrorNotice.vue", () => ({
 }));
 
 import Vibe64CodexSession from "../../src/components/studio/Vibe64CodexSession.vue";
+import Vibe64InteractiveTerminal from "../../src/components/studio/Vibe64InteractiveTerminal.vue";
 import Vibe64Terminal from "../../src/components/studio/Vibe64Terminal.vue";
 import Vibe64TerminalSurface from "../../src/components/studio/Vibe64TerminalSurface.vue";
 import {
@@ -196,6 +197,11 @@ attachClientRender(
   Vibe64CodexSession,
   path.resolve("src/components/studio/Vibe64CodexSession.vue"),
   "vibe64-codex-session-behavior-test"
+);
+attachClientRender(
+  Vibe64InteractiveTerminal,
+  path.resolve("src/components/studio/Vibe64InteractiveTerminal.vue"),
+  "vibe64-interactive-terminal-behavior-test"
 );
 attachClientRender(
   Vibe64Terminal,
@@ -328,7 +334,7 @@ describe("visible PTY consumer behavior", () => {
     globalThis.window = originalWindow;
   });
 
-  it("streams an existing Codex PTY while collapsed and expands the same socket for input", async () => {
+  it("opens the existing Codex PTY as the session's full interactive terminal", async () => {
     const container = terminalHostNode("root");
     const session = reactive({
       agentSession: {
@@ -365,14 +371,13 @@ describe("visible PTY consumer behavior", () => {
 
     const surface = findNode(container, hasClass("vibe64-terminal-surface"));
     const summary = findNode(container, hasClass("vibe64-terminal-surface__summary"));
-    const expand = findNode(container, (node) => node.type === "button" && nodeText(node) === "Expand");
     const attachFiles = findNode(container, (node) => (
       node.type === "button" &&
       node.props?.["aria-label"] === "Attach files to Codex terminal"
     ));
 
     expect(surface).toBeTruthy();
-    expect(summary).toBeTruthy();
+    expect(summary).toBeNull();
     expect(attachFiles).toBeTruthy();
     expect(attachFiles.props.disabled).toBe(false);
     expect(attachFiles.props.type).toBe("button");
@@ -393,10 +398,6 @@ describe("visible PTY consumer behavior", () => {
     expect(attachFiles.props.disabled).toBe(true);
     expect(attachFiles.props["aria-label"]).toBe("Codex terminal attachment limit reached");
     expect(nodeText(surface)).toContain("running");
-    expect(nodeText(summary)).toContain("Ready for work");
-    expect(terminalMocks.FakeTerminal.instances).toHaveLength(0);
-
-    expand.props.onClick();
     await vi.waitFor(() => expect(terminalMocks.FakeTerminal.instances).toHaveLength(1));
 
     const xterm = terminalMocks.FakeTerminal.instances[0];

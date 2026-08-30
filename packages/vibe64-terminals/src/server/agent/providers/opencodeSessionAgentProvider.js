@@ -114,8 +114,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         session: context.session
       });
     },
-    async closeTerminal() {
-      return unsupportedOperation("raw terminal");
+    async closeTerminal(context, input = {}) {
+      return controller.closeTerminal(context.sessionId, input.terminalSessionId);
     },
     async createConversation(context, input = {}) {
       return controller.createConversation(context.sessionId, input, {
@@ -208,8 +208,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         vibe64User: context.vibe64User
       });
     },
-    async readTerminal() {
-      return unsupportedOperation("raw terminal");
+    async readTerminal(context, input = {}) {
+      return controller.readTerminal(context.sessionId, input.terminalSessionId);
     },
     async reconcileSessions(_context, sessions = [], options = {}) {
       return controller.reconcileSessions(sessions, options);
@@ -232,8 +232,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     async releaseRenewalSuccessorProcessExitProof(context) {
       return controller.releaseProcessExitProof(context.sessionId);
     },
-    async resizeTerminal() {
-      return unsupportedOperation("raw terminal");
+    async resizeTerminal(context, input = {}) {
+      return controller.resizeTerminal(context.sessionId, input.terminalSessionId, input.size);
     },
     resolveExecutionProfile(context, input = {}) {
       return resolveOpenCodeEconomyExecutionProfile(context, input);
@@ -278,8 +278,12 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         vibe64User: context.vibe64User
       });
     },
-    async startTerminal() {
-      return unsupportedOperation("raw terminal");
+    async startTerminal(context, input = {}) {
+      return controller.startTerminal(context.sessionId, input, {
+        runtime: context.runtime,
+        session: context.session,
+        vibe64User: context.vibe64User
+      });
     },
     async stopConversation(context, input = {}) {
       return controller.stopConversation(context.sessionId, input, {
@@ -298,8 +302,12 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
       });
       return executionProfile ? { ...result, executionProfile } : result;
     },
-    async subscribeTerminal() {
-      return unsupportedOperation("raw terminal");
+    async subscribeTerminal(context, input = {}) {
+      return controller.subscribeTerminal(
+        context.sessionId,
+        input.terminalSessionId,
+        input.subscriber
+      );
     },
     async unsubscribeSessions() {
       return { ok: true };
@@ -318,8 +326,18 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         vibe64User: context.vibe64User
       });
     },
-    async writeTerminal() {
-      return unsupportedOperation("raw terminal");
+    async writeTerminal(context, input = {}) {
+      return controller.writeTerminal(
+        context.sessionId,
+        input.terminalSessionId,
+        input.data,
+        input.input,
+        {
+          runtime: context.runtime,
+          session: context.session,
+          vibe64User: context.vibe64User
+        }
+      );
     }
   });
 }

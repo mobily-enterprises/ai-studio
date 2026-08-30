@@ -45,7 +45,7 @@ describe("Vibe64 direct session view", () => {
     }
   });
 
-  it("offers native confirmed Save with persistent operation output, not an AI prompt", () => {
+  it("offers native confirmed Save with temporary action output, not an AI prompt", () => {
     const component = fs.readFileSync(componentPath, "utf8");
     const composable = fs.readFileSync(composablePath, "utf8");
     const appPage = fs.readFileSync(appPagePath, "utf8");
@@ -63,18 +63,18 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain(":icon=\"mdiIncognito\"");
     expect(component).toContain("saveWorkRequiresUpdate ? mdiSourcePull : mdiContentSaveOutline");
     expect(component).toContain("@click=\"confirmSaveWork\"");
-    expect(component).toContain("<Vibe64TerminalSurface");
-    expect(component.indexOf("<Vibe64TerminalSurface")).toBeLessThan(
+    expect(component).toContain("<Vibe64TemporaryActionTerminal");
+    expect(component.indexOf("<Vibe64TemporaryActionTerminal")).toBeLessThan(
       component.indexOf("<Vibe64ConversationLog")
     );
-    expect(component).toContain(':open-error-details="true"');
     expect(component).toContain('#error-actions');
     expect(component).toContain("saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'primary' : undefined)");
     expect(composable).toContain("await props.saveSessionWork();");
     expect(composable).toContain("await props.updateSessionWork();");
     expect(composable).toContain("const saveWorkUnsaved = computed");
     expect(composable).toContain("const saveWorkOperationActive = computed");
-    expect(component).toContain("saveWorkActivityVisible || workspaceSetupVisible");
+    expect(component).toContain('class="studio-autopilot__activity"');
+    expect(component).toContain(".studio-autopilot__activity:empty");
     expect(composable).toContain("Vibe64—not Temporary AI—owns every repository operation");
     expect(component).toContain(':disabled="repositoryRecoverySending || !assistantDirectAllowed"');
     expect(component).toContain(":title=\"assistantDirectAllowed ? 'Open temporary AI to resolve this repository problem' : assistantRestrictionMessage\"");
@@ -85,7 +85,8 @@ describe("Vibe64 direct session view", () => {
     expect(composable).toContain("leave both byte-for-byte unchanged");
     expect(composable).toContain("Resolve only by editing the conflicting working-tree files");
     expect(composable).toContain("keep the latest saved version's overlapping lines byte-for-byte");
-    expect(composable).toContain("saveWorkExpanded.value = false;");
+    expect(component).toContain(':active="saveWorkOperationActive || saveWorkSending"');
+    expect(component).toContain(':operation-key="saveWorkOperation?.operationId || \'\'"');
     expect(composable).not.toContain("SAVE_WORK_PROMPT");
     expect(combined).not.toMatch(/runGit|executeGit|merge pr|finish session/iu);
     expect(component).toContain("sessionGithubActor.displayLabel");

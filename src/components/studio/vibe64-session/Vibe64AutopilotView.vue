@@ -142,26 +142,15 @@
         </div>
       </header>
 
-      <div
-        v-if="saveWorkActivityVisible || workspaceSetupVisible"
-        class="studio-autopilot__activity"
-        aria-label="Session activity"
-      >
-        <Vibe64TerminalSurface
-          v-if="saveWorkActivityVisible"
-          body-mode="log"
-          :collapsible="true"
+      <div class="studio-autopilot__activity" aria-label="Session activity">
+        <Vibe64TemporaryActionTerminal
+          :active="saveWorkOperationActive || saveWorkSending"
           :error="saveWorkError"
           :error-title="`${saveWorkActivityLabel} needs attention`"
-          :expanded="saveWorkExpanded"
           height="clamp(8rem, 22vh, 14rem)"
-          mobile-takeover
-          :open-error-details="true"
+          :operation-key="saveWorkOperation?.operationId || ''"
           :output="saveWorkOutput"
           :retryable="saveWorkRetryable"
-          :show-close="false"
-          :show-copy="Boolean(saveWorkOutput)"
-          :show-interrupt="false"
           :stage="saveWorkStage"
           :starting="saveWorkSending"
           :status="saveWorkStatus"
@@ -169,7 +158,6 @@
           :title="saveWorkActivityLabel"
           @copy="copyActivityOutput(saveWorkOutput)"
           @retry="retrySaveWork"
-          @toggle-expanded="saveWorkExpanded = !saveWorkExpanded"
         >
           <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
             <v-btn
@@ -186,23 +174,15 @@
               {{ repositoryRecoverySending ? "Opening temporary AI…" : "Fix with temporary AI" }}
             </v-btn>
           </template>
-        </Vibe64TerminalSurface>
+        </Vibe64TemporaryActionTerminal>
 
-        <Vibe64TerminalSurface
-          v-if="workspaceSetupVisible"
-          body-mode="log"
-          :collapsible="true"
+        <Vibe64TemporaryActionTerminal
+          :active="workspaceSetupRunning || workspaceSetupRetrying"
           :error="workspaceSetupNeedsAttention ? workspaceSetupDiagnostic : ''"
           error-title="Workspace preparation needs attention"
-          :expanded="workspaceSetupExpanded"
           height="clamp(8rem, 22vh, 14rem)"
-          mobile-takeover
-          :open-error-details="workspaceSetupNeedsAttention"
           :output="workspaceSetupOutput"
           :retryable="workspaceSetupNeedsAttention && !workspaceSetupRetryDisabled"
-          :show-close="false"
-          :show-copy="Boolean(workspaceSetupOutput)"
-          :show-interrupt="false"
           :stage="workspaceSetupCurrentLabel"
           :starting="workspaceSetupRunning || workspaceSetupRetrying"
           :status="workspaceSetupStatus"
@@ -210,7 +190,6 @@
           :title="workspaceSetupTitle"
           @copy="copyActivityOutput(workspaceSetupOutput)"
           @retry="retryWorkspaceSetup"
-          @toggle-expanded="workspaceSetupExpanded = !workspaceSetupExpanded"
         >
           <template v-if="workspaceSetupNeedsAttention" #error-actions>
             <v-btn
@@ -226,7 +205,7 @@
               {{ workspaceSetupFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
             </v-btn>
           </template>
-        </Vibe64TerminalSurface>
+        </Vibe64TemporaryActionTerminal>
       </div>
 
       <Vibe64ConversationLog
@@ -678,7 +657,7 @@ import Vibe64SessionAssistantMenu from "@/components/studio/vibe64-session/Vibe6
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
-import Vibe64TerminalSurface from "@/components/studio/Vibe64TerminalSurface.vue";
+import Vibe64TemporaryActionTerminal from "@/components/studio/Vibe64TemporaryActionTerminal.vue";
 import Vibe64SessionSourceEditor from "@/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue";
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
 import Vibe64TemporaryAiWorkspace from "@/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
@@ -897,16 +876,16 @@ const {
   rightPaneTab,
   rightPaneTabMounted,
   saveWorkConfirmOpen,
-  saveWorkActivityVisible,
   saveWorkActivityIsUpdate,
   saveWorkActivityLabel,
   saveWorkDisabled,
   saveWorkError,
-  saveWorkExpanded,
   saveWorkHeaderAriaLabel,
   saveWorkHeaderLabel,
   saveWorkHeaderVisible,
   saveWorkCanResolveWithTemporaryAi,
+  saveWorkOperation,
+  saveWorkOperationActive,
   saveWorkOutput,
   saveWorkRetryable,
   saveWorkSending,
@@ -934,7 +913,6 @@ const {
   workspaceSetupAskDisabled,
   workspaceSetupCurrentLabel,
   workspaceSetupDiagnostic,
-  workspaceSetupExpanded,
   workspaceSetupFixSending,
   workspaceSetupNeedsAttention,
   workspaceSetupOutput,
@@ -942,9 +920,9 @@ const {
   workspaceSetupRetrying,
   workspaceSetupRunning,
   workspaceSetupStatus,
-  workspaceSetupTitle,
-  workspaceSetupVisible
+  workspaceSetupTitle
 } = useVibe64AutopilotView(props, emit, {
+  assistantAccessLoading,
   assistantCanRequestMessage,
   assistantCanUseAi: assistantCanUseAiState,
   assistantRestrictionMessage,
@@ -1354,6 +1332,11 @@ function requestSessionRenewal(returnFocusTarget = null) {
   min-width: 0;
   overflow: auto;
   padding: 0.35rem 0.5rem;
+}
+
+.studio-autopilot__activity:empty {
+  display: none;
+  padding: 0;
 }
 
 .studio-autopilot__recovery-action {

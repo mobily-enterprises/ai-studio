@@ -601,6 +601,7 @@ function useVibe64OutputControlsSurface(props) {
     launchButtonsDisabled,
     launchError,
     launchStatusAttempt,
+    launchStatusIdleRecoveryExhausted,
     launchStarting,
     outputExecution,
     outputResults,
@@ -704,7 +705,7 @@ function useVibe64OutputControlsSurface(props) {
     terminalDisplayed.value && terminalVisible.value
   ));
   const embeddedTerminalSurfaceVisible = computed(() => Boolean(
-    props.embeddedPreview && terminalSurfaceVisible.value
+    props.embeddedPreview && terminalSurfaceVisible.value && terminalExpanded.value
   ));
   const requestedAutoStartTargetId = computed(() => String(props.autoStartTargetId || "").trim());
   const embeddedAutoStartTarget = computed(() => {
@@ -974,6 +975,7 @@ function useVibe64OutputControlsSurface(props) {
     previewState: previewState.value,
     previewStartUnavailableReason: embeddedStartTargetUnavailableReason.value,
     launchStarting: launchStarting.value,
+    outputTargetsUnavailable: launchStatusIdleRecoveryExhausted.value && outputTargets.value.length < 1,
     terminalIsRunning: terminalIsRunning.value
   }));
   
@@ -1615,6 +1617,7 @@ function useVibe64OutputControlsSurface(props) {
   }
 
   function showLaunchLog() {
+    collapsePreviewToolbar();
     previewLogVisible.value = true;
     void expandTerminal();
   }
@@ -2002,9 +2005,9 @@ function useVibe64OutputControlsSurface(props) {
     terminalStatus,
     terminalSubtitle,
     terminalTitle,
+    terminalVisible,
     terminalWindowStorageKey,
     terminalWindowVisible,
-    terminalSurfaceVisible,
     toolbarTeleportTarget,
     visible
   };
@@ -2015,6 +2018,7 @@ function launchPreviewEmptyText({
   launchStarting = false,
   loadError = "",
   loading = false,
+  outputTargetsUnavailable = false,
   previewInFlightText = "",
   previewManualStartAvailable = false,
   previewMessage = "",
@@ -2048,6 +2052,9 @@ function launchPreviewEmptyText({
   }
   if (loading) {
     return "Checking preview status.";
+  }
+  if (outputTargetsUnavailable) {
+    return "This project does not declare an application output.";
   }
   return "Preview will appear here when it is ready.";
 }

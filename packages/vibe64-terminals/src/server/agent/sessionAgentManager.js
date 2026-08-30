@@ -42,8 +42,7 @@ const AI_METHODS = new Set([
   "sendMessage",
   "startConversationTurn",
   "startTerminal",
-  "streamDetachedChatTurn",
-  "writeTerminal"
+  "streamDetachedChatTurn"
 ]);
 
 function hasOwn(value, key) {

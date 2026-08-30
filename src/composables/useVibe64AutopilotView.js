@@ -314,6 +314,7 @@ function repositoryTemporaryAiDedupeKey({
 }
 
 function useVibe64AutopilotView(props, emit, {
+  assistantAccessLoading = null,
   assistantCanRequestMessage = null,
   assistantCanUseAi = null,
   assistantRestrictionMessage = null,
@@ -344,6 +345,9 @@ function useVibe64AutopilotView(props, emit, {
   });
   const sessionId = computed(() => normalizedAgentTurnText(props.session?.sessionId));
   const assistantAccessConfigured = assistantCanUseAi !== null;
+  const assistantAccessPending = computed(() => (
+    assistantAccessConfigured && unref(assistantAccessLoading) === true
+  ));
   const currentAssistantRestrictionMessage = computed(() => normalizedAgentTurnText(
     unref(assistantRestrictionMessage)
   ) || "The selected AI connection is unavailable for this account.");
@@ -394,13 +398,11 @@ function useVibe64AutopilotView(props, emit, {
   const saveWorkConfirmOpen = ref(false);
   const saveWorkError = ref("");
   const saveWorkFailure = ref(null);
-  const saveWorkExpanded = ref(false);
   const saveWorkSending = ref(false);
   const selectedAnswerChoice = ref("");
   const workspaceSetupRetryError = ref("");
   const workspaceSetupRetrying = ref(false);
   const workspaceSetupFixSending = ref(false);
-  const workspaceSetupExpanded = ref(false);
   const repositoryRecoverySending = ref(false);
   const previewAttachmentState = ref({
     attachDiagnostics: null,
@@ -572,11 +574,6 @@ function useVibe64AutopilotView(props, emit, {
   ));
   const workspaceSetupOutput = computed(() => (
     normalizedAgentTurnText(workspaceSetup.value?.transcript) || workspaceSetupDiagnostic.value
-  ));
-  const workspaceSetupVisible = computed(() => (
-    workspaceSetupRunning.value ||
-    workspaceSetupNeedsAttention.value ||
-    Boolean(workspaceSetupOutput.value)
   ));
   const workspaceSetupTitle = computed(() => ({
     ambiguous: "Workspace setup needs a choice",
@@ -1147,10 +1144,6 @@ function useVibe64AutopilotView(props, emit, {
     : ""));
   const saveWorkStatus = computed(() => String(saveWorkOperation.value?.status || ""));
   const saveWorkStage = computed(() => String(saveWorkOperation.value?.stage || ""));
-  const saveWorkActivityVisible = computed(() => Boolean(
-    saveWorkOperation.value || saveWorkSending.value || saveWorkError.value
-  ));
-
   watch(() => ({
     code: String(saveWorkOperation.value?.code || ""),
     details: saveWorkOperation.value?.details || null,
@@ -1371,7 +1364,11 @@ function useVibe64AutopilotView(props, emit, {
   ));
 
   function sessionToolRuntimeState(toolId = "") {
-    if (toolId === "ai-terminal" && !assistantDirectAllowed.value) {
+    if (
+      toolId === "ai-terminal" &&
+      !assistantAccessPending.value &&
+      !assistantDirectAllowed.value
+    ) {
       return {
         disabled: true,
         title: currentAssistantRestrictionMessage.value
@@ -1394,14 +1391,8 @@ function useVibe64AutopilotView(props, emit, {
     return {};
   }
 
-  const assistantEngineId = computed(() => normalizedAgentTurnText(
-    props.session?.assistantSelection?.engineId
-  ) || "codex");
   const sessionToolControls = computed(() => VIBE64_SESSION_TOOL_DEFINITIONS
-    .filter((definition) => (
-      DIRECT_SESSION_TOOL_IDS.has(definition.id) &&
-      (definition.id !== "ai-terminal" || assistantEngineId.value === "codex")
-    ))
+    .filter((definition) => DIRECT_SESSION_TOOL_IDS.has(definition.id))
     .map((definition) => ({
       ...definition,
       ...sessionToolRuntimeState(definition.id)
@@ -1539,11 +1530,12 @@ function useVibe64AutopilotView(props, emit, {
   }
 
   watch(() => [
-    assistantEngineId.value,
     projectPaneValue.value,
     route.path,
     routeSessionToolId.value,
-    sessionSourceRoot.value
+    sessionSourceRoot.value,
+    assistantAccessPending.value,
+    assistantDirectAllowed.value
   ].join("|"), () => {
     if (projectPaneValue.value === "preview") {
       rightPaneTab.value = "preview";
@@ -1577,8 +1569,6 @@ function useVibe64AutopilotView(props, emit, {
     submittedQuestionText.value = "";
     selectedAnswerChoice.value = "";
     workspaceSetupRetryError.value = "";
-    workspaceSetupExpanded.value = false;
-    saveWorkExpanded.value = false;
     systemReturnContext.value = null;
     systemRestoreRequest.value = null;
   });
@@ -1689,12 +1679,10 @@ function useVibe64AutopilotView(props, emit, {
     rightPaneTabMounted,
     saveWorkConfirmOpen,
     saveWorkDisabled,
-    saveWorkActivityVisible,
     saveWorkActivityIsUpdate,
     saveWorkActivityLabel,
     saveWorkActionLabel,
     saveWorkError,
-    saveWorkExpanded,
     saveWorkFailure,
     saveWorkHeaderAriaLabel,
     saveWorkHeaderLabel,
@@ -1732,7 +1720,6 @@ function useVibe64AutopilotView(props, emit, {
     workspaceSetupAskDisabled,
     workspaceSetupCurrentLabel,
     workspaceSetupDiagnostic,
-    workspaceSetupExpanded,
     workspaceSetupFixSending,
     workspaceSetupNeedsAttention,
     workspaceSetupOutput,
@@ -1740,8 +1727,7 @@ function useVibe64AutopilotView(props, emit, {
     workspaceSetupRetrying,
     workspaceSetupRunning,
     workspaceSetupStatus,
-    workspaceSetupTitle,
-    workspaceSetupVisible
+    workspaceSetupTitle
   };
 }
 

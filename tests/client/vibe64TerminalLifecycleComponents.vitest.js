@@ -1,0 +1,264 @@
+import fs from "node:fs";
+import path from "node:path";
+import { compile } from "@vue/compiler-dom";
+import { compileScript, parse } from "@vue/compiler-sfc";
+import * as VueRuntime from "vue";
+import {
+  createRenderer,
+  defineComponent,
+  h,
+  nextTick,
+  reactive,
+  ssrContextKey
+} from "vue";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("vuetify/components/VBtn", () => ({
+  VBtn: passthroughComponent("button")
+}));
+
+vi.mock("vuetify/components/VChip", () => ({
+  VChip: passthroughComponent("span")
+}));
+
+vi.mock("vuetify/components/VSheet", () => ({
+  VSheet: passthroughComponent("section")
+}));
+
+vi.mock("@/components/studio/Vibe64Terminal.vue", async () => {
+  const { defineComponent: defineVueComponent, h: render } = await import("vue");
+  return {
+    default: defineVueComponent({
+      emits: ["close"],
+      props: {
+        status: {
+          default: "",
+          type: String
+        },
+        title: {
+          default: "",
+          type: String
+        },
+        visible: {
+          default: false,
+          type: Boolean
+        }
+      },
+      setup(props, { emit }) {
+        return () => props.visible
+          ? render("section", { class: "fake-full-terminal" }, [
+              render("strong", props.title),
+              render("span", props.status),
+              render("button", { onClick: () => emit("close") }, "Hide")
+            ])
+          : null;
+      }
+    })
+  };
+});
+
+vi.mock("@/components/studio/StudioErrorNotice.vue", () => ({
+  default: defineComponent({ render: () => null })
+}));
+
+import Vibe64LongRunningTerminal from "../../src/components/studio/Vibe64LongRunningTerminal.vue";
+import Vibe64TemporaryActionTerminal from "../../src/components/studio/Vibe64TemporaryActionTerminal.vue";
+import Vibe64TerminalSurface from "../../src/components/studio/Vibe64TerminalSurface.vue";
+
+for (const [component, componentPath, id] of [
+  [
+    Vibe64LongRunningTerminal,
+    "src/components/studio/Vibe64LongRunningTerminal.vue",
+    "vibe64-long-running-terminal-lifecycle-test"
+  ],
+  [
+    Vibe64TemporaryActionTerminal,
+    "src/components/studio/Vibe64TemporaryActionTerminal.vue",
+    "vibe64-temporary-action-terminal-lifecycle-test"
+  ],
+  [
+    Vibe64TerminalSurface,
+    "src/components/studio/Vibe64TerminalSurface.vue",
+    "vibe64-terminal-surface-lifecycle-test"
+  ]
+]) {
+  const filename = path.resolve(componentPath);
+  const { descriptor } = parse(fs.readFileSync(filename, "utf8"), { filename });
+  const script = compileScript(descriptor, { id });
+  const template = compile(descriptor.template.content, {
+    bindingMetadata: script.bindings,
+    mode: "function",
+    prefixIdentifiers: true
+  });
+  component.render = new Function("Vue", template.code)(VueRuntime);
+}
+
+function passthroughComponent(element) {
+  return defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, slots }) {
+      return () => h(element, attrs, slots.default?.());
+    }
+  });
+}
+
+const renderer = createRenderer({
+  createComment: (text) => ({ children: [], props: {}, style: {}, text, type: "comment" }),
+  createElement: (type) => ({ children: [], parent: null, props: {}, style: {}, type }),
+  createText: (text) => ({ children: [], props: {}, style: {}, text, type: "text" }),
+  insert(child, parent, anchor = null) {
+    child.parent = parent;
+    const anchorIndex = anchor ? parent.children.indexOf(anchor) : -1;
+    if (anchorIndex < 0) {
+      parent.children.push(child);
+    } else {
+      parent.children.splice(anchorIndex, 0, child);
+    }
+  },
+  nextSibling(node) {
+    const index = node.parent?.children?.indexOf(node) ?? -1;
+    return index >= 0 ? node.parent.children[index + 1] || null : null;
+  },
+  parentNode: (node) => node.parent,
+  patchProp(element, key, _previous, value) {
+    element.props[key] = value;
+  },
+  remove(child) {
+    const index = child.parent?.children?.indexOf(child) ?? -1;
+    if (index >= 0) {
+      child.parent.children.splice(index, 1);
+    }
+    child.parent = null;
+  },
+  setElementText(element, text) {
+    element.text = text;
+  },
+  setText(node, text) {
+    node.text = text;
+  }
+});
+
+function mount(component) {
+  const container = { children: [], parent: null, type: "root" };
+  const app = renderer.createApp(component);
+  app.component("VBtn", passthroughComponent("button"));
+  app.component("VChip", passthroughComponent("span"));
+  app.component("VSheet", passthroughComponent("section"));
+  app.provide(ssrContextKey, { modules: new Set() });
+  app.mount(container);
+  return { app, container };
+}
+
+function findNode(root, predicate) {
+  if (predicate(root)) {
+    return root;
+  }
+  for (const child of root.children || []) {
+    const match = findNode(child, predicate);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function hasClass(name) {
+  return (node) => String(node.props?.class || "").includes(name);
+}
+
+function nodeText(node) {
+  return [node.text || "", ...(node.children || []).map(nodeText)].join("");
+}
+
+describe("Vibe64 terminal lifecycle components", () => {
+  it("removes a collapsed completed action but preserves expanded history until hidden", async () => {
+    const state = reactive({
+      active: false,
+      operationKey: "save-1",
+      output: "",
+      stage: "Saving work",
+      status: "running"
+    });
+    const { app, container } = mount(defineComponent({
+      render: () => h(Vibe64TemporaryActionTerminal, {
+        ...state,
+        title: "Save work"
+      })
+    }));
+
+    expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeNull();
+
+    state.active = true;
+    state.output = "Preparing\nSaved revision 42";
+    await nextTick();
+
+    const summary = findNode(container, hasClass("vibe64-temporary-action-terminal__summary"));
+    const details = findNode(container, (node) => (
+      node.type === "button" && node.props?.["aria-label"] === "Show Save work details"
+    ));
+    expect(summary).toBeTruthy();
+    expect(nodeText(summary)).toContain("Saved revision 42");
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeNull();
+
+    details.props.onClick();
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeTruthy();
+
+    state.active = false;
+    state.status = "succeeded";
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeTruthy();
+
+    const hide = findNode(container, (node) => node.type === "button" && nodeText(node) === "Hide");
+    hide.props.onClick();
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeNull();
+    expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeNull();
+
+    state.operationKey = "save-2";
+    state.active = true;
+    state.status = "running";
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeTruthy();
+    state.active = false;
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeNull();
+    app.unmount();
+  });
+
+  it("shows a long-running terminal only on request and never hides it on process exit", async () => {
+    const closeTerminalSocket = vi.fn();
+    const state = reactive({
+      open: false,
+      status: "running"
+    });
+    const { app, container } = mount(defineComponent({
+      render: () => h(Vibe64LongRunningTerminal, {
+        "onUpdate:open": (open) => {
+          state.open = open;
+        },
+        open: state.open,
+        status: state.status,
+        terminal: { closeTerminalSocket },
+        title: "Run app"
+      })
+    }));
+
+    expect(findNode(container, hasClass("fake-full-terminal"))).toBeNull();
+    state.open = true;
+    await nextTick();
+    expect(findNode(container, hasClass("fake-full-terminal"))).toBeTruthy();
+
+    state.status = "exited";
+    await nextTick();
+    expect(findNode(container, hasClass("fake-full-terminal"))).toBeTruthy();
+    expect(nodeText(container)).toContain("exited");
+
+    const hide = findNode(container, (node) => node.type === "button" && nodeText(node) === "Hide");
+    hide.props.onClick();
+    await nextTick();
+    expect(findNode(container, hasClass("fake-full-terminal"))).toBeNull();
+    expect(closeTerminalSocket).toHaveBeenCalledTimes(1);
+    app.unmount();
+  });
+});

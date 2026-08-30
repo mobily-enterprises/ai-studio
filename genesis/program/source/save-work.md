@@ -8,6 +8,7 @@ Git commands.
 
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `packages/vibe64-sessions/src/server/service.js`
+- `src/components/studio/Vibe64TemporaryActionTerminal.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 
 ## Public contract
@@ -21,6 +22,11 @@ command output remain visible across reloads. A verified publication advances
 the session baseline and preserves any later session edits; an interrupted Save
 is reconciled only when the canonical authority proves the prepared commit was
 already published.
+
+While Save runs, the workspace shows one compact progress line. Opening its
+details reveals the bounded command history and keeps it available after Save
+finishes until hidden. A successful Save left compact disappears on completion;
+a failed Save remains visible with its recovery actions.
 
 ## Implementation map
 

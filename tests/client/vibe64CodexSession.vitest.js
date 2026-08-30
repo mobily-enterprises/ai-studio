@@ -8,9 +8,11 @@ describe("Vibe64CodexSession", () => {
   it("composes Codex behavior around the canonical terminal element", () => {
     const source = readFileSync(componentPath, "utf8");
 
-    expect(source).toContain("<Vibe64Terminal");
+    expect(source).toContain("<Vibe64InteractiveTerminal");
     expect(source).toContain("useVibe64Terminal");
     expect(source).toContain("createWebSocketTerminalDriver");
+    expect(source).toContain('@clean-exit="closeTerminal"');
+    expect(source).not.toContain(":collapsible");
     expect(source).not.toContain("codex-terminal__host");
     expect(source).not.toContain("loadXtermModules");
   });

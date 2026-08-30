@@ -651,7 +651,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     });
     view.composerDraft.value = "Please start with the routes.";
 
-    expect(view.workspaceSetupVisible.value).toBe(true);
+    expect(view.workspaceSetupRunning.value).toBe(true);
     expect(view.workspaceSetupTitle.value).toBe("Preparing workspace…");
     expect(view.workspaceSetupCurrentLabel.value).toBe("Install dependencies");
     expect(view.workspaceSetupRetryDisabled.value).toBe(true);
@@ -671,12 +671,12 @@ describe("useVibe64AutopilotView direct chat", () => {
       }
     });
 
-    expect(view.workspaceSetupVisible.value).toBe(false);
+    expect(view.workspaceSetupRunning.value).toBe(false);
     expect(view.workspaceSetupTitle.value).toBe("Workspace prepared");
     expect(view.composerHint.value).toBe("");
   });
 
-  it("keeps bounded workspace preparation output available after reload", async () => {
+  it("retains bounded workspace preparation output without showing a completed collapsed action", async () => {
     const view = await createView({
       session: {
         ...viewProps().session,
@@ -687,12 +687,11 @@ describe("useVibe64AutopilotView direct chat", () => {
       }
     });
 
-    expect(view.workspaceSetupVisible.value).toBe(true);
+    expect(view.workspaceSetupRunning.value).toBe(false);
     expect(view.workspaceSetupTitle.value).toBe("Workspace prepared");
     expect(view.workspaceSetupOutput.value).toBe(
       "Installing dependencies\nWorkspace ready"
     );
-    expect(view.workspaceSetupExpanded.value).toBe(false);
   });
 
   it("retries failed workspace preparation without blocking chat", async () => {
@@ -1082,7 +1081,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.selectSessionTool("diff")).toBe(false);
   });
 
-  it("hides the Codex-only raw terminal from OpenCode sessions", async () => {
+  it("exposes the session-owned AI terminal for OpenCode sessions", async () => {
     route.path = "/app/project/chat-test/dashboard/ai-terminal";
     const view = await createView({
       session: {
@@ -1093,10 +1092,9 @@ describe("useVibe64AutopilotView direct chat", () => {
       }
     });
 
-    expect(view.sessionToolControls.value.map((tool) => tool.id)).not.toContain("ai-terminal");
-    expect(view.selectSessionTool("ai-terminal")).toBe(false);
-    expect(view.rightPaneTab.value).toBe("dashboard");
-    expect(router.replace).toHaveBeenCalledWith("/app/project/chat-test/dashboard/env");
+    expect(view.sessionToolControls.value.map((tool) => tool.id)).toContain("ai-terminal");
+    expect(view.rightPaneTab.value).toBe("ai-terminal");
+    expect(view.selectSessionTool("ai-terminal")).toBe(true);
   });
 
   it("prefills chat from source tools", async () => {
@@ -1271,7 +1269,6 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(saveSessionWork).toHaveBeenCalledWith();
     expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(view.saveWorkConfirmOpen.value).toBe(false);
-    expect(view.saveWorkExpanded.value).toBe(false);
   });
 
   it("projects the selected session Save action only into an active configured app-bar host", async () => {
@@ -1421,7 +1418,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
   });
 
-  it("keeps the newest completed repository activity available and collapsed", async () => {
+  it("retains the newest completed repository activity without showing a collapsed action", async () => {
     const saveOperation = {
       events: [{ at: "2026-08-23T01:00:00.000Z", message: "Saved older work" }],
       status: "succeeded",
@@ -1442,12 +1439,11 @@ describe("useVibe64AutopilotView direct chat", () => {
       }
     });
 
-    expect(view.saveWorkActivityVisible.value).toBe(true);
+    expect(view.saveWorkOperationActive.value).toBe(false);
     expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
     expect(view.saveWorkActivityIsUpdate.value).toBe(true);
     expect(view.saveWorkActivityLabel.value).toBe("Update this session (rebase)");
     expect(view.saveWorkOutput.value).toContain("Session updated");
-    expect(view.saveWorkExpanded.value).toBe(false);
   });
 
   it("turns the toolbar Save action into Update when the panel monitor finds an incoming version", async () => {

@@ -50,13 +50,17 @@
           :visible="tabActive"
           @session-update="agentTerminal.sessionUpdate"
         />
-        <div v-else class="studio-ai-sessions__terminal-unavailable">
-          <strong>OpenCode is managed in the background</strong>
-          <span>
-            This session keeps its native OpenCode history through the supervised server.
-            Use the AI chat to work with it; a raw Codex terminal is not available.
-          </span>
-        </div>
+        <Vibe64OpenCodeSession
+          v-else-if="selectedAssistantEngineId === 'opencode'"
+          class="studio-ai-sessions__tab-terminal"
+          :allow-start="tabActive"
+          :display-mode="tabActive ? 'full' : 'headless'"
+          :listen-when-hidden="!tabActive && Boolean(selectedAgentTerminalId)"
+          :read-only="!tabActive"
+          :session="selection.selectedSession"
+          :visible="tabActive"
+          @session-update="agentTerminal.sessionUpdate"
+        />
       </template>
 
       <template #dashboard="dashboardSlotProps">
@@ -78,6 +82,7 @@
 import { computed } from "vue";
 import Vibe64AutopilotView from "@/components/studio/vibe64-session/Vibe64AutopilotView.vue";
 import Vibe64CodexSession from "@/components/studio/Vibe64CodexSession.vue";
+import Vibe64OpenCodeSession from "@/components/studio/Vibe64OpenCodeSession.vue";
 import Vibe64SessionDialogs from "@/components/studio/vibe64-session/Vibe64SessionDialogs.vue";
 import {
   useVibe64SessionRuntimeHost
@@ -172,7 +177,7 @@ const {
   workState
 } = useVibe64SessionRuntimeHost(props, emit);
 const selectedAssistantEngineId = computed(() => String(
-  selection.selectedSession?.assistantSelection?.engineId || "codex"
+  selection.selectedSession?.assistantSelection?.engineId || ""
 ));
 </script>
 

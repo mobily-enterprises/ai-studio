@@ -24,6 +24,13 @@ const SESSION_ID = "session-renderer";
 const TARGET_APP_URL = "http://127.0.0.1:4103/home";
 const PROXY_APP_URL = "http://127.0.0.1:49000/home";
 const TEST_ASSISTANT_CATALOG_REVISION = `sha256:${"a".repeat(64)}`;
+const PERSONAL_ASSISTANT_ACCESS = Object.freeze({
+  accessLabel: "Personal use",
+  available: true,
+  canUse: true,
+  ok: true,
+  ownerOnly: true
+});
 type SourceExplanationPayload = Record<string, unknown>;
 type SourceExplanationResponse = unknown[] | ((payload: SourceExplanationPayload) => unknown[]);
 type PreviewIdentitySelector = {
@@ -906,11 +913,12 @@ test("@preview-lifecycle Temporary AI keeps its shared upload queue across task 
   await expect.poll(() => launchSession.getAttachmentDeletes()).toEqual(["attachment-1"]);
 });
 
-test("@preview-lifecycle Codex terminal picker keeps one queue while collapsed and expanded and retries handoff", async ({ page }) => {
+test("@preview-lifecycle Codex interactive terminal keeps one attachment queue and retries handoff", async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 960 });
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {
     agentTerminalControlOutcomes: ["failure", "success"],
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
     attachmentUploadOutcomes: ["success", "failure"],
     attachmentUploadResponseDelayMs: 800,
     session: sessionPayload({
@@ -927,7 +935,9 @@ test("@preview-lifecycle Codex terminal picker keeps one queue while collapsed a
   const terminal = page.getByRole("region", { name: "Codex terminal" });
   const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
   await expect(terminal).toBeVisible();
-  await expect(terminalHost).toBeHidden();
+  await expect(terminalHost).toBeVisible();
+  await expect(terminal.getByRole("button", { name: "Expand" })).toHaveCount(0);
+  await expect(terminal.getByRole("button", { name: "Collapse" })).toHaveCount(0);
 
   const firstFileName = "terminal-handoff.bin";
   const firstFileContents = "terminal attachment handoff";
@@ -953,14 +963,7 @@ test("@preview-lifecycle Codex terminal picker keeps one queue while collapsed a
   await expect(row.getByRole("progressbar", {
     name: `Upload progress for ${firstFileName}`
   })).toBeVisible();
-  await expect(terminalHost).toBeHidden();
-  await expect(row).toBeVisible();
-  await terminal.getByRole("button", { name: "Expand" }).click();
   await expect(terminalHost).toBeVisible();
-  await expect(attachFiles).toBeVisible();
-  await expect(row).toBeVisible();
-  await terminal.getByRole("button", { name: "Collapse" }).click();
-  await expect(terminalHost).toBeHidden();
   await expect(attachFiles).toBeVisible();
   await expect(row).toBeVisible();
 
@@ -1012,11 +1015,9 @@ test("@preview-lifecycle Codex terminal picker keeps one queue while collapsed a
     .locator(".vibe64-attachment-queue__item", { hasText: secondFileName });
   await expect(terminalHost).toBeVisible();
   await expect(failedRow).toContainText("Upload failed");
-  await terminal.getByRole("button", { name: "Collapse" }).click();
-  await expect(terminalHost).toBeHidden();
   await failedRow.getByRole("button", { name: `Remove ${secondFileName}` }).click();
   await expect(terminal.getByRole("region", { name: "Message attachments" })).toHaveCount(0);
-  await expect(terminal.getByRole("button", { name: "Expand" })).toBeFocused();
+  await expect(attachFiles).toBeVisible();
 });
 
 for (const viewportWidth of [390, 1600]) {
@@ -1027,6 +1028,7 @@ for (const viewportWidth of [390, 1600]) {
     });
     await mockLaunchTerminalSocket(page);
     const launchSession = await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
       attachmentUploadResponseDelayMs: 800,
       session: sessionPayload({
         agentTerminal: {
@@ -1038,7 +1040,9 @@ for (const viewportWidth of [390, 1600]) {
     });
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/ai-terminal`);
 
-    const terminal = page.getByRole("region", { name: "Codex terminal" });
+    const terminal = page.getByRole(viewportWidth === 390 ? "dialog" : "region", {
+      name: "Codex terminal"
+    });
     const attachFiles = terminal.getByRole("button", {
       name: "Attach files to Codex terminal"
     });
@@ -1062,20 +1066,10 @@ for (const viewportWidth of [390, 1600]) {
     const attachBounds = await attachFiles.boundingBox();
     expect(attachBounds).not.toBeNull();
     expect(Number(attachBounds?.height || 0)).toBeGreaterThanOrEqual(40);
-    await terminal.getByRole("button", { name: "Expand" }).click();
-    if (viewportWidth === 390) {
-      const expandedTerminal = page.getByRole("dialog", { name: "Codex terminal" });
-      await expect(expandedTerminal.getByRole("button", {
-        name: "Attach files to Codex terminal"
-      })).toBeVisible();
-      await expandedTerminal.getByRole("button", { name: "Collapse" }).click();
-      await expect(page.getByRole("region", { name: "Codex terminal" })
-        .getByRole("button", { name: "Attach files to Codex terminal" })).toBeVisible();
-    } else {
-      await expect(attachFiles).toBeVisible();
-      await terminal.getByRole("button", { name: "Collapse" }).click();
-      await expect(attachFiles).toBeVisible();
-    }
+    await expect(terminal.locator(".vibe64-terminal-surface__host")).toBeVisible();
+    await expect(terminal.getByRole("button", { name: "Expand" })).toHaveCount(0);
+    await expect(terminal.getByRole("button", { name: "Collapse" })).toHaveCount(0);
+    await expect(attachFiles).toBeVisible();
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.scrollWidth <= window.innerWidth
     ))).toBe(true);
@@ -1093,6 +1087,7 @@ test("@preview-lifecycle Codex terminal picker keeps a 48px coarse touch target"
   try {
     await mockLaunchTerminalSocket(page);
     await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
       session: sessionPayload({
         agentTerminal: {
           commandPreview: "codex",
@@ -1104,7 +1099,7 @@ test("@preview-lifecycle Codex terminal picker keeps a 48px coarse touch target"
     await page.goto(`${BASE_URL}${DASHBOARD_PATH}/ai-terminal`);
 
     expect(await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)).toBe(true);
-    const attachFiles = page.getByRole("region", { name: "Codex terminal" })
+    const attachFiles = page.getByRole("dialog", { name: "Codex terminal" })
       .getByRole("button", { name: "Attach files to Codex terminal" });
     await expect(attachFiles).toBeVisible();
     const bounds = await attachFiles.boundingBox();
@@ -1113,6 +1108,102 @@ test("@preview-lifecycle Codex terminal picker keeps a 48px coarse touch target"
   } finally {
     await context.close();
   }
+});
+
+test("@preview-lifecycle interactive terminal is selected only by the session's immutable AI", async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1600 });
+  await mockLaunchTerminalSocket(page);
+  const baseSession = sessionPayload({
+    agentTerminal: {
+      commandPreview: "opencode attach",
+      id: "server-agent-terminal",
+      status: "running"
+    }
+  });
+  await mockLaunchSession(page, {
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+    assistantCatalog: assistantCatalogPayload({ includeOpenCode: true }),
+    session: {
+      ...baseSession,
+      agentSession: {
+        ...baseSession.agentSession,
+        providerId: "opencode",
+        transportId: "opencode_server"
+      },
+      assistantSelection: {
+        agentId: "build",
+        catalogRevision: TEST_ASSISTANT_CATALOG_REVISION,
+        engineId: "opencode",
+        modelId: "glm-5.3",
+        modelProviderId: "zai-coding-plan",
+        variantId: "high"
+      }
+    }
+  });
+
+  await page.goto(`${BASE_URL}${DASHBOARD_PATH}/ai-terminal`);
+
+  const openCodeTerminal = page.getByRole("region", { name: "OpenCode terminal" });
+  await expect(openCodeTerminal).toBeVisible();
+  await expect(openCodeTerminal.locator(".vibe64-terminal-surface__host")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Codex terminal" })).toHaveCount(0);
+});
+
+test("@preview-lifecycle temporary action output disappears only when completed while collapsed", async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1600 });
+  await mockLaunchTerminalSocket(page);
+  const session = sessionPayload();
+  session.workspaceSetup = {
+    currentLabel: "Installing dependencies",
+    status: "running",
+    transcript: "Preparing packages\nInstalling dependencies"
+  };
+  await mockLaunchSession(page, { session });
+
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+
+  const activity = page.locator(".studio-autopilot__activity");
+  const summary = activity.locator(".vibe64-temporary-action-terminal__summary");
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText("Installing dependencies");
+  expect(Number((await summary.boundingBox())?.height || 0)).toBeLessThan(64);
+  await expect(activity.locator(".vibe64-terminal-surface")).toHaveCount(0);
+
+  await activity.getByRole("button", { name: /Show Preparing workspace/u }).click();
+  const details = activity.locator(".vibe64-terminal-surface");
+  await expect(details).toBeVisible();
+  await expect(details).toContainText("Installing dependencies");
+
+  session.workspaceSetup = {
+    status: "succeeded",
+    transcript: "Workspace preparation complete"
+  };
+  session.revision += 1;
+  await page.getByRole("button", { name: "Reload chat" }).click();
+  await expect(details).toBeVisible();
+  await expect(details).toContainText("Workspace preparation complete");
+
+  await details.getByRole("button", { name: "Hide" }).click();
+  await expect(details).toHaveCount(0);
+  await expect(summary).toHaveCount(0);
+
+  session.workspaceSetup = {
+    currentLabel: "Checking packages",
+    status: "running",
+    transcript: "Checking packages"
+  };
+  session.revision += 1;
+  await page.getByRole("button", { name: "Reload chat" }).click();
+  await expect(summary).toBeVisible();
+
+  session.workspaceSetup = {
+    status: "succeeded",
+    transcript: "Workspace prepared"
+  };
+  session.revision += 1;
+  await page.getByRole("button", { name: "Reload chat" }).click();
+  await expect(summary).toHaveCount(0);
+  await expect(details).toHaveCount(0);
 });
 
 test("@preview-lifecycle address bar navigates within the preview and goes back", async ({ page }) => {
@@ -2028,13 +2119,7 @@ test("the chat cog stays a compact selector for the session's available AI", asy
     }
   };
   await mockLaunchSession(page, {
-    assistantAccess: {
-      accessLabel: "Personal use",
-      available: true,
-      canUse: true,
-      ok: true,
-      ownerOnly: true
-    },
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
     assistantCatalog: assistantCatalogPayload({ includeOpenCode: true }),
     session: selectedSession
   });
@@ -2385,7 +2470,7 @@ test("conversation messages render pipe tables", async ({ page }) => {
   expect(numericCellAlign).toBe("right");
 });
 
-test("embedded launch terminal stays collapsed until expanded and takes over mobile", async ({ page }) => {
+test("@preview-lifecycle long-running output stays hidden until opened and takes over mobile", async ({ page }) => {
   await page.setViewportSize({
     height: 844,
     width: 390
@@ -2398,19 +2483,21 @@ test("embedded launch terminal stays collapsed until expanded and takes over mob
 
   const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
   const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
-  await expect(terminal).toBeVisible();
-  await expect(terminal).toContainText("ready");
-  await expect(terminalHost).toBeHidden();
+  await expect(terminal).toHaveCount(0);
+  await page.getByRole("button", { name: "Show preview controls" }).click();
+  const showOutput = page.getByRole("button", { name: "Show run output" });
+  await expect(showOutput).toBeVisible();
 
   const bodyOverflowBefore = await page.locator("body").evaluate((element) => element.style.overflow);
   await expect.poll(() => page.locator("#app").evaluate((element) => element.inert)).toBe(false);
 
-  await terminal.getByRole("button", { name: "Expand" }).click();
+  await showOutput.click();
 
   const takeover = page.getByRole("dialog");
   await expect(takeover).toBeVisible();
   await expect(takeover).toHaveAttribute("aria-modal", "true");
   await expect(terminalHost).toBeVisible();
+  await expect(terminal).toContainText("ready");
   await expect(terminal.getByRole("button", { name: "Copy" })).toBeVisible();
   await expect.poll(() => page.locator("body").evaluate((element) => element.style.overflow)).toBe("hidden");
   await expect.poll(() => page.locator("#app").evaluate((element) => element.inert)).toBe(true);
@@ -2448,19 +2535,18 @@ test("embedded launch terminal stays collapsed until expanded and takes over mob
   expect(expandedBox?.width).toBe(390);
   expect(expandedBox?.height).toBe(844);
 
-  await terminal.getByRole("button", { name: "Collapse" }).focus();
-  await page.keyboard.press("Escape");
+  await terminal.getByRole("button", { name: "Close" }).click();
 
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(terminalHost).toBeHidden();
-  await expect(terminal.getByRole("button", { name: "Expand" })).toBeFocused();
-  await expect(terminal).toContainText("ready");
+  await expect(terminal).toHaveCount(0);
+  await page.getByRole("button", { name: "Show preview controls" }).click();
+  await expect(showOutput).toBeVisible();
   await expect.poll(() => page.locator("#app").evaluate((element) => element.inert)).toBe(false);
   await expect.poll(() => page.locator("body").evaluate((element) => element.style.overflow)).toBe(bodyOverflowBefore);
 });
 
 for (const desktopWidth of [960, 1600]) {
-  test(`embedded launch terminal remains an owner-local desktop dock at ${desktopWidth}px`, async ({ page }) => {
+  test(`@preview-lifecycle long-running output is an on-demand desktop dock at ${desktopWidth}px`, async ({ page }) => {
     await page.setViewportSize({
       height: 900,
       width: desktopWidth
@@ -2479,6 +2565,11 @@ for (const desktopWidth of [960, 1600]) {
     const previewFrame = page.locator(".vibe64-launch-controls__preview-frame");
     const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
     const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
+    const showPreviewControls = page.getByRole("button", { name: "Show preview controls" });
+    if (await showPreviewControls.isVisible()) {
+      await showPreviewControls.click();
+    }
+    const showOutput = page.getByRole("button", { name: "Show run output" });
     const readPreviewGeometry = () => preview.evaluate((element) => {
       const frame = element.querySelector(".vibe64-launch-controls__preview-frame");
       const previewBox = element.getBoundingClientRect();
@@ -2508,55 +2599,49 @@ for (const desktopWidth of [960, 1600]) {
 
     await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app"))
       .toBeVisible();
-    await expect(terminal).toHaveCount(1);
-    await expect(terminal).toBeVisible();
-    await expect(terminal).toContainText("ready");
-    await expect(terminalHost).toBeHidden();
-    await expect(terminal.locator(".xterm")).toHaveCount(0);
+    await expect(terminal).toHaveCount(0);
+    await expect(showOutput).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    expect(await terminal.evaluate((element) => element.parentElement?.classList.contains(
-      "vibe64-launch-controls__preview"
-    ))).toBe(true);
 
     const previewGeometry = await readPreviewGeometry();
-    const collapsedBox = await terminal.boundingBox();
-    expect(collapsedBox).not.toBeNull();
-    expect(collapsedBox!.height).toBeLessThan(160);
-    expect(collapsedBox!.height).toBeLessThan(previewGeometry.preview.height * 0.3);
-    expect(collapsedBox!.x).toBeGreaterThan(previewGeometry.preview.x);
-    expect(collapsedBox!.width).toBeGreaterThan(previewGeometry.preview.width * 0.7);
-    expect(collapsedBox!.x + collapsedBox!.width).toBeLessThan(
-      previewGeometry.preview.x + previewGeometry.preview.width
-    );
     expect(await previewReceivesPointerAtCenter()).toBe(true);
 
-    await terminal.getByRole("button", { name: "Expand" }).click();
+    await showOutput.click();
 
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(terminalHost).toBeVisible();
     await expect(terminal.locator(".xterm")).toHaveCount(1);
     await expect(terminal).toHaveCount(1);
+    await expect(terminal).toContainText("ready");
     const expandedBox = await terminal.boundingBox();
+    const terminalHeaderBox = await terminal.locator(".vibe64-terminal-surface__header").boundingBox();
+    const appBarBox = await page.getByTestId("jskit-shell-app-bar").boundingBox();
     expect(expandedBox).not.toBeNull();
-    expect(expandedBox!.height).toBeGreaterThan(collapsedBox!.height + 200);
+    expect(terminalHeaderBox).not.toBeNull();
+    expect(appBarBox).not.toBeNull();
+    expect(terminalHeaderBox!.y).toBeGreaterThanOrEqual(appBarBox!.y + appBarBox!.height);
+    expect(expandedBox!.height).toBeGreaterThan(320);
     expect(expandedBox!.height).toBeLessThanOrEqual(previewGeometry.preview.height);
     expect(expandedBox!.x).toBeGreaterThan(previewGeometry.preview.x);
     expect(await readPreviewGeometry()).toEqual(previewGeometry);
 
-    await terminal.getByRole("button", { name: "Collapse" }).click();
+    await terminal.getByRole("button", { name: "Close" }).click();
 
-    await expect(terminalHost).toBeHidden();
-    await expect(terminal.locator(".xterm")).toHaveCount(1);
-    await expect(terminal).toHaveCount(1);
+    await expect(terminal).toHaveCount(0);
+    if (await showPreviewControls.isVisible()) {
+      await showPreviewControls.click();
+    }
+    await expect(showOutput).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect.poll(async () => Math.round((await terminal.boundingBox())?.height || 0))
-      .toBe(Math.round(collapsedBox!.height));
     expect(await readPreviewGeometry()).toEqual(previewGeometry);
     expect(await previewReceivesPointerAtCenter()).toBe(true);
+
+    await showOutput.click();
+    await expect(terminal).toContainText("ready");
   });
 }
 
-test("embedded launch terminal errors do not push the terminal host down", async ({ page }) => {
+test("@preview-lifecycle long-running output errors do not push the terminal host down", async ({ page }) => {
   await mockLaunchTerminalSocket(page, {
     terminalErrorDelayMs: 120
   });
@@ -2564,7 +2649,7 @@ test("embedded launch terminal errors do not push the terminal host down", async
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
   const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
-  await terminal.getByRole("button", { name: "Expand" }).click();
+  await page.getByRole("button", { name: "Show run output" }).click();
 
   const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
   await expect(terminalHost).toBeVisible();
@@ -2576,7 +2661,7 @@ test("embedded launch terminal errors do not push the terminal host down", async
   expect(Math.abs(hostTopAfter - hostTopBefore)).toBeLessThan(1);
 });
 
-test("embedded launch terminal stays expanded after the launch exits", async ({ page }) => {
+test("@preview-lifecycle an opened long-running output stays open after the launch exits", async ({ page }) => {
   await mockLaunchTerminalSocket(page, {
     terminalExitCode: 1,
     terminalExitDelayMs: 120
@@ -2586,7 +2671,8 @@ test("embedded launch terminal stays expanded after the launch exits", async ({ 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
 
   const terminal = page.locator(".vibe64-launch-controls__terminal--embedded");
-  await terminal.getByRole("button", { name: "Expand" }).click();
+  await expect(terminal).toHaveCount(0);
+  await page.getByRole("button", { name: "Show run output" }).click();
   const terminalHost = terminal.locator(".vibe64-terminal-surface__host");
   await expect(terminalHost).toBeVisible();
   const hostHeightBefore = await terminalHost.evaluate((element) => element.getBoundingClientRect().height);
@@ -4092,6 +4178,14 @@ function sessionPayload({
         active: false
       },
       workdir: sourcePath
+    },
+    assistantSelection: {
+      agentId: "codex",
+      catalogRevision: TEST_ASSISTANT_CATALOG_REVISION,
+      engineId: "codex",
+      modelId: "gpt-5.6-sol",
+      modelProviderId: "openai",
+      variantId: "xhigh"
     },
     backgroundTasks: [],
     companion: {

@@ -9,6 +9,8 @@ contract transported by the project's Stack.
 - `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-genesis/src/server/index.js`
 - `packages/vibe64-genesis/src/server/workspaceSetup.js`
+- `src/components/studio/Vibe64TemporaryActionTerminal.vue`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 
 ## Public contract
 
@@ -20,3 +22,8 @@ argv with the project's resolved environment. It runs once for a fresh recipe,
 records progress and exact recipe identity, waits before dependent work, and
 exposes retry after failure. Missing or ambiguous declarations remain explicit;
 Vibe64 never guesses an installer or reads a retired grammar.
+
+During preparation, the workspace shows one compact progress line. Opening its
+details reveals the bounded transcript and keeps it available after completion
+until hidden. A successful preparation left compact disappears when it
+finishes; a failure remains visible with its recovery actions.

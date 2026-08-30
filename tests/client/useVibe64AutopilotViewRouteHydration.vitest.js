@@ -1,4 +1,4 @@
-import { nextTick, reactive } from "vue";
+import { nextTick, reactive, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const route = reactive({
@@ -145,5 +145,29 @@ describe("useVibe64AutopilotView route hydration", () => {
     await nextTick();
     expect(view.rightPaneTab.value).toBe("database");
     expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("keeps a directly routed AI terminal open while assistant access hydrates", async () => {
+    route.path = "/app/project/chat-test/dashboard/ai-terminal";
+    const accessLoading = ref(true);
+    const canUseAi = ref(false);
+    const props = viewProps();
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = useVibe64AutopilotView(props, vi.fn(), {
+      assistantAccessLoading: accessLoading,
+      assistantCanUseAi: canUseAi
+    });
+
+    expect(view.rightPaneTab.value).toBe("ai-terminal");
+    expect(router.replace).not.toHaveBeenCalled();
+
+    canUseAi.value = true;
+    accessLoading.value = false;
+    await nextTick();
+
+    expect(view.rightPaneTab.value).toBe("ai-terminal");
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });

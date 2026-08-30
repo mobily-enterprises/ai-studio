@@ -666,6 +666,10 @@ function useVibe64OutputControls({
   const autoStartKey = ref("");
   const autoStartCooldownVersion = ref(0);
   const launchStatusAttempt = ref(0);
+  const launchStatusIdleRecoveryCount = ref(0);
+  const launchStatusIdleRecoveryExhausted = computed(() => (
+    launchStatusIdleRecoveryCount.value >= LAUNCH_STATUS_IDLE_RECOVERY_LIMIT
+  ));
   const outputTargetsSettledForAutoStart = ref(false);
   const sourceOperationsResumePending = ref(false);
   let attachedTerminalId = "";
@@ -676,7 +680,6 @@ function useVibe64OutputControls({
   let launchStatusAttemptScopeKey = "";
   let launchStatusIdleRecoveryTimer = 0;
   let launchStatusIdleRecoveryScopeKey = "";
-  let launchStatusIdleRecoveryCount = 0;
 
   const selectedSession = computed(() => readRefOrGetterValue(session) || null);
   const sessionId = computed(() => String(selectedSession.value?.sessionId || ""));
@@ -1098,7 +1101,7 @@ function useVibe64OutputControls({
       return false;
     }
     if (applyDefaultDisplay) {
-      terminalExpanded.value = outputTarget.presentation?.kind !== "web";
+      terminalExpanded.value = false;
     }
     launchStarting.value = true;
     launchError.value = "";
@@ -1359,7 +1362,7 @@ function useVibe64OutputControls({
 
   function resetLaunchStatusIdleRecovery() {
     clearLaunchStatusIdleRecoveryTimer();
-    launchStatusIdleRecoveryCount = 0;
+    launchStatusIdleRecoveryCount.value = 0;
     launchStatusIdleRecoveryScopeKey = launchScopeKey.value;
   }
 
@@ -1377,15 +1380,15 @@ function useVibe64OutputControls({
     }
     if (launchStatusIdleRecoveryScopeKey !== scopeKey) {
       launchStatusIdleRecoveryScopeKey = scopeKey;
-      launchStatusIdleRecoveryCount = 0;
+      launchStatusIdleRecoveryCount.value = 0;
     }
-    if (
-      launchStatusIdleRecoveryTimer ||
-      launchStatusIdleRecoveryCount >= LAUNCH_STATUS_IDLE_RECOVERY_LIMIT
-    ) {
+    if (launchStatusIdleRecoveryTimer) {
       return;
     }
-    const delayMs = launchStatusIdleRecoveryCount === 0
+    if (launchStatusIdleRecoveryExhausted.value) {
+      return;
+    }
+    const delayMs = launchStatusIdleRecoveryCount.value === 0
       ? LAUNCH_STATUS_IDLE_RECOVERY_INITIAL_DELAY_MS
       : LAUNCH_STATUS_IDLE_RECOVERY_INTERVAL_MS;
     launchStatusIdleRecoveryTimer = window.setTimeout(() => {
@@ -1393,7 +1396,7 @@ function useVibe64OutputControls({
       if (!launchStatusIdleRecoveryNeeded.value || scopeKey !== launchScopeKey.value) {
         return;
       }
-      launchStatusIdleRecoveryCount += 1;
+      launchStatusIdleRecoveryCount.value += 1;
       void refresh({
         scopeKey
       }).catch(() => null);
@@ -1584,7 +1587,7 @@ function useVibe64OutputControls({
     }
     clearLaunchStatusIdleRecoveryTimer();
     if (!outputTargetsResource.isLoading.value) {
-      launchStatusIdleRecoveryCount = 0;
+      launchStatusIdleRecoveryCount.value = 0;
       launchStatusIdleRecoveryScopeKey = launchScopeKey.value;
     }
   }, {
@@ -1749,6 +1752,7 @@ function useVibe64OutputControls({
     launchButtonsDisabled,
     launchError,
     launchStatusAttempt,
+    launchStatusIdleRecoveryExhausted,
     launchStarting,
     outputTargets,
     outputExecution,

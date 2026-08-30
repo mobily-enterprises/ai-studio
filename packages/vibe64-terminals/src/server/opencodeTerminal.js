@@ -21,6 +21,15 @@ import {
   vibe64SessionDebugError,
   vibe64SessionDebugLog
 } from "@local/vibe64-runtime/server/sessionDebugLog";
+import {
+  closeTerminalSession,
+  closeTerminalSessionsForNamespace,
+  readTerminalSession,
+  resizeTerminalSession,
+  subscribeTerminalSession,
+  terminalNamespaceAdmissionFailure,
+  writeTerminalSessionText
+} from "@local/vibe64-execution/server/terminalSessions";
 
 import { openCodeAssistantCapabilities } from "./agent/providers/opencodeAssistantCatalog.js";
 import {
@@ -47,7 +56,11 @@ import {
   sessionRenewalSeedPrompt
 } from "./sessionRenewalHandover.js";
 import { recordSessionGitCommandActor } from "./sessionGitCommandActor.js";
-import { terminalSessionSourceRoot } from "./terminalShared.js";
+import {
+  opencodeTerminalNamespace,
+  terminalSessionSourceRoot,
+  vibe64Result
+} from "./terminalShared.js";
 
 const OPENCODE_AGENT_RUN_ID = "opencode_server";
 const OPENCODE_CATALOG_CACHE_MS = 10 * 60 * 1000;
@@ -55,6 +68,7 @@ const OPENCODE_MESSAGE_POLL_MS = 250;
 const OPENCODE_REASONING_PROGRESS_MAX_CHARS = 280;
 const OPENCODE_SESSION_PREFIX = "ses_vibe64_";
 const OPENCODE_RENEWAL_TIMEOUT_MS = 3 * 60 * 1000;
+const OPENCODE_TERMINAL_OUTPUT_SNAPSHOT_MAX_LENGTH = 256 * 1024;
 
 function text(value = "") {
   return String(value ?? "").trim();
@@ -856,6 +870,9 @@ function createOpenCodeTerminalController({
     if (!target) {
       return { exited: true };
     }
+    await closeTerminalSessionsForNamespace(
+      opencodeTerminalNamespace(target.sessionId)
+    );
     target.abortController.abort();
     if (processes.get(target.key) === target) {
       processes.delete(target.key);
@@ -996,7 +1013,103 @@ function createOpenCodeTerminalController({
         agent_transport_kind: "loopback-http"
       });
     }
-    return { ...target, upstream };
+    target.upstream = upstream;
+    return target;
+  }
+
+  function terminalSnapshot(sessionId = "", terminalSessionId = "") {
+    const id = text(terminalSessionId);
+    return id
+      ? readTerminalSession(id, {
+          namespace: opencodeTerminalNamespace(sessionId),
+          outputLimit: OPENCODE_TERMINAL_OUTPUT_SNAPSHOT_MAX_LENGTH
+        })
+      : null;
+  }
+
+  async function startTerminal(sessionId = "", input = {}, options = {}) {
+    void input;
+    return vibe64Result(async () => {
+      const context = await contextFor(sessionId, options);
+      const target = await ensureUpstreamSession(context, options);
+      const existing = terminalSnapshot(context.sessionId, target.terminalSessionId);
+      if (existing?.ok === true && existing.status !== "exited") {
+        return existing;
+      }
+      const terminal = await target.server.startAttachedTerminal({
+        metadata: {
+          engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+          sessionId: context.sessionId
+        },
+        namespace: opencodeTerminalNamespace(context.sessionId),
+        session: context.session,
+        upstreamSessionId: target.upstreamSessionId,
+        workdir: context.workdir
+      });
+      if (terminal?.ok === true && text(terminal.id)) {
+        target.terminalSessionId = text(terminal.id);
+      }
+      return terminal;
+    });
+  }
+
+  function readTerminal(sessionId = "", terminalSessionId = "") {
+    return vibe64Result(async () => terminalSnapshot(sessionId, terminalSessionId));
+  }
+
+  async function closeTerminal(sessionId = "", terminalSessionId = "") {
+    return vibe64Result(async () => {
+      const id = text(terminalSessionId);
+      const result = await closeTerminalSession(id, {
+        namespace: opencodeTerminalNamespace(sessionId)
+      });
+      for (const target of processes.values()) {
+        if (target.sessionId === sessionId && target.terminalSessionId === id) {
+          target.terminalSessionId = "";
+        }
+      }
+      return result;
+    });
+  }
+
+  function subscribeTerminal(sessionId = "", terminalSessionId = "", subscriber = null) {
+    return vibe64Result(async () => subscribeTerminalSession(terminalSessionId, subscriber, {
+      namespace: opencodeTerminalNamespace(sessionId),
+      outputLimit: OPENCODE_TERMINAL_OUTPUT_SNAPSHOT_MAX_LENGTH
+    }));
+  }
+
+  function resizeTerminal(sessionId = "", terminalSessionId = "", size = {}) {
+    return resizeTerminalSession(terminalSessionId, size, {
+      namespace: opencodeTerminalNamespace(sessionId)
+    });
+  }
+
+  async function writeTerminal(sessionId = "", terminalSessionId = "", data = "", input = {}, options = {}) {
+    const namespace = opencodeTerminalNamespace(sessionId);
+    const admissionFailure = terminalNamespaceAdmissionFailure(namespace);
+    if (admissionFailure) {
+      return admissionFailure;
+    }
+    if (input?.trackGitActor) {
+      const context = await contextFor(sessionId, options);
+      const target = processes.get(context.key);
+      const actor = await recordGitActor({
+        env,
+        overwrite: false,
+        reason: "opencode-terminal-input",
+        runtime: context.runtime,
+        session: context.session,
+        sourceRoot: terminalSessionSourceRoot(context.session),
+        threadId: target?.upstreamSessionId || upstreamSessionId(context.runtime.stateRoot, context.sessionId),
+        vibe64User: options.vibe64User || null,
+        workdir: context.workdir
+      });
+      if (actor?.ok === false) {
+        return actor;
+      }
+    }
+    return writeTerminalSessionText(terminalSessionId, data, { namespace });
   }
 
   async function publishConversationTurn(context = {}, turn = null, reason = "") {
@@ -1829,6 +1942,9 @@ function createOpenCodeTerminalController({
   async function closeAllForSession(sessionId = "", options = {}) {
     void options;
     const id = safeSessionId(sessionId);
+    const terminalClose = await closeTerminalSessionsForNamespace(
+      opencodeTerminalNamespace(id)
+    );
     const pending = [...processStarts.entries()]
       .filter(([key]) => key.endsWith(`\0${id}`))
       .map(([, start]) => start.catch(() => null));
@@ -1846,8 +1962,8 @@ function createOpenCodeTerminalController({
       }
     }
     return {
-      closed: targets.length,
-      ok: proofs.every((proof) => proof?.exited !== false),
+      closed: targets.length + Number(terminalClose?.closed || 0),
+      ok: terminalClose?.ok !== false && proofs.every((proof) => proof?.exited !== false),
       processExitProof: proofs.at(-1) || processExitProofs.get(id) || { exited: true },
       processExitProofs: proofs
     };
@@ -1884,6 +2000,7 @@ function createOpenCodeTerminalController({
     capabilities,
     closeAllForProject,
     closeAllForSession,
+    closeTerminal,
     createConversation,
     async deleteConversation(sessionId, input = {}, options = {}) {
       const { context, conversationId, target } = await existingDetachedTarget(
@@ -1977,6 +2094,7 @@ function createOpenCodeTerminalController({
       }
       return readDetachedConversation(target, conversationId);
     },
+    readTerminal,
     async reconcileSessions(sessions = [], options = {}) {
       const results = [];
       for (const session of sessions) {
@@ -2011,11 +2129,12 @@ function createOpenCodeTerminalController({
     sendMessage,
     async sessionState(sessionId, options = {}) {
       const context = await contextFor(sessionId, options);
-      const threadId = processes.get(context.key)?.upstreamSessionId ||
+      const target = processes.get(context.key);
+      const threadId = target?.upstreamSessionId ||
         upstreamSessionId(context.runtime.stateRoot, context.sessionId);
       return {
         ok: true,
-        terminal: null,
+        terminal: terminalSnapshot(context.sessionId, target?.terminalSessionId),
         thread: { id: threadId },
         turn: openCodeTurnSnapshot(turns.get(context.key), threadId),
         workdir: context.workdir
@@ -2029,6 +2148,7 @@ function createOpenCodeTerminalController({
         status: result.ok === false ? "failed" : "completed"
       };
     },
+    startTerminal,
     async stopConversation(sessionId, input = {}, options = {}) {
       const { conversationId, target } = await existingDetachedTarget(sessionId, input, options);
       if (!target) {
@@ -2038,6 +2158,7 @@ function createOpenCodeTerminalController({
       return { conversationId, ok: true, stopped: true };
     },
     streamDetachedChatTurn: runDetachedChatTurn,
+    subscribeTerminal,
     async waitForConversationTurn(sessionId, input = {}, options = {}) {
       const { conversationId, target } = await existingDetachedTarget(sessionId, input, options);
       if (!target) {
@@ -2051,7 +2172,9 @@ function createOpenCodeTerminalController({
     async waitForTurn(sessionId = "", options = {}) {
       const context = await contextFor(sessionId, options);
       return monitors.get(context.key) || openCodeTurnSnapshot(turns.get(context.key));
-    }
+    },
+    resizeTerminal,
+    writeTerminal
   });
 }
 

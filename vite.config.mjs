@@ -36,6 +36,13 @@ const clientEntry = (() => {
 })();
 
 export default defineConfig({
+  esbuild: {
+    // Work around xtermjs/xterm.js#5800: @xterm/xterm 6.0.0 ships already
+    // minified ESM that breaks when esbuild compresses and mangles it again.
+    // Remove this after that issue is fixed and Vibe64 upgrades to the fix.
+    minifyIdentifiers: false,
+    minifySyntax: false
+  },
   resolve: {
     preserveSymlinks: true,
     alias: {

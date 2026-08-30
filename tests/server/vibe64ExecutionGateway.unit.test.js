@@ -1512,6 +1512,26 @@ test("execution gateway owner-user actor resolves to the OS user home", async ()
 
 test("execution helper operation policy distinguishes account auth from GitHub workflow commands", () => {
   assert.equal(helperOperationForRequest({
+    envPolicy: "auth",
+    mode: "pty",
+    purpose: "account"
+  }), "account-auth-terminal");
+  assert.equal(helperOperationForRequest({
+    envPolicy: "auth",
+    mode: "pty",
+    purpose: "github"
+  }), "account-auth-terminal");
+  assert.equal(helperOperationForRequest({
+    envPolicy: "auth",
+    mode: "pty",
+    purpose: "assistant"
+  }), "vibe64-command");
+  assert.equal(helperOperationForRequest({
+    envPolicy: "auth",
+    mode: "pty",
+    purpose: "codex"
+  }), "vibe64-command");
+  assert.equal(helperOperationForRequest({
     purpose: "account"
   }), "account-status");
   assert.equal(helperOperationForRequest({

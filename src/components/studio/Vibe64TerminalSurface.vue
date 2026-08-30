@@ -658,6 +658,12 @@ watch(() => props.starting, (starting) => {
   display: none;
 }
 
+.vibe64-terminal-surface__overlay:not(:empty) {
+  inset: 0;
+  position: absolute;
+  z-index: 1;
+}
+
 .vibe64-terminal-surface__host {
   background: #101216;
   border-radius: 0.45rem;

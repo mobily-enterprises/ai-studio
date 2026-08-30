@@ -131,6 +131,54 @@ describe("useVibe64AssistantAccess", () => {
     scope.stop();
   });
 
+  it("keeps access pending while the active session request path hydrates", async () => {
+    const accessResource = resource();
+    accessResource.isInitialLoading.value = false;
+    accessResource.isLoading.value = false;
+    endpointMocks.resources = [accessResource, resource({
+      canManage: false,
+      ok: true,
+      suggestions: []
+    })];
+    const scope = effectScope();
+    const active = ref(true);
+    const sessionId = ref("");
+    const access = scope.run(() => useVibe64AssistantAccess({
+      active,
+      sessionId,
+      sessionsApiPath: ref("/api/vibe64/sessions")
+    }));
+
+    expect(endpointMocks.options[0].enabled.value).toBe(false);
+    expect(access.initialAccessLoading.value).toBe(true);
+
+    sessionId.value = "session-a";
+    accessResource.isInitialLoading.value = true;
+    accessResource.isLoading.value = true;
+    await nextTick();
+
+    expect(endpointMocks.options[0].enabled.value).toBe(true);
+    expect(access.initialAccessLoading.value).toBe(true);
+
+    accessResource.data.value = {
+      accessLabel: "Workspace use",
+      available: true,
+      canUse: true,
+      ok: true
+    };
+    accessResource.isInitialLoading.value = false;
+    accessResource.isLoading.value = false;
+    await nextTick();
+
+    expect(access.initialAccessLoading.value).toBe(false);
+
+    active.value = false;
+    accessResource.data.value = null;
+    await nextTick();
+    expect(access.initialAccessLoading.value).toBe(false);
+    scope.stop();
+  });
+
   it("turns a personal member's main-chat message into a suggestion only", async () => {
     endpointMocks.resources = [
       resource({

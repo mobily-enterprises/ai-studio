@@ -10,8 +10,10 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
+- `packages/vibe64-execution/src/server/engines/helperClient.js`
 - `packages/vibe64-terminals/src/server/agentCommandEnvironment.js`
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
+- `packages/vibe64-terminals/src/server/agent/providers/opencodeSessionAgentProvider.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js`
 - `packages/vibe64-terminals/src/server/opencodeServerClient.js`
@@ -22,11 +24,16 @@ including follow-up guidance while a turn is active.
 - `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
 - `src/composables/useVibe64PromptHints.js`
+- `src/components/studio/Vibe64CodexSession.vue`
+- `src/components/studio/Vibe64InteractiveTerminal.vue`
+- `src/components/studio/Vibe64OpenCodeSession.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationLog.vue`
 - `src/components/studio/vibe64-session/Vibe64PromptHints.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue`
+- `src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue`
+- `vite.config.mjs`
 
 ## Public contract
 
@@ -51,12 +58,21 @@ appearing to have completed silently.
 The chat cog opens a compact selector for the AI used by that session. It shows
 only currently connected providers and their available models, chooses a
 compatible conversation agent automatically, and offers the selected model's
-thinking choices when present. Applying a change requires a complete,
-compatible selection from the current capability catalog. People can choose
-among already connected AIs even when they cannot manage account connections;
-only people who can manage connections see the shortcut to configure more.
-Loading, retryable catalog failures, and the absence of a connected AI remain
-visible inside the selector.
+thinking choices when present. A session keeps the assistant engine that owns
+its native history: Codex cannot be changed to OpenCode or vice versa. Between
+turns, the selector may apply a complete, compatible model choice within that
+fixed engine; it cannot change the selection during an active turn. People can
+choose among already connected AIs even when they cannot manage account
+connections; only people who can manage connections see the shortcut to
+configure more. Loading, retryable catalog failures, and the absence of a
+connected AI remain visible inside the selector.
+
+The AI Terminal follows that fixed session engine without substituting another
+one: Codex sessions expose a Codex terminal and OpenCode sessions expose an
+OpenCode terminal. A person starts the interactive terminal explicitly and
+sees the complete terminal rather than a collapsed status line. Closing it
+terminates and hides the terminal, and a clean terminal exit such as Ctrl-D
+hides it without affecting the durable conversation.
 
 Open sessions in one workspace share a single running Codex service and a
 single running OpenCode service according to the assistant each session has
@@ -141,3 +157,15 @@ replacement key.
   ownership. The broker environment applies the same desktop message-bus
   exclusion so a session-owned descendant remains inside its managed execution
   scope.
+- `Vibe64SessionRuntimeHost` selects exactly one interactive terminal from the
+  session's immutable engine id and has no cross-engine fallback.
+- `startAttachedTerminal()` attaches OpenCode's native TUI to the session's
+  existing upstream history in a session-owned PTY. The OpenCode controller
+  owns its bounded snapshot, stream, input, resize, close, and session cleanup;
+  ordinary input transport does not repeat assistant-selection authorization.
+- `helperOperationForRequest()` keeps assistant PTYs on the project command
+  policy instead of the home-only account-login policy.
+- `vite.config.mjs` temporarily preserves xterm identifiers and syntax because
+  re-minifying xterm 6.0.0 breaks terminal query parsing under
+  xtermjs/xterm.js#5800. Remove the workaround after Vibe64 upgrades to a fixed
+  xterm release.

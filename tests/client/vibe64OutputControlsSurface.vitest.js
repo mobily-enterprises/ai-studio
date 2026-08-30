@@ -140,6 +140,13 @@ describe("Vibe64 launch controls surface", () => {
     expect(launchPreviewEmptyText()).toBe("Preview will appear here when it is ready.");
   });
 
+  it("explains an idle preview after output discovery proves there is nothing to run", () => {
+    expect(launchPreviewEmptyText({
+      outputTargetsUnavailable: true,
+      previewMessage: "Run an output target first."
+    })).toBe("This project does not declare an application output.");
+  });
+
   it("surfaces a manual start state when an embedded target can be launched", () => {
     expect(launchPreviewEmptyText({
       previewManualStartAvailable: true

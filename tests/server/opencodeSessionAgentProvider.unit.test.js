@@ -135,3 +135,61 @@ test("OpenCode provider advertises and audits its helper execution profile on tu
   assert.deepEqual(result.executionProfile, profile);
   assert.deepEqual(streamed.executionProfile, profile);
 });
+
+test("OpenCode provider routes the complete interactive terminal lifecycle", async () => {
+  const calls = [];
+  const controller = Object.fromEntries([
+    "closeTerminal",
+    "readTerminal",
+    "resizeTerminal",
+    "startTerminal",
+    "subscribeTerminal",
+    "writeTerminal"
+  ].map((name) => [name, async (...args) => {
+    calls.push({ args, name });
+    return { name, ok: true };
+  }]));
+  const provider = createOpenCodeSessionAgentProvider({ controller });
+  const context = {
+    runtime: { stateRoot: "/runtime" },
+    session: { sessionId: "session-1" },
+    sessionId: "session-1",
+    vibe64User: { username: "ada" }
+  };
+  const subscriber = () => null;
+
+  await provider.startTerminal(context, { cols: 100 });
+  await provider.readTerminal(context, { terminalSessionId: "terminal-1" });
+  await provider.resizeTerminal(context, {
+    size: { cols: 120, rows: 40 },
+    terminalSessionId: "terminal-1"
+  });
+  await provider.subscribeTerminal(context, {
+    subscriber,
+    terminalSessionId: "terminal-1"
+  });
+  await provider.writeTerminal(context, {
+    data: "help\r",
+    input: { trackGitActor: true },
+    terminalSessionId: "terminal-1"
+  });
+  await provider.closeTerminal(context, { terminalSessionId: "terminal-1" });
+
+  assert.deepEqual(calls.map((call) => call.name), [
+    "startTerminal",
+    "readTerminal",
+    "resizeTerminal",
+    "subscribeTerminal",
+    "writeTerminal",
+    "closeTerminal"
+  ]);
+  assert.deepEqual(calls[0].args.slice(0, 2), ["session-1", { cols: 100 }]);
+  assert.equal(calls[0].args[2].vibe64User.username, "ada");
+  assert.deepEqual(calls[4].args.slice(0, 4), [
+    "session-1",
+    "terminal-1",
+    "help\r",
+    { trackGitActor: true }
+  ]);
+  assert.equal(calls[4].args[4].vibe64User.username, "ada");
+});

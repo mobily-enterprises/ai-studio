@@ -356,8 +356,16 @@ async function createOpenCodeServerProcess({
   });
   let processHandle = null;
   let stopPromise = null;
+  let processEnv = null;
 
   const logPath = path.join(normalizedPrivateRoot, "opencode-server.log");
+  const credentialHome = Object.freeze({
+    cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : path.join(normalizedPrivateRoot, "cache"),
+    configRoot: path.join(normalizedPrivateRoot, "config"),
+    dataRoot: path.join(normalizedPrivateRoot, "data"),
+    home: path.join(normalizedPrivateRoot, "home"),
+    stateRoot: path.join(normalizedPrivateRoot, "state")
+  });
 
   function readLogs() {
     let descriptor = null;
@@ -402,7 +410,7 @@ async function createOpenCodeServerProcess({
   }
 
   try {
-    const processEnv = safeOpenCodeEnvironment(env, {
+    processEnv = safeOpenCodeEnvironment(env, {
       cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : "",
       canonicalUrl,
       dbPath: normalizedDbPath,
@@ -432,13 +440,7 @@ async function createOpenCodeServerProcess({
       ],
       baseEnv: processEnv,
       command: "/bin/sh",
-      credentialHome: {
-        cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : path.join(normalizedPrivateRoot, "cache"),
-        configRoot: path.join(normalizedPrivateRoot, "config"),
-        dataRoot: path.join(normalizedPrivateRoot, "data"),
-        home: path.join(normalizedPrivateRoot, "home"),
-        stateRoot: path.join(normalizedPrivateRoot, "state")
-      },
+      credentialHome,
       cwd: normalizedWorkdir,
       envPolicy: "auth",
       execution: {
@@ -520,6 +522,62 @@ async function createOpenCodeServerProcess({
       privateRoot: normalizedPrivateRoot,
       readLogs() {
         return readLogs();
+      },
+      async startAttachedTerminal({
+        metadata = {},
+        namespace = "",
+        session = {},
+        upstreamSessionId = "",
+        workdir: terminalWorkdir = ""
+      } = {}) {
+        const directory = path.resolve(text(terminalWorkdir));
+        const attachedSessionId = text(upstreamSessionId);
+        if (!text(terminalWorkdir) || !attachedSessionId || !text(namespace)) {
+          throw new TypeError("OpenCode attached terminals require a directory, session, and namespace.");
+        }
+        return commandRunner({
+          actor: "app",
+          allowedRoots: [directory, normalizedWorkdir],
+          args: [
+            "attach",
+            `http://${OPENCODE_HOST}:${selectedPort}`,
+            "--dir",
+            directory,
+            "--session",
+            attachedSessionId,
+            "--pure"
+          ],
+          baseEnv: processEnv,
+          command: text(command) || "opencode",
+          credentialHome,
+          cwd: directory,
+          envPolicy: "auth",
+          execution: {
+            kind: "terminal",
+            label: "OpenCode terminal",
+            lifecycle: "interactive",
+            operationId: "opencode-terminal",
+            ownerId: text(session?.sessionId || session?.id),
+            sessionId: text(session?.sessionId || session?.id)
+          },
+          inheritProcessEnv: false,
+          mode: "pty",
+          project: {
+            sourceRoot: directory
+          },
+          purpose: "assistant",
+          session,
+          terminal: {
+            commandPreview: "opencode attach",
+            maxRunning: 1,
+            metadata: {
+              ...metadata,
+              upstreamSessionId: attachedSessionId
+            },
+            namespace,
+            reuseRunning: true
+          }
+        });
       },
       stop,
       workdir: normalizedWorkdir
