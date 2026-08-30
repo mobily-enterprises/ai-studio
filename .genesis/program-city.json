@@ -380,13 +380,21 @@
       "implementationMap": "",
       "name": "genesis-context",
       "path": "genesis/program/understanding/genesis-context.md",
-      "publicContract": "New projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance. People can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Task guidance names Genesis operations without\nassuming a machine-global executable and uses the repository's pinned Genesis\npackage. A person's first City visit in a browser gives\ndismissible guidance for trackpad, mouse, and keyboard movement, rotation, and\nzoom. Exploring the City does not create or submit an assistant prompt. Routine\nautomatic follow-ups that produce no result remain hidden, but an explicitly\nrequested final user-facing summary is preserved even though it changes no\nfiles. Vibe64 displays only Genesis documents and does not infer a parallel\narchitecture.",
+      "publicContract": "New projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance. People can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Task guidance names Genesis operations without\nassuming a machine-global executable. Managed agent command environments expose\nVibe64's bundled, pinned Genesis command and Stack catalog; projects that pin\ntheir own Genesis compiler continue to invoke that local version explicitly. A\nperson's first City visit in a browser gives\ndismissible guidance for trackpad, mouse, and keyboard movement, rotation, and\nzoom. Exploring the City does not create or submit an assistant prompt. Routine\nautomatic follow-ups that produce no result remain hidden, but an explicitly\nrequested final user-facing summary is preserved even though it changes no\nfiles. Vibe64 displays only Genesis documents and does not infer a parallel\narchitecture.",
       "sourceFileIds": [
+        "file:packages/studio-terminal-core/src/server/codexRuntimeContext.js",
+        "file:packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
+        "file:packages/vibe64-terminals/src/server/agentSessionCommand.js",
+        "file:packages/vibe64-terminals/src/server/codexTerminal.js",
         "file:packages/vibe64-genesis/src/server/index.js",
         "file:packages/vibe64-system-graph/src/server/service.js",
         "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
       ],
       "sources": [
+        "packages/studio-terminal-core/src/server/codexRuntimeContext.js",
+        "packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
+        "packages/vibe64-terminals/src/server/agentSessionCommand.js",
+        "packages/vibe64-terminals/src/server/codexTerminal.js",
         "packages/vibe64-genesis/src/server/index.js",
         "packages/vibe64-system-graph/src/server/service.js",
         "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
@@ -901,6 +909,26 @@
     {
       "fromId": "operation:understanding/genesis-context",
       "kind": "implemented-by",
+      "toId": "file:packages/studio-terminal-core/src/server/codexRuntimeContext.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/agentCommandEnvironment.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/agentSessionCommand.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-terminals/src/server/codexTerminal.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-genesis/src/server/index.js"
     },
     {
@@ -914,7 +942,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:4a7c7dee8aa41bf0f9b4f1a82cb7ad6680d3f03828d615bcdd8ed3e7f4a18ce7",
+  "programHash": "sha256:3403f225b871f42957b27ad3e245bc184730c5068598d4048fbd92170328b81b",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"
