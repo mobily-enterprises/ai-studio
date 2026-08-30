@@ -1555,21 +1555,24 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
   }
   if (operation === "codex-app-server" || operation === "opencode-app-server") {
     const resolved = path.resolve(normalized);
-    const runtimeRoot = path.join(
-      managedExecutionRuntimeBase({ username: ownerUsername }),
-      "vibe64",
-      "agent-providers"
-    );
-    const parts = relativePathParts(runtimeRoot, resolved);
-    const providerRoot = parts[0];
-    const allowedProviderRoot = operation === "opencode-app-server"
-      ? providerRoot === "opencode"
-      : providerRoot === "codex-app-server" ||
-        /^codex-app-server-[a-f0-9]{12}$/u.test(providerRoot);
-    const exactCodexRoot = operation === "codex-app-server" && parts.length === 1;
-    const exactProviderWorkspace = parts.length === 2 && parts[1] === "workspace";
-    if (allowedProviderRoot && (exactCodexRoot || exactProviderWorkspace)) {
-      return resolved;
+    const targetUid = Number(targetUser.uid);
+    const runtimeBases = [managedExecutionRuntimeBase({ username: ownerUsername })];
+    if (Number.isSafeInteger(targetUid) && targetUid >= 0) {
+      runtimeBases.push(path.join("/run/user", String(targetUid)));
+    }
+    for (const runtimeBase of runtimeBases) {
+      const runtimeRoot = path.join(runtimeBase, "vibe64", "agent-providers");
+      const parts = relativePathParts(runtimeRoot, resolved);
+      const providerRoot = parts[0];
+      const allowedProviderRoot = operation === "opencode-app-server"
+        ? providerRoot === "opencode"
+        : providerRoot === "codex-app-server" ||
+          /^codex-app-server-[a-f0-9]{12}$/u.test(providerRoot);
+      const exactCodexRoot = operation === "codex-app-server" && parts.length === 1;
+      const exactProviderWorkspace = parts.length === 2 && parts[1] === "workspace";
+      if (allowedProviderRoot && (exactCodexRoot || exactProviderWorkspace)) {
+        return resolved;
+      }
     }
   }
   return resolveAllowedProjectPath(normalized, ownerUsername);
