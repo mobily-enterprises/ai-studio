@@ -3141,7 +3141,7 @@ test("an active chat keeps its provider across environment changes until the nex
     assert.equal(providers.length, 1);
     assert.equal(providers[0].options.threadEnv.PROVIDER_OWNERSHIP_VERSION, "one");
     assert.equal(
-      providers[0].options.threadEnv.PATH.split(":").includes(genesisCommandShimDirectory()),
+      providers[0].options.threadEnv.PATH.split(path.delimiter).includes(genesisCommandShimDirectory()),
       true
     );
     assert.match(

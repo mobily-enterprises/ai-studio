@@ -111,12 +111,12 @@ async function prepareAgentSessionCommandEnvironment({
   if (unavailable) {
     throw commandBoundaryError(unavailable.name);
   }
-  const shimDirs = withGenesisCommandShim([text(git.hostWrapperDir)]);
+  const hostWrapperDir = text(git.hostWrapperDir);
   return {
     env: Object.assign({}, ...steps.map((step) => record(step.result?.env))),
-    hostWrapperDir: text(git.hostWrapperDir),
+    hostWrapperDir,
     ok: true,
-    shimDirs
+    shimDirs: withGenesisCommandShim([hostWrapperDir])
   };
 }
 
