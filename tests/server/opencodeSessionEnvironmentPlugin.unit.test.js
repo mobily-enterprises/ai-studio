@@ -16,6 +16,25 @@ function paddedWrappedCommand(wrapperPath, command) {
   return `'${wrapperPath}' '${Buffer.from(command, "utf8").toString("base64")}'`;
 }
 
+test("OpenCode raises output only for models with an advertised output limit", async () => {
+  const plugin = await Vibe64SessionEnvironment();
+  for (const [advertisedOutputTokenLimit, expectedOutputTokens] of [
+    [131_072, 131_072],
+    [65_536, 65_536],
+    [16_384, 16_384],
+    [0, 32_000],
+    [undefined, 32_000]
+  ]) {
+    const output = { maxOutputTokens: 131_072 };
+    await plugin["chat.params"]({
+      model: {
+        limit: { output: advertisedOutputTokenLimit }
+      }
+    }, output);
+    assert.equal(output.maxOutputTokens, expectedOutputTokens);
+  }
+});
+
 test("OpenCode binds shell commands once and hides the session wrapper from model history", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-session-environment-"));
   const registryPath = path.join(temporaryRoot, "sessions.json");

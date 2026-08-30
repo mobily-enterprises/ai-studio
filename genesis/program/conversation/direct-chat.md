@@ -59,14 +59,22 @@ appearing to have completed silently.
 The chat cog opens a compact selector for the AI used by that session. It shows
 only currently connected providers and their available models, chooses a
 compatible conversation agent automatically, and offers the selected model's
-thinking choices when present. A session keeps the assistant engine that owns
-its native history: Codex cannot be changed to OpenCode or vice versa. Between
-turns, the selector may apply a complete, compatible model choice within that
-fixed engine; it cannot change the selection during an active turn. People can
-choose among already connected AIs even when they cannot manage account
-connections; only people who can manage connections see the shortcut to
-configure more. Loading, retryable catalog failures, and the absence of a
-connected AI remain visible inside the selector.
+thinking choices when present. A provider-default thinking choice delegates
+that setting to the provider instead of substituting another listed choice. A
+session keeps the assistant engine that owns its native history: Codex cannot
+be changed to OpenCode or vice versa. Between turns, the selector may apply a
+complete, compatible model choice within that fixed engine; it cannot change
+the selection during an active turn. People can choose among already connected
+AIs even when they cannot manage account connections; only people who can
+manage connections see the shortcut to configure more. Loading, retryable
+catalog failures, and the absence of a connected AI remain visible inside the
+selector.
+
+Managed OpenCode requests allow up to 128K output tokens only when the selected
+model advertises that capacity. A smaller advertised output limit remains
+authoritative, while a missing or invalid limit retains OpenCode's 32K
+fallback. OpenCode uses the same managed ceiling when reserving context for the
+response and deciding when to compact the conversation.
 
 The AI Terminal follows that fixed session engine without substituting another
 one: Codex sessions expose a Codex terminal and OpenCode sessions expose an
@@ -135,7 +143,8 @@ replacement key.
 - `safeOpenCodeEnvironment()` disables project configuration and default
   plugins while loading Vibe64's single trusted session-environment plugin,
   so the shared service can route commands through the authenticated session
-  boundary without executing arbitrary project plugins.
+  boundary without executing arbitrary project plugins. It raises OpenCode's
+  response and compaction ceiling only alongside that trusted plugin.
 - `readOpenCodeCatalog()` gives a bounded cold catalogue read the configured
   provider routes and an isolated temporary OpenCode credential store. This
   lets endpoint-specific providers expose their native model definitions while
@@ -145,7 +154,9 @@ replacement key.
   Vibe64's transport wrapper in the model-facing instructions and history. At
   execution it recognizes only canonical invocations of the session's exact
   trusted wrapper, removes any repeated copies, and applies that wrapper once;
-  persisted provider history remains unchanged.
+  persisted provider history remains unchanged. It also clamps the raised
+  response allowance to the selected model's advertised output limit and
+  restores the 32K fallback when no valid limit is advertised.
 - OpenCode's turn monitor detects a successful provider result with no text,
   queues one tool-free request for the missing final response, and records an
   explicit failure if that bounded recovery also returns no text.

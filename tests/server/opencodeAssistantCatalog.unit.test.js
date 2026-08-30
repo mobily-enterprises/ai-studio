@@ -167,7 +167,7 @@ test("OpenCode catalog requires reconfirmation when a live provider definition c
     agentId: "build",
     modelId: "deepseek-model-01",
     modelProviderId: "deepseek",
-    variantId: "high"
+    variantId: ""
   });
 
   const changedProviderResult = {

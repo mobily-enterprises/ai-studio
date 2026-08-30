@@ -158,6 +158,7 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
   assert.equal(env.OPENCODE_DB, "/state/opencode.sqlite");
   assert.equal(env.OPENCODE_SERVER_PASSWORD, "loopback-password");
   assert.equal(env.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
+  assert.equal(env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX, "131072");
   assert.equal(env.OPENCODE_PURE, undefined);
   assert.equal(
     env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY,
@@ -219,6 +220,7 @@ test("OpenCode route configuration contains one provider and no inherited provid
     config.provider["zai-coding-plan"].options.baseURL,
     "https://api.z.ai/api/coding/paas/v4"
   );
+  assert.equal(env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX, undefined);
   for (const name of [
     "ANTHROPIC_API_KEY",
     "DEEPSEEK_API_KEY",

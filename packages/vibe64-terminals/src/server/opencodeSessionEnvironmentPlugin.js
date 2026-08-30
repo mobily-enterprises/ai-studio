@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+const OPENCODE_UNDECLARED_OUTPUT_TOKEN_MAX = 32_000;
+
 function text(value = "") {
   return String(value ?? "").trim();
 }
@@ -91,6 +93,20 @@ function sessionCommand(command = "", selected = null) {
 }
 
 export const Vibe64SessionEnvironment = async () => ({
+  "chat.params": async (input = {}, output = {}) => {
+    const advertisedOutputTokenLimit = input.model?.limit?.output;
+    const supportedOutputTokenLimit = (
+      Number.isSafeInteger(advertisedOutputTokenLimit) && advertisedOutputTokenLimit > 0
+    )
+      ? advertisedOutputTokenLimit
+      : OPENCODE_UNDECLARED_OUTPUT_TOKEN_MAX;
+    if (
+      Number.isSafeInteger(output.maxOutputTokens) &&
+      output.maxOutputTokens > supportedOutputTokenLimit
+    ) {
+      output.maxOutputTokens = supportedOutputTokenLimit;
+    }
+  },
   "experimental.chat.system.transform": async (input = {}, output = {}) => {
     const selected = await sessionEnvironmentForUpstreamSession(
       input.sessionID || input.sessionId

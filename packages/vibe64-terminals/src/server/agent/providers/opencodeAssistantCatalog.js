@@ -240,7 +240,7 @@ function openCodeAssistantCapabilities({
       agentId: defaultAgent?.id || "",
       modelId: defaultModel?.id || "",
       modelProviderId: defaultProvider?.id || "",
-      variantId: defaultAgent?.variantId || defaultModel?.variants?.[0]?.id || ""
+      variantId: defaultAgent?.variantId || ""
     },
     engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
     health: {

@@ -12,7 +12,11 @@ work ends with one concise, useful account of what happened.
 
 The chat selector stays focused on choosing among AIs that are already
 configured and available. Workspace owners manage AI accounts and add further
-connections in the separate account-management area.
+connections in the separate account-management area. Leaving a model's
+thinking choice at its provider default leaves that choice to the provider
+instead of silently selecting another listed option. Vibe64 also respects each
+AI's declared response capacity rather than assuming every model can produce
+the same size answer.
 
 Every project has exactly one source authority. For a GitHub-connected project,
 the configured GitHub branch is authoritative. For a hosted Vibe64-only

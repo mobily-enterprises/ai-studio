@@ -25,6 +25,7 @@ const OPENCODE_ECONOMY_AGENT_ID = "vibe64-economy";
 const OPENCODE_HOST = "127.0.0.1";
 const OPENCODE_LOG_LIMIT_BYTES = 64 * 1024;
 const OPENCODE_CATALOG_LIMIT_BYTES = 32 * 1024 * 1024;
+const OPENCODE_MANAGED_OUTPUT_TOKEN_MAX = 128 * 1024;
 const OPENCODE_CATALOG_TIMEOUT_MS = 30_000;
 const OPENCODE_READY_TIMEOUT_MS = 30_000;
 const OPENCODE_STOP_TIMEOUT_MS = 3_000;
@@ -246,7 +247,10 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
       OPENCODE_SERVER_PASSWORD: password,
       OPENCODE_SERVER_USERNAME: "opencode",
       ...(text(sessionEnvironmentRegistry)
-        ? { VIBE64_OPENCODE_SESSION_ENV_REGISTRY: path.resolve(sessionEnvironmentRegistry) }
+        ? {
+            OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(OPENCODE_MANAGED_OUTPUT_TOKEN_MAX),
+            VIBE64_OPENCODE_SESSION_ENV_REGISTRY: path.resolve(sessionEnvironmentRegistry)
+          }
         : {})
     },
     homeRoot,
