@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   PROJECT_REPOSITORY_MODE_GITHUB,
@@ -32,6 +33,10 @@ const INCOMING_VERSION_LIMIT = 5;
 const SIBLING_ADVISORY_DETAIL_LIMIT = 4;
 const SIBLING_ADVISORY_PATH_LIMIT = 20;
 const SESSION_WORK_COMMAND_SCOPE = Symbol("vibe64-session-work-command-scope");
+const SESSION_WORK_OPERATION_COMMAND_PATH = fileURLToPath(new URL(
+  "./sessionWorkOperationCommand.js",
+  import.meta.url
+));
 
 function text(value = "") {
   return String(value || "").trim();
@@ -195,6 +200,110 @@ async function saveCommand(runCommand, context, command, args, {
     timeout: SAVE_TIMEOUT_MS,
     ...commandOptions
   });
+}
+
+function sessionWorkOperationProject(context, project = {}) {
+  const projectSlug = text(project.slug || project.projectSlug);
+  return {
+    ...(context.mode === PROJECT_REPOSITORY_MODE_GITHUB
+      ? { githubRepository: { cloneUrl: context.remoteUrl } }
+      : {}),
+    ...(context.mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT
+      ? { canonicalRepositoryPath: context.remoteUrl }
+      : {}),
+    ...(context.mode === PROJECT_REPOSITORY_MODE_LOCAL_SOURCE
+      ? { sourceRoot: context.standaloneSourceRoot }
+      : {}),
+    ownerUserKey: text(project.ownerUserKey || project.githubRepository?.owner),
+    projectSlug,
+    repository: {
+      defaultBranch: context.branch,
+      mode: context.mode,
+      ...(context.mode === PROJECT_REPOSITORY_MODE_GITHUB
+        ? { github: { cloneUrl: context.remoteUrl } }
+        : {})
+    },
+    repositoryMode: context.mode,
+    slug: projectSlug
+  };
+}
+
+function sessionWorkOperationSession(context) {
+  return {
+    metadata: {
+      base_branch: context.branch,
+      base_commit: context.baseCommit,
+      canonical_commit: context.lastCanonicalCommit,
+      source_path: context.worktreePath,
+      source_remote_url: context.remoteUrl
+    },
+    sessionId: context.sessionId,
+    sourcePath: context.worktreePath
+  };
+}
+
+async function runSessionWorkOperation({
+  commandOptions = {},
+  context,
+  input = {},
+  label,
+  operation,
+  operationId = crypto.randomUUID(),
+  project = {},
+  runCommand
+}) {
+  const scopedRunCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label,
+    operationId
+  });
+  const result = await saveCommand(
+    scopedRunCommand,
+    context,
+    "node",
+    [SESSION_WORK_OPERATION_COMMAND_PATH],
+    {
+      additionalAllowedRoots: [path.dirname(SESSION_WORK_OPERATION_COMMAND_PATH)],
+      commandOptions: {
+        ...commandOptions,
+        runtimes: [
+          "node26",
+          "git",
+          ...(commandOptions.gitTransport === "github-https" ? ["gh"] : [])
+        ]
+      },
+      input: JSON.stringify({
+        input: {
+          ...input,
+          operationId,
+          project: sessionWorkOperationProject(context, project),
+          session: sessionWorkOperationSession(context)
+        },
+        operation
+      }),
+      project
+    }
+  );
+  const serialized = String(result?.stdout || result?.output || "").trim();
+  let response = null;
+  try {
+    response = JSON.parse(serialized);
+  } catch {
+    // The managed command result below carries the useful execution failure.
+  }
+  if (response?.ok === true) {
+    return response.value;
+  }
+  if (response?.error) {
+    throw saveError(
+      response.error.message,
+      response.error.code || "vibe64_session_work_operation_failed",
+      response.error.details
+    );
+  }
+  throw saveError(
+    text(result?.stderr || result?.error || result?.output) || "Session repository inspection failed.",
+    text(result?.code) || "vibe64_session_work_operation_failed"
+  );
 }
 
 async function git(runCommand, context, args, {
@@ -490,7 +599,7 @@ function safeChangePath(value = "") {
   return normalized;
 }
 
-async function inspectSessionChanges({
+async function inspectSessionChangesDirect({
   commandOptions = {},
   derivedArtifactPaths = [],
   limit = DEFAULT_CHANGE_FILE_LIMIT,
@@ -503,7 +612,7 @@ async function inspectSessionChanges({
   runCommand = scopedSessionWorkCommand(runCommand, context, project, {
     label: "Inspecting session changes"
   });
-  const work = await inspectSessionWork({
+  const work = await inspectSessionWorkDirect({
     commandOptions,
     derivedArtifactPaths,
     project,
@@ -529,7 +638,7 @@ async function inspectSessionChanges({
   };
 }
 
-async function inspectSessionChangeDiff({
+async function inspectSessionChangeDiffDirect({
   commandOptions = {},
   derivedArtifactPaths = [],
   lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
@@ -543,7 +652,7 @@ async function inspectSessionChangeDiff({
   runCommand = scopedSessionWorkCommand(runCommand, context, project, {
     label: "Inspecting a session change"
   });
-  const work = await inspectSessionWork({
+  const work = await inspectSessionWorkDirect({
     commandOptions,
     derivedArtifactPaths,
     project,
@@ -582,7 +691,7 @@ async function inspectSessionChangeDiff({
   };
 }
 
-async function inspectSessionWork({
+async function inspectSessionWorkDirect({
   commandOptions = {},
   derivedArtifactPaths = [],
   project = {},
@@ -683,6 +792,71 @@ async function inspectSessionWork({
     worktreeTopLevel,
     worktreePath: context.worktreePath
   };
+}
+
+async function inspectSessionWork({
+  commandOptions = {},
+  derivedArtifactPaths = [],
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  return runSessionWorkOperation({
+    commandOptions,
+    context,
+    input: { derivedArtifactPaths },
+    label: "Inspecting session work",
+    operation: "work",
+    project,
+    runCommand
+  });
+}
+
+async function inspectSessionChanges({
+  commandOptions = {},
+  derivedArtifactPaths = [],
+  limit = DEFAULT_CHANGE_FILE_LIMIT,
+  offset = 0,
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  return runSessionWorkOperation({
+    commandOptions,
+    context,
+    input: { derivedArtifactPaths, limit, offset },
+    label: "Inspecting session changes",
+    operation: "changes",
+    project,
+    runCommand
+  });
+}
+
+async function inspectSessionChangeDiff({
+  commandOptions = {},
+  derivedArtifactPaths = [],
+  lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
+  path: requestedPath = "",
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  return runSessionWorkOperation({
+    commandOptions,
+    context,
+    input: {
+      derivedArtifactPaths,
+      lineLimit,
+      path: safeChangePath(requestedPath)
+    },
+    label: "Inspecting a session change",
+    operation: "change-diff",
+    project,
+    runCommand
+  });
 }
 
 async function assertBranch(runCommand, context, options) {
@@ -1338,6 +1512,94 @@ async function currentCanonicalCommit(runCommand, context, operationId, options)
   return readCanonical(runCommand, context, operationId, options);
 }
 
+async function checkSessionUpdatesDirect({
+  commandOptions = {},
+  operationId = crypto.randomUUID(),
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Checking repository for updates",
+    operationId
+  });
+  await assertBranch(runCommand, context, { commandOptions, project });
+  const canonicalCommit = await currentCanonicalCommit(
+    runCommand,
+    context,
+    operationId,
+    { commandOptions, project }
+  );
+  const [sessionHead, worktreeTree] = await Promise.all([
+    gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD^{commit}"], {
+      commandOptions,
+      project
+    }),
+    writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      project: commandProject(context, project),
+      runCommand,
+      worktreePath: context.worktreePath
+    })
+  ]);
+  const ancestor = await git(runCommand, context, [
+    "merge-base",
+    "--is-ancestor",
+    context.baseCommit,
+    canonicalCommit
+  ], {
+    commandOptions,
+    project,
+    required: false
+  });
+  if (ancestor?.ok !== true) {
+    throw saveError(
+      "The saved project history no longer descends from this session's starting version.",
+      "vibe64_session_update_history_diverged"
+    );
+  }
+  const [ahead, behind, canonicalInSession, canonicalTree] = await Promise.all([
+    countCommitsBetween(runCommand, context, canonicalCommit, sessionHead, {
+      commandOptions,
+      project
+    }),
+    countCommitsBetween(runCommand, context, sessionHead, canonicalCommit, {
+      commandOptions,
+      project
+    }),
+    commitIsAncestor(runCommand, context, canonicalCommit, sessionHead, {
+      commandOptions,
+      project
+    }),
+    commitTree(runCommand, context, canonicalCommit, { commandOptions, project })
+  ]);
+  const relationship = repositoryUpdateRelationship(ahead, behind);
+  const incoming = behind > 0
+    ? await incomingVersionsBetween(runCommand, context, sessionHead, canonicalCommit, {
+        commandOptions,
+        project
+      })
+    : { incomingVersions: [], incomingVersionsTruncated: false };
+  return {
+    ahead,
+    baseCommit: context.baseCommit,
+    behind,
+    canonicalCommit,
+    ...incoming,
+    ok: true,
+    operationId,
+    reconciled: canonicalInSession,
+    repositoryMode: context.mode,
+    relationship,
+    sessionCurrent: canonicalInSession,
+    sessionHead,
+    sessionMatchesCanonical: worktreeTree === canonicalTree,
+    updateAvailable: !canonicalInSession,
+    updateStrategy: repositoryUpdateStrategy(relationship)
+  };
+}
+
 async function checkSessionUpdates({
   commandOptions = {},
   operationId = crypto.randomUUID(),
@@ -1347,86 +1609,15 @@ async function checkSessionUpdates({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
-  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+  return runProjectSourceExclusive(() => runSessionWorkOperation({
+    commandOptions,
+    context,
     label: "Checking repository for updates",
-    operationId
-  });
-  return runProjectSourceExclusive(async () => {
-    await assertBranch(runCommand, context, { commandOptions, project });
-    const canonicalCommit = await currentCanonicalCommit(
-      runCommand,
-      context,
-      operationId,
-      { commandOptions, project }
-    );
-    const [sessionHead, worktreeTree] = await Promise.all([
-      gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD^{commit}"], {
-        commandOptions,
-        project
-      }),
-      writeGitWorktreeTree({
-        baseCommit: "HEAD",
-        project: commandProject(context, project),
-        runCommand,
-        worktreePath: context.worktreePath
-      })
-    ]);
-    const ancestor = await git(runCommand, context, [
-      "merge-base",
-      "--is-ancestor",
-      context.baseCommit,
-      canonicalCommit
-    ], {
-      commandOptions,
-      project,
-      required: false
-    });
-    if (ancestor?.ok !== true) {
-      throw saveError(
-        "The saved project history no longer descends from this session's starting version.",
-        "vibe64_session_update_history_diverged"
-      );
-    }
-    const [ahead, behind, canonicalInSession, canonicalTree] = await Promise.all([
-      countCommitsBetween(runCommand, context, canonicalCommit, sessionHead, {
-        commandOptions,
-        project
-      }),
-      countCommitsBetween(runCommand, context, sessionHead, canonicalCommit, {
-        commandOptions,
-        project
-      }),
-      commitIsAncestor(runCommand, context, canonicalCommit, sessionHead, {
-        commandOptions,
-        project
-      }),
-      commitTree(runCommand, context, canonicalCommit, { commandOptions, project })
-    ]);
-    const relationship = repositoryUpdateRelationship(ahead, behind);
-    const incoming = behind > 0
-      ? await incomingVersionsBetween(runCommand, context, sessionHead, canonicalCommit, {
-          commandOptions,
-          project
-        })
-      : { incomingVersions: [], incomingVersionsTruncated: false };
-    return {
-      ahead,
-      baseCommit: context.baseCommit,
-      behind,
-      canonicalCommit,
-      ...incoming,
-      ok: true,
-      operationId,
-      reconciled: canonicalInSession,
-      repositoryMode: context.mode,
-      relationship,
-      sessionCurrent: canonicalInSession,
-      sessionHead,
-      sessionMatchesCanonical: worktreeTree === canonicalTree,
-      updateAvailable: !canonicalInSession,
-      updateStrategy: repositoryUpdateStrategy(relationship)
-    };
-  }, {
+    operation: "check-updates",
+    operationId,
+    project,
+    runCommand
+  }), {
     operation: `check-session-updates:${context.sessionId}`
   });
 }
@@ -2265,9 +2456,13 @@ async function recoverSessionWorkSave({
 
 export {
   checkSessionUpdates,
+  checkSessionUpdatesDirect,
   inspectSessionChangeDiff,
+  inspectSessionChangeDiffDirect,
   inspectSessionChanges,
+  inspectSessionChangesDirect,
   inspectSessionWork,
+  inspectSessionWorkDirect,
   parseGitNameStatusZ,
   parseGitNumstatZ,
   repositoryUpdateRelationship,

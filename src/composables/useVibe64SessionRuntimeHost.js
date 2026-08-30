@@ -264,8 +264,22 @@ function useVibe64SessionRuntimeHost(props, emit) {
     inspect: inspectWorkState
   });
 
-  async function refreshWorkState() {
+  async function refreshWorkState(observedWork = null) {
     if (sourceOperationsSuspended.value) {
+      return workState.value;
+    }
+    if (
+      observedWork &&
+      typeof observedWork === "object" &&
+      observedWork.ok !== false &&
+      String(observedWork.sessionId || "").trim() === selectedSessionId.value
+    ) {
+      workState.value = {
+        ...observedWork,
+        checkedAt: new Date().toISOString(),
+        error: "",
+        loading: false
+      };
       return workState.value;
     }
     await workStateRefreshQueue.request();

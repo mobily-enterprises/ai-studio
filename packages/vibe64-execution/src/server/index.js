@@ -48,6 +48,9 @@ export {
   runVibe64Command
 } from "./runVibe64Command.js";
 export {
+  runCaptureCommand
+} from "./engines/capture.js";
+export {
   VIBE64_MANAGED_EXECUTION_REQUIRED_ENV,
   installVibe64ManagedExecutionProvider,
   stopVibe64Execution,

@@ -193,7 +193,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         ? { ...result, files: [...previousFiles, ...(result.files || [])] }
         : result;
       if (!append && typeof context.value.refreshSessionWork === "function") {
-        await context.value.refreshSessionWork();
+        await context.value.refreshSessionWork(result);
       }
       const first = !append ? changes.payload?.files?.[0] : null;
       if (first) {

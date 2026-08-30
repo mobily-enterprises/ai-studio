@@ -180,6 +180,9 @@ replacement key.
   ordinary input transport does not repeat assistant-selection authorization.
 - `helperOperationForRequest()` keeps assistant PTYs on the project command
   policy instead of the home-only account-login policy.
+- `resolveAllowedCwd()` derives the shared assistant service runtime boundary
+  from the workspace daemon owner and admits only the exact Codex or OpenCode
+  provider workspace outside managed project roots.
 - `runManagedExecutionPayload()` holds a managed service's controller lease and
   terminates the detached service process group if that lease closes.
 - `vite.config.mjs` temporarily preserves xterm identifiers and syntax because

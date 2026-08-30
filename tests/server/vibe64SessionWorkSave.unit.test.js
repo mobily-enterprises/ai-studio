@@ -195,7 +195,9 @@ test("work inspection compares the complete session tree with its verified canon
     assert.equal(result.repositoryMode, "github");
     assert.equal(result.canonicalCommit, fixture.baseCommit);
     assert.equal(result.sessionHead, await git(session.sourcePath, ["rev-parse", "HEAD"]));
-    assert.ok(requests.length > 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].command, "node");
+    assert.deepEqual(requests[0].runtimes, ["node26", "git"]);
     assert.ok(requests.every((request) => path.resolve(request.cwd) !== path.resolve(project.path)));
     assert.ok(requests.every((request) => !(request.allowedRoots || [])
       .some((rootPath) => path.resolve(rootPath) === path.resolve(project.path))));
@@ -299,7 +301,9 @@ test("Update preserves unsaved session work while advancing to newer GitHub work
     assert.equal(check.incomingVersions[0].commit, canonicalCommit);
     assert.equal(check.incomingVersions[0].message, "remote advance");
     assert.equal(check.incomingVersionsTruncated, false);
-    assert.ok(checkRequests.length > 1);
+    assert.equal(checkRequests.length, 1);
+    assert.equal(checkRequests[0].command, "node");
+    assert.deepEqual(checkRequests[0].runtimes, ["node26", "git"]);
     assert.ok(checkRequests.every((request) => (
       request.execution?.label === "Checking repository for updates" &&
       request.execution?.operationId === "check-github-update" &&

@@ -122,6 +122,33 @@ describe("useVibe64RepositoryWorkspace", () => {
     expect(mocks.requestCalls.some(({ path }) => String(path).includes("[object Object]"))).toBe(false);
   });
 
+  it("reuses the Current Changes snapshot as the selected session work state", async () => {
+    mocks.changes = {
+      changedPaths: ["src/app.js"],
+      sessionId: "session-1",
+      unsaved: true
+    };
+    const refreshSessionWork = vi.fn(async (work) => work);
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    useVibe64RepositoryWorkspace(ref({
+      refreshSessionWork,
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("changes") });
+
+    await nextTick();
+    await flushPromises();
+
+    expect(refreshSessionWork).toHaveBeenCalledTimes(1);
+    expect(refreshSessionWork).toHaveBeenCalledWith(expect.objectContaining({
+      changedPaths: ["src/app.js"],
+      sessionId: "session-1",
+      unsaved: true
+    }));
+  });
+
   it("restores the last successful update check while loading repository history", async () => {
     mocks.historyUpdateCheck = {
       ahead: 2,
