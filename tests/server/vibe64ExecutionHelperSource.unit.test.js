@@ -149,7 +149,7 @@ test("execution helper limits assistant services outside projects to their exact
   assert.match(source, /"opencode-app-server"/u);
   assert.match(source, /operation === "codex-app-server"/u);
   assert.match(source, /operation === "opencode-app-server"/u);
-  assert.match(source, /"\/run\/user",\s+String\(targetUser\.uid\),\s+"vibe64",\s+"agent-providers"/u);
+  assert.match(source, /managedExecutionRuntimeBase\(\{ username: ownerUsername \}\),\s+"vibe64",\s+"agent-providers"/u);
   assert.match(source, /providerRoot === "codex-app-server"/u);
   assert.match(source, /providerRoot === "opencode"/u);
   assert.match(source, /\^codex-app-server-\[a-f0-9\]\{12\}\$/u);

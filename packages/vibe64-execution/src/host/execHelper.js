@@ -1556,8 +1556,7 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
   if (operation === "codex-app-server" || operation === "opencode-app-server") {
     const resolved = path.resolve(normalized);
     const runtimeRoot = path.join(
-      "/run/user",
-      String(targetUser.uid),
+      managedExecutionRuntimeBase({ username: ownerUsername }),
       "vibe64",
       "agent-providers"
     );
