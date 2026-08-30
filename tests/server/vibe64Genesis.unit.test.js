@@ -5,7 +5,6 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { runVibe64Command } from "@local/vibe64-execution/server";
 import { codexRuntimeContext } from "@local/studio-terminal-core/server/codexRuntimeContext";
 import {
   GENESIS_DERIVED_ARTIFACT_PATHS,
@@ -432,30 +431,32 @@ test("Codex execution shims receive the installed Genesis executable exactly onc
   assert.equal(second.filter((entry) => entry === bin).length, 1);
 });
 
-test("Codex discovers Genesis through execution shims without caller-owned PATH", async () => {
-  const codexRuntime = codexRuntimeContext({
-    terminalEnv: {
-      GENESIS_RESOURCE: "available"
-    }
-  });
+test("Codex thread commands run Vibe64's Genesis without a project dependency", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await writeFile(path.join(projectRoot, "app.js"), "export const answer = 42;\n", "utf8");
+    const codexRuntime = codexRuntimeContext({
+      shimDirs: withGenesisCommandShim(),
+      terminalEnv: {
+        GENESIS_RESOURCE: "available"
+      }
+    });
 
-  assert.equal(codexRuntime.ok, true);
-  assert.equal(Object.hasOwn(codexRuntime.terminalEnv, "PATH"), false);
-  const result = await runVibe64Command({
-    actor: "app",
-    args: ["-lc", "command -v genesis"],
-    baseEnv: codexRuntime.env,
-    command: "bash",
-    env: codexRuntime.terminalEnv,
-    envPolicy: "auth",
-    mode: "capture",
-    purpose: "codex",
-    runtimes: codexRuntime.runtimes,
-    shimDirs: withGenesisCommandShim()
-  });
+    assert.equal(codexRuntime.ok, true);
+    assert.equal(Object.hasOwn(codexRuntime.terminalEnv, "PATH"), false);
+    const discovery = await execFileAsync("bash", ["-lc", "command -v genesis"], {
+      cwd: projectRoot,
+      env: codexRuntime.terminalProcessEnv
+    });
+    assert.equal(discovery.stdout.trim(), path.join(genesisCommandShimDirectory(), "genesis"));
 
-  assert.equal(result.ok, true, result.output);
-  assert.equal(result.stdout.trim(), path.join(genesisCommandShimDirectory(), "genesis"));
+    const indexed = await execFileAsync("genesis", ["index", "app.js"], {
+      cwd: projectRoot,
+      env: codexRuntime.terminalProcessEnv
+    });
+    assert.match(indexed.stdout, /index: ready/u);
+  });
 });
 
 test("the managed Genesis command exposes Vibe64's curated Stack catalog", async () => {

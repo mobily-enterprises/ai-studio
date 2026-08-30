@@ -7,6 +7,9 @@ import test from "node:test";
 import {
   createAgentSessionCommandService
 } from "../../packages/vibe64-terminals/src/server/agentSessionCommand.js";
+import {
+  genesisCommandShimDirectory
+} from "../../packages/vibe64-genesis/src/server/index.js";
 
 test("agent shell commands run as session-owned managed executions and drain on session close", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-agent-session-command-"));
@@ -95,6 +98,10 @@ test("agent shell commands run as session-owned managed executions and drain on 
     assert.equal(request.execution.sessionId, sessionId);
     assert.equal(request.cwd, sourceRoot);
     assert.deepEqual(request.allowedRoots, [sourceRoot]);
+    assert.deepEqual(request.shimDirs, [
+      wrapperHostDir,
+      genesisCommandShimDirectory()
+    ]);
     assert.equal(request.baseEnv.SAFE_ENV, "kept");
     assert.equal(Object.hasOwn(request.baseEnv, "DBUS_SESSION_BUS_ADDRESS"), false);
     assert.equal(Object.hasOwn(request.baseEnv, "DBUS_STARTER_ADDRESS"), false);

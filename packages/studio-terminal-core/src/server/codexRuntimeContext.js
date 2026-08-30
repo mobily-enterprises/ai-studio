@@ -55,6 +55,7 @@ function codexRuntimeContext({
   home = os.homedir(),
   providerOptions = {},
   requireSystemRoot = false,
+  shimDirs = [],
   systemRoot = "",
   terminalEnv = {},
   toolHomeSource = "",
@@ -122,7 +123,8 @@ function codexRuntimeContext({
         databaseEnv: rawTerminalEnv
       },
       purpose: "codex",
-      runtimes
+      runtimes,
+      shimDirs
     }
   });
 

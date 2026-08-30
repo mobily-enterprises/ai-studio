@@ -1460,6 +1460,7 @@ function createCodexTerminalController({
     const runtimeContext = codexRuntimeContext({
       env,
       providerOptions: codexAppServerProviderOptions,
+      shimDirs: codexGitCommandShimDirs({ terminalEnv }),
       terminalEnv,
       toolHomeSource: normalizeText(toolHomeSource) || resolvedCodexToolHomeSource()
     });

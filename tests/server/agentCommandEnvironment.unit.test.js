@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   prepareAgentSessionCommandEnvironment
 } from "../../packages/vibe64-terminals/src/server/agentCommandEnvironment.js";
+import {
+  genesisCommandShimDirectory
+} from "../../packages/vibe64-genesis/src/server/index.js";
 
 test("assistant engines share one complete session command environment", async () => {
   const calls = [];
@@ -68,7 +71,10 @@ test("assistant engines share one complete session command environment", async (
     },
     hostWrapperDir: "/managed/session-wrappers",
     ok: true,
-    shimDirs: ["/managed/session-wrappers"]
+    shimDirs: [
+      "/managed/session-wrappers",
+      genesisCommandShimDirectory()
+    ]
   });
 });
 

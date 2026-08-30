@@ -1,5 +1,6 @@
 import process from "node:process";
 
+import { withGenesisCommandShim } from "@local/vibe64-genesis/server";
 import {
   prepareAgentDatabaseCommand
 } from "./agentDatabaseCommand.js";
@@ -110,11 +111,12 @@ async function prepareAgentSessionCommandEnvironment({
   if (unavailable) {
     throw commandBoundaryError(unavailable.name);
   }
+  const shimDirs = withGenesisCommandShim([text(git.hostWrapperDir)]);
   return {
     env: Object.assign({}, ...steps.map((step) => record(step.result?.env))),
     hostWrapperDir: text(git.hostWrapperDir),
     ok: true,
-    shimDirs: [text(git.hostWrapperDir)]
+    shimDirs
   };
 }
 

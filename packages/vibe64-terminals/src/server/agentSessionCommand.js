@@ -28,6 +28,7 @@ import {
   stopVibe64OwnedExecutions,
   VIBE64_INTERACTIVE_RUNTIME_PACKS
 } from "@local/vibe64-execution/server";
+import { withGenesisCommandShim } from "@local/vibe64-genesis/server";
 import {
   pathInsideOrEqual
 } from "./terminalShared.js";
@@ -603,7 +604,7 @@ function createAgentSessionCommandService({
         sessionId: normalizeText(input.sessionId),
         sourcePath: context.sourceRoot
       },
-      shimDirs: [context.binding.wrapperHostDir],
+      shimDirs: withGenesisCommandShim([context.binding.wrapperHostDir]),
       timeout: AGENT_SESSION_COMMAND_TIMEOUT_MS
     });
     const executionId = normalizeText(started?.execution?.id);

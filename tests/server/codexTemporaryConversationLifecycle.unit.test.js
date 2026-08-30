@@ -58,6 +58,9 @@ import {
 import {
   sessionRenewalHandoverHash
 } from "../../packages/vibe64-terminals/src/server/sessionRenewalHandover.js";
+import {
+  genesisCommandShimDirectory
+} from "../../packages/vibe64-genesis/src/server/index.js";
 
 const TEST_ACCOUNT_IDENTITY_SIGNATURE = `sha256:${"a".repeat(64)}`;
 const TEST_AUTH_STATE_SIGNATURE = `v1:${"b".repeat(24)}`;
@@ -3137,6 +3140,10 @@ test("an active chat keeps its provider across environment changes until the nex
     assert.equal(started.ok, true, JSON.stringify(started));
     assert.equal(providers.length, 1);
     assert.equal(providers[0].options.threadEnv.PROVIDER_OWNERSHIP_VERSION, "one");
+    assert.equal(
+      providers[0].options.threadEnv.PATH.split(":").includes(genesisCommandShimDirectory()),
+      true
+    );
     assert.match(
       providers[0].startedThreads[0].developerInstructions,
       /Project owner preference: Use examples from the apiary\./u
