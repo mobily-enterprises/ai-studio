@@ -8992,8 +8992,37 @@ function createCodexTerminalController({
         }
       );
     }
+    const currentLedger = await ledger.readAll();
+    if (currentLedger.failures.length > 0) {
+      throw codexAppServerEconomyOwnershipError(
+        "Persisted Codex economy ownership could not be revalidated before restore.",
+        {
+          failed: currentLedger.failures,
+          sessionId: record.sessionId,
+          threadId: record.threadId
+        }
+      );
+    }
+    const currentDurable = currentLedger.records.find((candidate) => (
+      codexAppServerEconomyThreadKey(candidate) === key
+    ));
+    if (!currentDurable) {
+      return { record: null, retiredThreadId: record.threadId };
+    }
+    if (
+      currentDurable.ownershipId !== record.ownershipId ||
+      currentDurable.revision !== record.revision
+    ) {
+      throw codexAppServerEconomyOwnershipError(
+        "Persisted Codex economy ownership changed before it could be restored.",
+        {
+          sessionId: record.sessionId,
+          threadId: record.threadId
+        }
+      );
+    }
     const attached = attachCodexAppServerEconomyThread({
-      durable: record,
+      durable: currentDurable,
       ledger,
       provider
     });

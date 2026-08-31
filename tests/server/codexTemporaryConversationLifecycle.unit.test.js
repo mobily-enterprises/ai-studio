@@ -1108,7 +1108,8 @@ function createDeterministicHold() {
 }
 
 async function withConversationController(operation, {
-  aiPolicy = null
+  aiPolicy = null,
+  codexEconomyThreadLedgerFactory = null
 } = {}) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-temporary-conversation-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
@@ -1224,6 +1225,7 @@ async function withConversationController(operation, {
       captures.onProviderFactory?.();
       return createProvider(calls, subscribers, captures, providerOptions);
     },
+    ...(codexEconomyThreadLedgerFactory ? { codexEconomyThreadLedgerFactory } : {}),
     env: {
       VIBE64_AGENT_RUNTIME_DIR: projectService.agentRuntimeRoot,
       VIBE64_RUNTIME_NAMESPACE: "test",
@@ -3916,6 +3918,63 @@ test("economy detached turns reject oversized raw output and retire the thread",
     assert.equal(retired.code, "vibe64_codex_economy_thread_unavailable");
     assert.equal(captures.resumes.length, 0);
   });
+});
+
+test("a delayed restore cannot revive economy ownership retired after its ledger read", async () => {
+  const restoreRead = createDeterministicHold();
+  let pauseNextRead = false;
+  const codexEconomyThreadLedgerFactory = ({ projectRuntimeRoot }) => {
+    const ledger = createCodexEconomyThreadLedger({ projectRuntimeRoot });
+    return Object.freeze({
+      ...ledger,
+      async readAll() {
+        const listed = await ledger.readAll();
+        if (pauseNextRead) {
+          pauseNextRead = false;
+          restoreRead.enter();
+          await restoreRead.wait;
+        }
+        return listed;
+      }
+    });
+  };
+
+  await withConversationController(async ({ captures, controller, projectRuntimeRoot, subscribers }) => {
+    const executionProfile = sourceExplanationEconomyProfile({
+      limits: {
+        maxOutputCharacters: 64
+      }
+    });
+    const pending = controller.runDetachedChatTurn("session-1", {
+      executionProfile,
+      outputSchema: sourceExplanationOutputSchema(8),
+      prompt: "Return one tiny explanation while ownership is restored."
+    });
+    await waitForCapturedTurns(captures, 1);
+
+    pauseNextRead = true;
+    const restoring = controller.executionProfileModelCatalog("session-1");
+    await restoreRead.entered;
+    try {
+      completeDetachedTurn(subscribers, {
+        text: "x".repeat(65)
+      });
+      const failed = await pending;
+      assert.equal(failed.ok, false);
+      assert.equal(failed.code, "vibe64_agent_execution_profile_unbounded");
+      assert.deepEqual(captures.deletes, ["conversation-1"]);
+      assert.deepEqual(
+        await createCodexEconomyThreadLedger({ projectRuntimeRoot }).readAll(),
+        { failures: [], records: [] }
+      );
+    } finally {
+      restoreRead.release();
+    }
+
+    assert.equal((await restoring).data[0].model, "gpt-5.6-luna");
+    await controller.closeAllForSession("session-1");
+    assert.deepEqual(captures.deletes, ["conversation-1"]);
+  }, { codexEconomyThreadLedgerFactory });
 });
 
 test("economy detached turn timeout is clamped to the resolved profile", {
