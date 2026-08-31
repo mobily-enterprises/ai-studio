@@ -1159,7 +1159,7 @@ async function withConversationController(operation, {
     projectEnvironmentWait: null,
     resumes: [],
     runtimeInfo: null,
-    serverUserAgent: "vibe64/0.149.0 (unit test)",
+    serverUserAgent: "vibe64/0.151.0 (unit test)",
     threads: [],
     stopRuntimes: 0,
     stopRuntimeOptions: [],

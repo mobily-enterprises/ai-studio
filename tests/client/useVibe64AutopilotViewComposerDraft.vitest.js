@@ -1444,7 +1444,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
   });
 
-  it("retains the newest completed repository activity without showing a collapsed action", async () => {
+  it("does not treat completed repository history as current activity", async () => {
     const saveOperation = {
       events: [{ at: "2026-08-23T01:00:00.000Z", message: "Saved older work" }],
       status: "succeeded",
@@ -1466,10 +1466,125 @@ describe("useVibe64AutopilotView direct chat", () => {
     });
 
     expect(view.saveWorkOperationActive.value).toBe(false);
-    expect(view.saveWorkOperation.value).toStrictEqual(updateOperation);
-    expect(view.saveWorkActivityIsUpdate.value).toBe(true);
+    expect(view.saveWorkOperation.value).toBeNull();
+    expect(view.saveWorkActivityIsUpdate.value).toBe(false);
+    expect(view.saveWorkActivityLabel.value).toBe("Save work");
+    expect(view.saveWorkOutput.value).toBe("");
+  });
+
+  it("keeps a rejected Save separate from newer completed Update history", async () => {
+    const error = Object.assign(new Error("Another assistant operation is starting. Try again in a moment."), {
+      code: "vibe64_agent_write_mode_busy"
+    });
+    const view = await createView({
+      saveSessionWork: vi.fn(async () => {
+        throw error;
+      }),
+      workState: {
+        operation: {
+          events: [{ at: "2026-08-24T11:07:44.224Z", message: "Session work was saved." }],
+          operationId: "older-save",
+          status: "ready",
+          updatedAt: "2026-08-24T11:07:44.224Z"
+        },
+        unsaved: true,
+        updateAvailable: false,
+        updateOperation: {
+          events: [{ at: "2026-08-25T05:07:45.969Z", message: "This session was updated." }],
+          operationId: "newer-update",
+          status: "ready",
+          updatedAt: "2026-08-25T05:07:45.969Z"
+        },
+        updateStatusPending: false
+      }
+    });
+
+    expect(view.saveWorkActivityLabel.value).toBe("Save work");
+    expect(view.requestSaveWork()).toBe(true);
+    await expect(view.confirmSaveWork()).resolves.toBe(false);
+
+    expect(view.saveWorkError.value).toBe(error.message);
+    expect(view.saveWorkActivityIsUpdate.value).toBe(false);
+    expect(view.saveWorkActivityLabel.value).toBe("Save work");
+    expect(view.saveWorkOperation.value).toBeNull();
+    expect(view.saveWorkOutput.value).toBe("");
+  });
+
+  it("binds Save activity only after the invoked command becomes active", async () => {
+    const saveResult = deferredResult();
+    const { props, view } = await createViewWithProps({
+      saveSessionWork: vi.fn(() => saveResult.promise),
+      workState: {
+        operation: {
+          events: [{ at: "2026-08-24T11:07:44.224Z", message: "Old Save" }],
+          operationId: "old-save",
+          status: "ready",
+          updatedAt: "2026-08-24T11:07:44.224Z"
+        },
+        unsaved: true,
+        updateAvailable: false,
+        updateOperation: {
+          events: [{ at: "2026-08-25T05:07:45.969Z", message: "Old Update" }],
+          operationId: "old-update",
+          status: "ready",
+          updatedAt: "2026-08-25T05:07:45.969Z"
+        },
+        updateStatusPending: false
+      }
+    });
+
+    view.requestSaveWork();
+    const saving = view.confirmSaveWork();
+    await nextTick();
+    expect(view.saveWorkOperation.value).toBeNull();
+    expect(view.saveWorkActivityLabel.value).toBe("Save work");
+
+    props.workState.operation = {
+      events: [{ at: "2026-08-31T08:30:00.000Z", message: "Current Save started" }],
+      operationId: "current-save",
+      status: "running",
+      updatedAt: "2026-08-31T08:30:00.000Z"
+    };
+    props.workState.activeOperation = {
+      kind: "save",
+      operationId: "current-save"
+    };
+    await nextTick();
+    expect(view.saveWorkOperation.value).toStrictEqual(props.workState.operation);
+    expect(view.saveWorkOutput.value).toContain("Current Save started");
+    expect(view.saveWorkOutput.value).not.toContain("Old Update");
+
+    saveResult.resolve({ ok: true, status: "saved" });
+    await expect(saving).resolves.toEqual({ ok: true, status: "saved" });
+  });
+
+  it("reattaches after reload only to the server's exact live operation", async () => {
+    const liveUpdate = {
+      events: [{ at: "2026-08-31T08:31:00.000Z", message: "Live Update" }],
+      operationId: "live-update",
+      status: "running"
+    };
+    const view = await createView({
+      workState: {
+        activeOperation: {
+          kind: "update",
+          operationId: "live-update"
+        },
+        operation: {
+          events: [{ at: "2026-08-31T08:32:00.000Z", message: "Newer completed Save" }],
+          operationId: "completed-save",
+          status: "ready",
+          updatedAt: "2026-08-31T08:32:00.000Z"
+        },
+        updateOperation: liveUpdate
+      }
+    });
+
+    expect(view.saveWorkOperation.value).toStrictEqual(liveUpdate);
+    expect(view.saveWorkOperationActive.value).toBe(true);
     expect(view.saveWorkActivityLabel.value).toBe("Update this session (rebase)");
-    expect(view.saveWorkOutput.value).toContain("Session updated");
+    expect(view.saveWorkOutput.value).toContain("Live Update");
+    expect(view.saveWorkOutput.value).not.toContain("Newer completed Save");
   });
 
   it("turns the toolbar Save action into Update when the panel monitor finds an incoming version", async () => {

@@ -394,6 +394,7 @@ function useVibe64AutopilotView(props, emit, {
   const saveWorkConfirmOpen = ref(false);
   const saveWorkError = ref("");
   const saveWorkFailure = ref(null);
+  const saveWorkAttempt = ref(null);
   const saveWorkSending = ref(false);
   const savedCommitDeslop = ref("");
   const savedCommitDeslopSending = ref(false);
@@ -1072,21 +1073,6 @@ function useVibe64AutopilotView(props, emit, {
   const saveWorkHeaderVisible = computed(() => Boolean(
     props.active && sessionId.value
   ));
-  const saveWorkFailureIsUpdate = computed(() => (
-    String(saveWorkFailure.value?.code || "").startsWith("vibe64_session_update_") ||
-    String(props.workState?.updateOperation?.code || "").startsWith("vibe64_session_update_")
-  ));
-  const saveWorkActivityIsUpdate = computed(() => (
-    saveWorkRequiresUpdate.value ||
-    saveWorkFailureIsUpdate.value ||
-    Boolean(
-      props.workState?.updateOperation &&
-      saveWorkOperation.value === props.workState.updateOperation
-    )
-  ));
-  const saveWorkActivityLabel = computed(() => (
-    saveWorkActivityIsUpdate.value ? "Update this session (rebase)" : "Save work"
-  ));
   const saveWorkTitle = computed(() => {
     if (repositoryOperationActive.value || saveWorkRepositoryBusy.value) {
       return "Wait for the current repository operation to finish";
@@ -1113,18 +1099,73 @@ function useVibe64AutopilotView(props, emit, {
     }
     return "Save this session's work to the project repository";
   });
+  watch(() => {
+    const attempt = saveWorkAttempt.value;
+    const activeOperation = props.workState?.activeOperation;
+    return {
+      attempt,
+      kind: String(activeOperation?.kind || "").trim(),
+      operationId: String(activeOperation?.operationId || "").trim()
+    };
+  }, ({ attempt, kind, operationId }) => {
+    if (
+      !attempt ||
+      attempt.operationId ||
+      !operationId ||
+      kind !== attempt.kind
+    ) {
+      return;
+    }
+    saveWorkAttempt.value = {
+      ...attempt,
+      operationId
+    };
+  });
   const saveWorkOperation = computed(() => {
     const saveOperation = props.workState?.operation || null;
     const updateOperation = props.workState?.updateOperation || null;
-    const updateActive = ["queued", "running", "starting"].includes(
-      String(updateOperation?.status || "").trim().toLowerCase()
-    );
-    const updateIsNewest = String(updateOperation?.updatedAt || "") >
-      String(saveOperation?.updatedAt || "");
-    return updateActive || saveWorkFailureIsUpdate.value || updateIsNewest
-      ? updateOperation
-      : saveOperation;
+    const attempt = saveWorkAttempt.value;
+    if (attempt) {
+      const operation = attempt.kind === "update" ? updateOperation : saveOperation;
+      const operationId = String(operation?.operationId || "").trim();
+      return attempt.operationId && operationId === attempt.operationId
+        ? operation
+        : null;
+    }
+    const activeOperation = props.workState?.activeOperation;
+    const activeOperationId = String(activeOperation?.operationId || "").trim();
+    if (activeOperationId) {
+      const operation = activeOperation?.kind === "update" ? updateOperation : saveOperation;
+      return String(operation?.operationId || "").trim() === activeOperationId
+        ? operation
+        : null;
+    }
+    const saveStatus = String(saveOperation?.status || "").trim().toLowerCase();
+    const updateStatus = String(updateOperation?.status || "").trim().toLowerCase();
+    const saveFailed = saveStatus === "failed";
+    const updateFailed = updateStatus === "failed";
+    if (saveFailed !== updateFailed) {
+      return updateFailed ? updateOperation : saveOperation;
+    }
+    if (saveFailed && updateFailed) {
+      return String(updateOperation?.updatedAt || "") > String(saveOperation?.updatedAt || "")
+        ? updateOperation
+        : saveOperation;
+    }
+    return null;
   });
+  const saveWorkActivityIsUpdate = computed(() => {
+    if (saveWorkAttempt.value) {
+      return saveWorkAttempt.value.kind === "update";
+    }
+    return Boolean(
+      (props.workState?.updateOperation && saveWorkOperation.value === props.workState.updateOperation) ||
+      (!saveWorkOperation.value && saveWorkRequiresUpdate.value)
+    );
+  });
+  const saveWorkActivityLabel = computed(() => (
+    saveWorkActivityIsUpdate.value ? "Update this session (rebase)" : "Save work"
+  ));
   const saveWorkOperationActive = computed(() => ["queued", "running", "starting"].includes(
     String(saveWorkOperation.value?.status || "").trim().toLowerCase()
   ));
@@ -1172,11 +1213,17 @@ function useVibe64AutopilotView(props, emit, {
   ));
 
   async function updateBeforeSave() {
+    saveWorkAttempt.value = {
+      kind: "update",
+      operationId: ""
+    };
     saveWorkSending.value = true;
     saveWorkError.value = "";
     saveWorkFailure.value = null;
     try {
-      return await props.updateSessionWork();
+      const result = await props.updateSessionWork();
+      saveWorkAttempt.value = null;
+      return result;
     } catch (error) {
       saveWorkFailure.value = error && typeof error === "object"
         ? {
@@ -1217,6 +1264,10 @@ function useVibe64AutopilotView(props, emit, {
     if (saveWorkDisabled.value) {
       return false;
     }
+    saveWorkAttempt.value = {
+      kind: "save",
+      operationId: ""
+    };
     saveWorkSending.value = true;
     saveWorkError.value = "";
     saveWorkFailure.value = null;
@@ -1228,6 +1279,7 @@ function useVibe64AutopilotView(props, emit, {
       if (result?.reconciled === true && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/iu.test(saveCommit)) {
         savedCommitDeslop.value = saveCommit;
       }
+      saveWorkAttempt.value = null;
       return result;
     } catch (error) {
       saveWorkFailure.value = error && typeof error === "object"

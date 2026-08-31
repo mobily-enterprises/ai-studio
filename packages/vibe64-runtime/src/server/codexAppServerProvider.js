@@ -3428,7 +3428,10 @@ class CodexAppServerAgentProvider {
     const executionMode = codexAppServerExecutionMode(this.options);
     const effective = codexAppServerEffectiveRuntimeInput(this.options);
     return Object.freeze({
-      accountIdentitySignature: await currentCodexAccountIdentitySignature(this.options),
+      accountIdentitySignature: await currentCodexAccountIdentitySignature({
+        ...this.options,
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+      }),
       authStateSignature: await currentCodexAuthStateSignature(this.options),
       endpoint: normalizeAgentText(runtime.endpoint),
       executionMode,

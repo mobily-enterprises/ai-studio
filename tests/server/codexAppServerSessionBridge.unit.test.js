@@ -170,7 +170,7 @@ function economyInventoryProvider({
   hooks = [],
   mcpServers = {},
   records = null,
-  userAgent = "vibe64/0.149.0 (unit test)"
+  userAgent = "vibe64/0.151.0 (unit test)"
 } = {}) {
   const calls = [];
   return {
@@ -429,25 +429,25 @@ test("Codex economy fails closed before inventory when app-server cannot enforce
       userAgent: "vibe64/development"
     })],
     ["spoofed product", economyInventoryProvider({
-      userAgent: "attacker/999.0.0 vibe64/0.149.0"
+      userAgent: "attacker/999.0.0 vibe64/0.151.0"
     })],
     ["leading zero", economyInventoryProvider({
-      userAgent: "vibe64/00.149.0"
+      userAgent: "vibe64/00.151.0"
     })],
     ["control character", economyInventoryProvider({
-      userAgent: "vibe64/0.149.0\nattacker/999.0.0"
+      userAgent: "vibe64/0.151.0\nattacker/999.0.0"
     })],
     ["oversized user agent", economyInventoryProvider({
-      userAgent: `vibe64/0.149.0 ${"x".repeat(600)}`
+      userAgent: `vibe64/0.151.0 ${"x".repeat(600)}`
     })],
     ["old version", economyInventoryProvider({
       userAgent: "vibe64/0.147.0 (unit test)"
     })],
     ["unaudited patch version", economyInventoryProvider({
-      userAgent: "vibe64/0.149.1 (unit test)"
+      userAgent: "vibe64/0.151.1 (unit test)"
     })],
     ["unaudited future version", economyInventoryProvider({
-      userAgent: "vibe64/0.150.0 (unit test)"
+      userAgent: "vibe64/0.152.0 (unit test)"
     })]
   ]) {
     await assert.rejects(prepareCodexAppServerEconomyThreadStartSettings({
@@ -741,7 +741,7 @@ test("Codex economy deletes a new thread when execution surfaces change during s
       return 4;
     },
     currentServerInfo() {
-      return { userAgent: "vibe64/0.149.0 (unit test)" };
+      return { userAgent: "vibe64/0.151.0 (unit test)" };
     },
     async deleteThread(threadId) {
       calls.push(["deleteThread", threadId]);
@@ -908,7 +908,7 @@ test("Codex economy safely reapplies isolation when resuming a controller-owned 
       return 7;
     },
     currentServerInfo() {
-      return { userAgent: "vibe64/0.149.0 (unit test)" };
+      return { userAgent: "vibe64/0.151.0 (unit test)" };
     },
     async deleteThread(threadId) {
       calls.push(["deleteThread", threadId]);

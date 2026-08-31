@@ -179,7 +179,7 @@ describe("Vibe64 Repository workspace", () => {
     expect(repositoryWorkspace).toContain("no file changes waiting to be saved");
     expect(repositoryWorkspace).not.toContain("This session matches the project’s saved version");
     expect(repositoryComposable).toContain('typeof context.value.refreshSessionWork === "function"');
-    expect(repositoryComposable).toContain("await context.value.refreshSessionWork()");
+    expect(repositoryComposable).toContain("await context.value.refreshSessionWork(result)");
     expect(autopilotView).toContain("refreshSessionWork: props.refreshSessionWork");
     expect(runtimeHost).toContain(':refresh-session-work="refreshWorkState"');
   });

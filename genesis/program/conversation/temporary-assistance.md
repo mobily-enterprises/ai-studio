@@ -29,6 +29,8 @@ Temporary and lightweight helper conversations use the parent session's
 selected Codex or OpenCode service and its bounded low-cost execution profile.
 They remain isolated provider conversations with the same session directory and
 command boundary, but they do not start or retain a second resident assistant
-service. OpenCode tasks use the same model-advertised response-limit policy as
-the main conversation, and any narrower task-specific limit remains
-authoritative.
+service. Codex helper admission is bound to that shared service's selected
+account identity, so a credential refresh for the same account remains valid
+while an account switch cannot reuse earlier helper ownership. OpenCode tasks
+use the same model-advertised response-limit policy as the main conversation,
+and any narrower task-specific limit remains authoritative.

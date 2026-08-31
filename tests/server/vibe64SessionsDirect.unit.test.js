@@ -573,6 +573,7 @@ test("session work inspection includes the durable native Save operation", async
   const result = await service.inspectSessionWork("session-1");
   assert.equal(result.ok, true);
   assert.equal(result.unsaved, true);
+  assert.equal(result.activeOperation, null);
   assert.deepEqual(result.operation, { id: "save-work", status: "ready" });
   assert.deepEqual(result.updateOperation, { id: "update-session", status: "ready" });
 });
@@ -835,12 +836,18 @@ test("work inspection observes a live Save without mistaking it for an interrupt
   await saveStartedPromise;
   const inspected = await service.inspectSessionWork("session-1");
   assert.equal(inspected.operation.status, "running");
+  assert.deepEqual(inspected.activeOperation, {
+    kind: "save",
+    operationId: inspected.operation.operationId
+  });
   assert.equal(recoveryCalls, 0);
 
   continueSave();
   const saved = await saving;
   assert.equal(saved.ok, true);
   assert.equal(saved.operation.status, "ready");
+  const afterSave = await service.inspectSessionWork("session-1");
+  assert.equal(afterSave.activeOperation, null);
 });
 
 test("Save access denial happens before commit naming or durable Save state", async () => {

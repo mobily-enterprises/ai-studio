@@ -2467,7 +2467,7 @@ test("codex economy provider retires a started child when metadata persistence f
   });
 });
 
-test("Codex account identity signatures survive token refresh and change on account selection", async () => {
+test("shared Codex account identity signatures survive token refresh and change on account selection", async () => {
   await withTemporaryDirectory(async (root) => {
     const chatgptHome = path.join(root, "chatgpt-home");
     await writeChatgptAuth(chatgptHome, {
@@ -2478,6 +2478,11 @@ test("Codex account identity signatures survive token refresh and change on acco
       executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY,
       toolHomeSource: chatgptHome
     });
+    const provider = new CodexAppServerAgentProvider({
+      authStateSignature: "test-auth-state",
+      toolHomeSource: chatgptHome
+    });
+    assert.equal((await provider.currentRuntimeInfo()).accountIdentitySignature, first);
     await writeChatgptAuth(chatgptHome, {
       accessToken: "second-access-token",
       accountId: "account-one"
@@ -2487,6 +2492,7 @@ test("Codex account identity signatures survive token refresh and change on acco
       toolHomeSource: chatgptHome
     });
     assert.equal(refreshed, first);
+    assert.equal((await provider.currentRuntimeInfo()).accountIdentitySignature, first);
     assert.match(first, /^sha256:[a-f0-9]{64}$/u);
 
     await writeChatgptAuth(chatgptHome, {
@@ -2498,6 +2504,7 @@ test("Codex account identity signatures survive token refresh and change on acco
       toolHomeSource: chatgptHome
     });
     assert.notEqual(switched, first);
+    assert.equal((await provider.currentRuntimeInfo()).accountIdentitySignature, switched);
 
     const apiKeyHome = path.join(root, "api-key-home");
     await writeApiKeyAuth(apiKeyHome, "sk-first-selected-key");

@@ -26,11 +26,22 @@ is reconciled only when the canonical authority proves the prepared commit was
 already published.
 
 While Save runs, the workspace shows one compact progress line. Opening its
-details reveals the bounded command history and keeps it available after Save
-finishes until hidden. A successful Save left compact disappears on completion;
-a failed Save remains visible with its recovery actions. The selected session's
-icon-only Save or Update action stays in the chat header beside the session it
-will affect, rather than occupying the application-wide toolbar.
+details reveals the bounded command progress. A successful Save disappears on
+completion; a failed Save remains visible with its recovery actions. The
+selected session's icon-only Save or Update action stays in the chat header
+beside the session it will affect, rather than occupying the application-wide
+toolbar.
+
+The current activity is causally bound to the Save or Update command the person
+actually invoked. If admission fails before that command creates a durable
+operation, the failure is shown without borrowing the label, icon, or transcript
+of an older completed repository operation.
+
+After a reload, current activity is restored only from the server's exact live
+operation identity. Durable task status and timestamp order are not treated as
+proof that an operation is still running; interrupted work is reconciled by the
+server before it reports the session state. Completed task records remain
+diagnostic history and are never selected as current activity.
 
 After a successful reconciled Save, the chat offers a behavior-preserving
 Deslop of that exact published commit. Accepting sends one ordinary visible

@@ -1068,8 +1068,15 @@ function createService({
           runtime.store.readBackgroundTask(sessionId, SESSION_SAVE_TASK_ID),
           runtime.store.readBackgroundTask(sessionId, SESSION_UPDATE_TASK_ID)
         ]);
+        const activeSaveOperationId = text(activeSaveOperations.get(sessionId));
+        const activeUpdateOperationId = text(activeUpdateOperations.get(sessionId));
         return {
           ...work,
+          activeOperation: activeSaveOperationId
+            ? { kind: "save", operationId: activeSaveOperationId }
+            : activeUpdateOperationId
+              ? { kind: "update", operationId: activeUpdateOperationId }
+              : null,
           operation: latestOperation || operation,
           updateOperation: latestUpdateOperation || updateOperation,
           ok: true
