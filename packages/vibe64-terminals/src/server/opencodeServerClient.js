@@ -8,6 +8,10 @@ function text(value = "") {
   return String(value ?? "").trim();
 }
 
+function record(value = null) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 function openCodeServerError(message, {
   body = null,
   code = "vibe64_opencode_server_request_failed",
@@ -113,6 +117,90 @@ function normalizedMessageRows(value = null) {
       type: text(info.role)
     };
   });
+}
+
+function providerCapabilityMedia(value = null) {
+  const source = record(value);
+  return Object.fromEntries([
+    "audio",
+    "image",
+    "pdf",
+    "text",
+    "video"
+  ].filter((name) => typeof source[name] === "boolean").map((name) => [name, source[name]]));
+}
+
+function sanitizedOpenCodeModel(model = {}, fallbackId = "") {
+  const source = record(model);
+  const id = text(fallbackId);
+  const context = Number(source.limit?.context);
+  const output = Number(source.limit?.output);
+  return {
+    capabilities: {
+      attachment: source.capabilities?.attachment === true,
+      input: providerCapabilityMedia(source.capabilities?.input),
+      output: providerCapabilityMedia(source.capabilities?.output),
+      reasoning: source.capabilities?.reasoning === true,
+      toolcall: source.capabilities?.toolcall === true
+    },
+    family: text(source.family),
+    id,
+    limit: {
+      ...(Number.isSafeInteger(context) && context > 0 ? { context } : {}),
+      ...(Number.isSafeInteger(output) && output > 0 ? { output } : {})
+    },
+    name: text(source.name) || id,
+    release_date: text(source.release_date),
+    status: text(source.status),
+    variants: Object.fromEntries(Object.keys(record(source.variants))
+      .filter(Boolean)
+      .map((variantId) => [variantId, {}]))
+  };
+}
+
+function invalidOpenCodeCatalogError() {
+  return openCodeServerError("OpenCode returned an invalid provider catalogue.", {
+    code: "vibe64_opencode_catalog_invalid",
+    method: "GET",
+    path: "/provider",
+    status: 502
+  });
+}
+
+function sanitizedOpenCodeProviderCatalog(value = null) {
+  const source = record(value);
+  if (!Array.isArray(source.all) || source.all.length === 0) {
+    throw invalidOpenCodeCatalogError();
+  }
+  const all = source.all.map((provider) => {
+    const candidate = record(provider);
+    const id = text(candidate.id);
+    const environmentNames = Array.isArray(candidate.env)
+      ? candidate.env.map(text).filter(Boolean)
+      : [];
+    const models = record(candidate.models);
+    return {
+      apiKeyCompatible: environmentNames.length === 1 || [
+        "amazon-bedrock",
+        "google"
+      ].includes(id),
+      id,
+      models: Object.fromEntries(Object.entries(models)
+        .map(([modelId, model]) => [text(modelId), sanitizedOpenCodeModel(model, modelId)])
+        .filter(([modelId, model]) => modelId && model.id)),
+      name: text(candidate.name) || id
+    };
+  }).filter((provider) => provider.id);
+  if (all.length === 0) {
+    throw invalidOpenCodeCatalogError();
+  }
+  const defaults = record(source.default);
+  return {
+    all,
+    default: Object.fromEntries(Object.entries(defaults)
+      .map(([providerId, modelId]) => [text(providerId), text(modelId)])
+      .filter(([providerId, modelId]) => providerId && modelId))
+  };
 }
 
 function stablePromptBody(input = {}) {
@@ -359,10 +447,10 @@ function createOpenCodeServerClient({
       };
     },
     async providers({ directory = "", signal } = {}) {
-      return request("GET", `/provider${queryString({ directory })}`, {
+      return sanitizedOpenCodeProviderCatalog(await request("GET", `/provider${queryString({ directory })}`, {
         limitBytes: OPENCODE_CATALOG_LIMIT_BYTES,
         signal
-      });
+      }));
     },
     async readSession(sessionId = "", { signal } = {}) {
       return (await request("GET", sessionPath(sessionId), { signal }))?.data || null;
@@ -386,9 +474,6 @@ function createOpenCodeServerClient({
 }
 
 export {
-  OPENCODE_CATALOG_LIMIT_BYTES,
-  OPENCODE_EVENT_LIMIT_BYTES,
   OPENCODE_RESPONSE_LIMIT_BYTES,
-  createOpenCodeServerClient,
-  openCodeServerError
+  createOpenCodeServerClient
 };

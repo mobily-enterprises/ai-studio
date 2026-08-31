@@ -28,9 +28,20 @@ vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
   }
 }));
 
+vi.mock("@jskit-ai/shell-web/client/navigation/usePaths", () => ({
+  usePaths() {
+    return {
+      api: (suffix) => `/api/${suffix}`
+    };
+  }
+}));
+
 import {
   useVibe64AssistantAccess
 } from "../../src/composables/useVibe64AssistantAccess.js";
+import {
+  useVibe64AssistantCatalog
+} from "../../src/composables/useVibe64AssistantCatalog.js";
 
 function resource(data = null) {
   return {
@@ -60,6 +71,26 @@ describe("useVibe64AssistantAccess", () => {
       commandMocks.options = options;
       return commandMocks.command;
     });
+  });
+
+  it("loads configured session choices without provider or model catalogs", () => {
+    endpointMocks.resources = [resource({ engines: [] }), resource({ engines: [] }), resource({ engines: [] })];
+    const scope = effectScope();
+    scope.run(() => useVibe64AssistantCatalog({
+      active: ref(true),
+      configuredOnly: true
+    }));
+
+    expect(endpointMocks.options).toHaveLength(3);
+    expect(endpointMocks.options[0].enabled.value).toBe(true);
+    expect(endpointMocks.options[0].queryKey.value.at(-1)).toBe("overview:configured:all");
+    expect(endpointMocks.options[0].readQuery.value).toEqual({
+      configuredOnly: "true",
+      limit: "100"
+    });
+    expect(endpointMocks.options[1].enabled.value).toBe(false);
+    expect(endpointMocks.options[2].enabled.value).toBe(false);
+    scope.stop();
   });
 
   it("hydrates access and queue resources for warm-cache and realtime navigation", async () => {
@@ -287,21 +318,26 @@ describe("useVibe64AssistantAccess", () => {
     expect(autopilot).toContain(':disabled="composerSending || agentActive"');
     expect(assistantMenuSource).toContain('aria-label="AI session selector"');
     expect(assistantMenuSource).toContain('providerConnectedOnly: true');
+    expect(assistantMenuSource).toContain('active: catalogActive');
     expect(assistantMenuSource).toContain('provider.connected === true');
     expect(assistantMenuSource).toContain('model.status === "available"');
+    expect(assistantMenuSource).toContain('aria-label="Model"');
+    expect(assistantMenuSource).toContain('aria-label="Thinking"');
+    expect(assistantMenuSource).toContain('watch(assistantSelection, hydrateSelection, { immediate: true });');
+    expect(assistantMenuSource).not.toContain('<v-select');
     expect(assistantMenuSource).not.toContain('label="Agent"');
     expect(assistantMenuSource).toContain('v-if="canConfigure"');
     expect(assistantMenuSource).toContain('Configure more AIs');
     expect(assistantMenuSource).not.toContain("Vibe64AssistantSessionDialog");
     expect(assistantMenuSource).not.toContain("disabledReason");
-    expect(assistantDialog).toContain('v-if="editing && accessLoading"');
-    expect(assistantDialog).toContain('type="list-item"');
-    expect(assistantDialog).toContain('v-else-if="editing && normalizedAccessLabel"');
-    expect(assistantDialog.indexOf('class="vibe64-assistant-dialog__access"')).toBeLessThan(
-      assistantDialog.indexOf('<v-card-text class="vibe64-assistant-dialog__body">')
-    );
-    expect(assistantDialog).toContain('<v-btn-toggle');
-    expect(assistantDialog).toContain('height="48"');
-    expect(assistantDialog).toContain("Authorized workspace members may use this owner-configured API connection.");
+    expect(assistantDialog).toContain('configuredOnly: true');
+    expect(assistantDialog).toContain('active: true');
+    expect(assistantDialog).toContain('aria-label="Connected AI"');
+    expect(assistantDialog).toContain('<v-radio-group');
+    expect(assistantDialog).toContain('OpenCode · ${provider.label}');
+    expect(assistantDialog).toContain('type="list-item-two-line"');
+    expect(assistantDialog).toContain('No AI is connected');
+    expect(assistantDialog).not.toContain('Search providers');
+    expect(assistantDialog).not.toContain('Customize');
   });
 });

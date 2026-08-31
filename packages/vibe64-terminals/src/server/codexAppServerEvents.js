@@ -203,6 +203,16 @@ function codexAppServerNotificationError(notification = {}) {
   );
 }
 
+function codexAppServerNotificationUsageLimitExceeded(notification = {}) {
+  const params = codexAppServerNotificationParams(notification);
+  const status = isPlainObject(params.status) ? params.status : {};
+  const turn = isPlainObject(params.turn) ? params.turn : {};
+  return [params.error, status.error, turn.error].some((error) => (
+    isPlainObject(error) &&
+    normalizeText(error.codexErrorInfo || error.codex_error_info) === "usageLimitExceeded"
+  ));
+}
+
 function codexAppServerTextInputText(input = {}) {
   if (!isPlainObject(input) || normalizeText(input.type) !== "text") {
     return "";
@@ -612,6 +622,7 @@ export {
   codexAppServerNotificationThreadId,
   codexAppServerNotificationTurnId,
   codexAppServerNotificationTurnStatus,
+  codexAppServerNotificationUsageLimitExceeded,
   codexAppServerProviderThreadAssistantSegments,
   codexAppServerOutputOwnerTurnId,
   codexAppServerStatusFromValue,

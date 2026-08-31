@@ -48,13 +48,19 @@ const HANDOVER = [
   "Inspect the approved handover and continue."
 ].join("\n");
 
-async function eventually(operation, predicate, attempts = 100) {
+async function eventually(operation, predicate, attempts = 100, pollIntervalMs = 0) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const value = await operation();
     if (predicate(value)) {
       return value;
     }
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => {
+      if (pollIntervalMs > 0) {
+        setTimeout(resolve, pollIntervalMs);
+        return;
+      }
+      setImmediate(resolve);
+    });
   }
   assert.fail("Timed out waiting for the renewal state.");
 }
@@ -2986,7 +2992,8 @@ async function runRealGitSuccessorProofScenario({
     const failed = await eventually(
       () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
       (state) => state?.status === SESSION_RENEWAL_STATUS.FAILED,
-      300
+      300,
+      25
     );
     assert.equal(failed.error.code, "vibe64_session_renewal_successor_source_invalid");
     assert.equal(failed.stage, SESSION_RENEWAL_STAGE.SUCCESSOR_CREATING);
@@ -3071,7 +3078,8 @@ test("real Git successor proof accepts ignored dependency and build artifacts", 
     const completed = await eventually(
       () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
       (state) => state?.status === SESSION_RENEWAL_STATUS.COMPLETED,
-      300
+      300,
+      25
     );
     assert.equal(context.calls.discard, 0);
     assert.equal(context.currentSessionId, completed.successor.sessionId);

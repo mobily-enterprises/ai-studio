@@ -366,13 +366,16 @@ function createService({
     terminals
   });
 
-  async function resolveAssistantSelection(input = {}, vibe64User = null) {
+  async function resolveAssistantSelection(input = {}, vibe64User = null, {
+    configuredOnly = false
+  } = {}) {
     const requested = record(input);
     if (typeof terminals.resolveAssistantSelection === "function") {
+      const selection = Object.keys(requested).length > 0
+        ? requested
+        : { engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX };
       return defineVibe64AssistantSelection(await terminals.resolveAssistantSelection(
-        Object.keys(requested).length > 0
-          ? requested
-          : { engineId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX },
+        configuredOnly ? { ...selection, configuredOnly: "true" } : selection,
         { vibe64User }
       ));
     }
@@ -909,7 +912,8 @@ function createService({
         const vibe64User = trustedAssistantUser(input);
         const assistantSelection = await resolveAssistantSelection(
           input.assistantSelection,
-          vibe64User
+          vibe64User,
+          { configuredOnly: true }
         );
         await terminals.requireAssistantSelectionAccess(assistantSelection, {
           vibe64User
@@ -1703,10 +1707,15 @@ function createService({
           ok: false
         };
       }
+      const startedAt = Date.now();
       await setupRunner.wait(sessionId);
       const runtime = await project.createRuntime({ inspectSource: false });
-      const session = await runtime.getSession(sessionId, { inspectSource: false });
       const messageId = text(input.messageId) || crypto.randomUUID();
+      vibe64SessionDebugLog("server.sessions.sendAgentMessage.dispatching", {
+        durationMs: Date.now() - startedAt,
+        messageId,
+        sessionId
+      });
       try {
         const result = await terminals.sendAgentMessage(sessionId, {
           ...input,
@@ -1714,7 +1723,6 @@ function createService({
           message: request
         }, {
           runtime,
-          session,
           vibe64User: input.vibe64User || null
         });
         const accepted = result?.ok !== false;

@@ -32,6 +32,15 @@ test("Codex turn outcome notices distinguish terminal outcomes", () => {
     ),
     /^Codex could not finish: You've hit your usage limit\. Try again tomorrow\. Saved file changes remain\.$/u
   );
+  assert.equal(
+    codexTurnOutcomeNoticeMessage(
+      CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
+      "You've hit your usage limit. Try again tomorrow.",
+      { usageLimitExceeded: true }
+    ),
+    "Codex could not finish: You've hit your usage limit. Try again tomorrow. Saved file changes remain. " +
+      "[View Codex usage & billing](https://chatgpt.com/codex/settings/usage)"
+  );
 });
 
 test("Codex turn outcome notice ids are stable per provider thread and turn", () => {
@@ -64,7 +73,8 @@ test("Codex turn outcome notices publish only newly persisted entries", async ()
     sessionId: "session-1",
     store,
     threadId: "thread-1",
-    turnId: "turn-1"
+    turnId: "turn-1",
+    usageLimitExceeded: true
   };
 
   const first = await writeCodexTurnOutcomeNotice(input);
@@ -75,6 +85,7 @@ test("Codex turn outcome notices publish only newly persisted entries", async ()
   assert.equal(writes[0].message.messageId, writes[1].message.messageId);
   assert.match(writes[0].message.text, /Vibe64 restart/u);
   assert.match(writes[0].message.text, /Provider quota exhausted/u);
+  assert.match(writes[0].message.text, /chatgpt\.com\/codex\/settings\/usage/u);
   assert.deepEqual(published, [["session-1", {
     payload: {
       conversationLogPatch: {

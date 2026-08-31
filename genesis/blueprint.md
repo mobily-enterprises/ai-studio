@@ -12,7 +12,11 @@ work ends with one concise, useful account of what happened.
 
 The chat selector stays focused on choosing among AIs that are already
 configured and available. Workspace owners manage AI accounts and add further
-connections in the separate account-management area. Leaving a model's
+connections in the separate account-management area. Each distinct connected
+OpenCode provider route remains its own choice, including separate plans from
+the same provider. Starting a session presents that saved list promptly without
+waiting for an AI provider to start or discover models. A session stays within
+the assistant application that owns its conversation. Leaving a model's
 thinking choice at its provider default leaves that choice to the provider
 instead of silently selecting another listed option. Vibe64 also respects each
 AI's declared response capacity rather than assuming every model can produce
@@ -38,8 +42,11 @@ Vibe64 makes machine-facing work dependable. It manages project access,
 credentials, development environments, application processes, previews,
 browser identities, and attachments without putting private machine state into
 the project. It shows clear status and failures and lets people retry or ask the
-agent for help. Non-urgent background checks favor useful freshness over
-constant polling: hidden views stop checks that serve only that view, returning
+agent for help. When a provider reports exhausted quota or another account
+failure, completed project work remains available and the conversation gives a
+direct route to the relevant account recovery. Non-urgent background checks
+favor useful freshness over constant polling: hidden views stop checks that
+serve only that view, returning
 to a view refreshes it promptly, and repeated failures slow recovery checks.
 Open sessions that choose the same coding-assistant application
 share one running assistant service, and that service stops when its final

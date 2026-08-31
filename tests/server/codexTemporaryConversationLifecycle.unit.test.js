@@ -1365,6 +1365,25 @@ async function withAgentMessageController(operation) {
     stateRoot: projectRuntimeRoot,
     store
   };
+  const projectService = {
+    createRuntime() {
+      return runtime;
+    },
+    createSessionStore() {
+      return store;
+    },
+    async projectExecutionEnvironment() {
+      return {
+        VIBE64_RUNTIME_NAMESPACE: "test",
+        VIBE64_WORKSPACE: "test"
+      };
+    },
+    async readProjectAiPolicy() {
+      return {
+        ok: true
+      };
+    }
+  };
   const controller = createCodexTerminalController({
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
@@ -1515,7 +1534,7 @@ async function withAgentMessageController(operation) {
           captures.stopRuntimes += 1;
           captures.stopRuntimeOptions = options;
           captures.stopRuntimeProviderOptions = providerOptions;
-          return { stopped: true };
+          return captures.stopRuntimeResult || { stopped: true };
         },
         subscribe(callback) {
           subscribers.add(callback);
@@ -1530,31 +1549,14 @@ async function withAgentMessageController(operation) {
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
-    projectService: {
-      createRuntime() {
-        return runtime;
-      },
-      createSessionStore() {
-        return store;
-      },
-      async projectExecutionEnvironment() {
-        return {
-          VIBE64_RUNTIME_NAMESPACE: "test",
-          VIBE64_WORKSPACE: "test"
-        };
-      },
-      async readProjectAiPolicy() {
-        return {
-          ok: true
-        };
-      }
-    }
+    projectService
   });
 
   try {
     await operation({
       captures,
       controller,
+      projectService,
       runtime,
       sessionId: session.sessionId,
       store
@@ -4081,6 +4083,74 @@ test("ordinary runtime invalidation reports one failure for the shared Codex run
     assert.deepEqual(captures.stopRuntimeOptions, [{
       preserveProcessExitProof: true
     }]);
+  });
+});
+
+test("account-wide Codex auth invalidation stops a pruned runtime without a selected project", async () => {
+  await withAgentMessageController(async ({
+    captures,
+    controller,
+    projectService,
+    runtime,
+    sessionId
+  }) => {
+    const prepared = await runWithProjectRequestContext({
+      targetRoot: runtime.projectContextRoot
+    }, () => controller.ensureThread(sessionId));
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+
+    const pruned = await controller.reconcileThreads([]);
+    assert.equal(pruned.ok, true, JSON.stringify(pruned));
+    assert.equal(captures.provider.closed, 1);
+    assert.equal(captures.stopRuntimes, 0);
+
+    const createRuntime = projectService.createRuntime;
+    projectService.createRuntime = () => {
+      const error = new Error("Choose a project before using project tools.");
+      error.code = "vibe64_project_not_selected";
+      throw error;
+    };
+    try {
+      const invalidated = await controller.invalidateAppServerRuntimes({
+        includeOwned: true,
+        reason: "logout"
+      });
+
+      assert.equal(invalidated.ok, true, JSON.stringify(invalidated));
+      assert.equal(invalidated.providerCount, 1);
+      assert.equal(invalidated.stopped, 1);
+    } finally {
+      projectService.createRuntime = createRuntime;
+    }
+    assert.equal(captures.stopRuntimes, 1);
+    assert.deepEqual(captures.stopRuntimeOptions, {
+      preserveProcessExitProof: true
+    });
+  });
+});
+
+test("account-wide Codex auth invalidation requires verified runtime exit", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId }) => {
+    const prepared = await runWithProjectRequestContext({
+      targetRoot: runtime.projectContextRoot
+    }, () => controller.ensureThread(sessionId));
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    captures.stopRuntimeResult = {
+      processExitVerified: false,
+      runtimeDirRemoved: false,
+      stopped: false
+    };
+
+    const invalidated = await controller.invalidateAppServerRuntimes({
+      includeOwned: true,
+      reason: "logout"
+    });
+
+    assert.equal(invalidated.ok, false, JSON.stringify(invalidated));
+    assert.equal(invalidated.providerCount, 1);
+    assert.equal(invalidated.stopped, 0);
+    assert.equal(invalidated.failed[0].code, "vibe64_codex_runtime_exit_unverified");
+    assert.equal(captures.stopRuntimes, 1);
   });
 });
 

@@ -29,6 +29,132 @@ test("OpenCode client accepts only loopback HTTP origins", () => {
   }));
 });
 
+test("OpenCode provider reads allowlist catalogue metadata before it can be cached", async () => {
+  const secret = "provider-secret-canary";
+  const client = createOpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetchImpl: async () => jsonResponse({
+      all: [{
+        api: { url: `https://${secret}.example` },
+        headers: { authorization: secret },
+        id: "zai",
+        key: secret,
+        env: ["ZAI_API_KEY"],
+        models: {
+          "glm-4.7-flash": {
+            api: { headers: { authorization: secret }, url: `https://${secret}.example/v1` },
+            capabilities: {
+              attachment: true,
+              input: { image: true, secret },
+              output: { text: true },
+              reasoning: true,
+              toolcall: true
+            },
+            family: "glm",
+            headers: { authorization: secret },
+            id: "glm-4.7-flash",
+            limit: { context: 204800, output: 131072, secret },
+            name: "GLM Flash",
+            options: { apiKey: secret },
+            release_date: "2026-08-01",
+            status: "active",
+            variants: { high: { apiKey: secret } }
+          }
+        },
+        name: "Z.AI",
+        options: { apiKey: secret },
+        source: "api"
+      }],
+      apiKey: secret,
+      connected: ["zai"],
+      default: { zai: "glm-4.7-flash" }
+    }),
+    password: "bridge-password"
+  });
+
+  const providers = await client.providers();
+
+  assert.deepEqual(providers, {
+    all: [{
+      apiKeyCompatible: true,
+      id: "zai",
+      models: {
+        "glm-4.7-flash": {
+          capabilities: {
+            attachment: true,
+            input: { image: true },
+            output: { text: true },
+            reasoning: true,
+            toolcall: true
+          },
+          family: "glm",
+          id: "glm-4.7-flash",
+          limit: { context: 204800, output: 131072 },
+          name: "GLM Flash",
+          release_date: "2026-08-01",
+          status: "active",
+          variants: { high: {} }
+        }
+      },
+      name: "Z.AI"
+    }],
+    default: { zai: "glm-4.7-flash" }
+  });
+  assert.equal(JSON.stringify(providers).includes(secret), false);
+  assert.equal(Object.hasOwn(providers, "connected"), false);
+});
+
+test("OpenCode provider reads expose only API-key compatibility from raw env metadata", async () => {
+  const provider = (id, env) => ({ env, id, models: {}, name: id });
+  const client = createOpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetchImpl: async () => jsonResponse({
+      all: [
+        provider("azure", ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"]),
+        provider("cloudflare-workers-ai", [
+          "CLOUDFLARE_ACCOUNT_ID",
+          "CLOUDFLARE_API_TOKEN"
+        ]),
+        provider("google", ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT"]),
+        provider("amazon-bedrock", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]),
+        provider("ordinary", ["ORDINARY_API_KEY"])
+      ],
+      default: {}
+    }),
+    password: "bridge-password"
+  });
+
+  const providers = await client.providers();
+
+  assert.deepEqual(providers.all.map(({ apiKeyCompatible, id }) => ({
+    apiKeyCompatible,
+    id
+  })), [
+    { apiKeyCompatible: false, id: "azure" },
+    { apiKeyCompatible: false, id: "cloudflare-workers-ai" },
+    { apiKeyCompatible: true, id: "google" },
+    { apiKeyCompatible: true, id: "amazon-bedrock" },
+    { apiKeyCompatible: true, id: "ordinary" }
+  ]);
+  assert.equal(providers.all.length, 5);
+  assert.equal(JSON.stringify(providers).includes("AZURE_API_KEY"), false);
+  assert.equal(JSON.stringify(providers).includes("AWS_SECRET_ACCESS_KEY"), false);
+});
+
+test("OpenCode provider reads reject malformed or empty catalogues", async () => {
+  for (const value of [null, {}, { all: {} }, { all: [] }, { all: [null] }]) {
+    const client = createOpenCodeServerClient({
+      baseUrl: "http://127.0.0.1:4096",
+      fetchImpl: async () => jsonResponse(value),
+      password: "bridge-password"
+    });
+    await assert.rejects(
+      () => client.providers(),
+      (error) => error?.code === "vibe64_opencode_catalog_invalid"
+    );
+  }
+});
+
 test("OpenCode project clients scope every request to one directory", async () => {
   const requests = [];
   const client = createOpenCodeServerClient({

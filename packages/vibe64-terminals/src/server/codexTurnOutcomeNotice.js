@@ -17,23 +17,29 @@ const CODEX_TURN_OUTCOME_MESSAGES = Object.freeze({
   [CODEX_TURN_OUTCOME.USER_CANCELLED]:
     "You stopped Codex before it finished. Saved file changes remain; send a message to continue."
 });
+const CODEX_USAGE_BILLING_LINK =
+  "[View Codex usage & billing](https://chatgpt.com/codex/settings/usage)";
 
 function normalizeText(value) {
   return String(value || "").trim();
 }
 
-function codexTurnOutcomeNoticeMessage(outcome = "", detail = "") {
+function codexTurnOutcomeNoticeMessage(outcome = "", detail = "", {
+  usageLimitExceeded = false
+} = {}) {
   const normalizedOutcome = normalizeText(outcome);
   const message = CODEX_TURN_OUTCOME_MESSAGES[normalizedOutcome] ||
     CODEX_TURN_OUTCOME_MESSAGES[CODEX_TURN_OUTCOME.PROVIDER_FAILURE];
   const normalizedDetail = normalizeText(detail);
-  if (!normalizedDetail) {
-    return message;
+  let notice = message;
+  if (normalizedDetail) {
+    notice = !normalizedOutcome || normalizedOutcome === CODEX_TURN_OUTCOME.PROVIDER_FAILURE
+      ? `Codex could not finish: ${normalizedDetail} Saved file changes remain.`
+      : `${message} Details: ${normalizedDetail}`;
   }
-  if (!normalizedOutcome || normalizedOutcome === CODEX_TURN_OUTCOME.PROVIDER_FAILURE) {
-    return `Codex could not finish: ${normalizedDetail} Saved file changes remain.`;
-  }
-  return `${message} Details: ${normalizedDetail}`;
+  return usageLimitExceeded === true
+    ? `${notice} ${CODEX_USAGE_BILLING_LINK}`
+    : notice;
 }
 
 function codexTurnOutcomeNoticeMessageId(threadId = "", turnId = "") {
@@ -55,7 +61,8 @@ async function writeCodexTurnOutcomeNotice({
   sessionId = "",
   store = null,
   threadId = "",
-  turnId = ""
+  turnId = "",
+  usageLimitExceeded = false
 } = {}) {
   const normalizedSessionId = normalizeText(sessionId);
   const messageId = codexTurnOutcomeNoticeMessageId(threadId, turnId);
@@ -71,7 +78,7 @@ async function writeCodexTurnOutcomeNotice({
   }
   const turn = await store.writeConversationSystemMessage(normalizedSessionId, {
     messageId,
-    text: codexTurnOutcomeNoticeMessage(outcome, detail)
+    text: codexTurnOutcomeNoticeMessage(outcome, detail, { usageLimitExceeded })
   });
   if (!turn) {
     return {

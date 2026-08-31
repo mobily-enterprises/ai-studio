@@ -13,116 +13,161 @@ import {
   OPENCODE_EXPECTED_VERSION,
   createOpenCodeServerProcess,
   openCodeInlineConfig,
-  parseOpenCodeAgentCatalog,
-  parseOpenCodeModelCatalog,
   readOpenCodeCatalog,
-  safeOpenCodeEnvironment
+  safeOpenCodeEnvironment,
+  verifyOpenCodeApiKey
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
 
-test("OpenCode finite catalogue output is parsed without a resident server", () => {
-  const providers = parseOpenCodeModelCatalog([
-    "deepseek/deepseek-chat",
-    JSON.stringify({
-      capabilities: { reasoning: true, toolcall: true },
-      id: "deepseek-chat",
-      name: "DeepSeek Chat",
-      providerID: "deepseek",
-      status: "active",
-      variants: { high: {}, low: {} }
-    }, null, 2),
-    "zai/glm-5",
-    JSON.stringify({
-      capabilities: { reasoning: true, toolcall: true },
-      id: "glm-5",
-      name: "GLM 5",
-      providerID: "zai",
-      status: "active",
-      variants: {}
-    }, null, 2)
-  ].join("\n"));
-  const agents = parseOpenCodeAgentCatalog([
-    "build (primary)",
-    JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }], null, 2),
-    "explore (subagent)",
-    JSON.stringify([{ action: "deny", pattern: "*", permission: "*" }], null, 2)
-  ].join("\n"));
-
-  assert.deepEqual(providers.default, {
-    deepseek: "deepseek-chat",
-    zai: "glm-5"
-  });
-  assert.equal(providers.all[0].models["deepseek-chat"].name, "DeepSeek Chat");
-  assert.deepEqual(agents.map(({ mode, name }) => ({ mode, name })), [
-    { mode: "primary", name: "build" },
-    { mode: "subagent", name: "explore" }
-  ]);
-  assert.equal(parseOpenCodeModelCatalog([
-    "deepseek/deepseek-chat",
-    JSON.stringify({ id: "deepseek-chat", providerID: "deepseek" })
-  ].join("\n")).all[0].models["deepseek-chat"].id, "deepseek-chat");
-  assert.equal(parseOpenCodeAgentCatalog([
-    "build (primary)",
-    JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }])
-  ].join("\n"))[0].name, "build");
-});
-
-test("OpenCode cold catalog reads configured providers from isolated temporary auth", async (t) => {
+test("OpenCode cold catalog reads the complete provider API and proves process exit", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-cold-catalog-"));
   const privateRoot = path.join(root, "private");
   const workdir = path.join(root, "workdir");
+  const starts = [];
+  let stopped = 0;
   t.after(() => rm(root, { force: true, recursive: true }));
 
   const catalog = await readOpenCodeCatalog({
-    async commandRunner(request) {
-      const auth = JSON.parse(await readFile(
-        path.join(request.credentialHome.dataRoot, "opencode", "auth.json"),
-        "utf8"
-      ));
-      assert.deepEqual(auth, {
-        "zai-coding-plan": {
-          key: "zai-secret",
-          type: "api"
-        }
-      });
-      assert.equal(JSON.stringify(request.baseEnv).includes("zai-secret"), false);
-      const config = JSON.parse(request.baseEnv.OPENCODE_CONFIG_CONTENT);
-      assert.equal(
-        config.provider["zai-coding-plan"].options.baseURL,
-        "https://api.z.ai/api/coding/paas/v4"
-      );
-      return request.args[0] === "models"
-        ? {
-            ok: true,
-            stdout: [
-              "zai-coding-plan/glm-5.3",
-              JSON.stringify({
-                capabilities: { reasoning: true, toolcall: true },
-                id: "glm-5.3",
-                name: "GLM-5.3",
-                providerID: "zai-coding-plan",
-                status: "active"
-              })
-            ].join("\n")
+    async createServerProcess(options) {
+      starts.push(options);
+      return {
+        client: {
+          async agents({ directory }) {
+            assert.equal(directory, workdir);
+            return [{ hidden: false, mode: "primary", name: "build" }];
+          },
+          async providers({ directory }) {
+            assert.equal(directory, workdir);
+            return {
+              all: [{
+                id: "zai-coding-plan",
+                models: { "glm-5.3": { id: "glm-5.3", name: "GLM-5.3" } },
+                name: "Z.AI Coding Plan",
+                source: "api"
+              }],
+              default: { "zai-coding-plan": "glm-5.3" }
+            };
           }
-        : {
-            ok: true,
-            stdout: [
-              "build (primary)",
-              JSON.stringify([{ action: "allow", pattern: "*", permission: "*" }])
-            ].join("\n")
-          };
+        },
+        async stop() {
+          stopped += 1;
+          return { exited: true };
+        },
+        workdir
+      };
     },
     privateRoot,
-    providerConnections: [{
-      apiKey: "zai-secret",
-      canonicalUrl: "https://api.z.ai/api/coding/paas/v4",
-      modelProviderId: "zai-coding-plan"
-    }],
     workdir
   });
 
   assert.equal(catalog.providers.all[0].id, "zai-coding-plan");
   assert.equal(catalog.providers.default["zai-coding-plan"], "glm-5.3");
+  assert.equal(catalog.agents[0].name, "build");
+  assert.equal(starts.length, 1);
+  assert.deepEqual(starts[0].providerConnections, []);
+  assert.equal(starts[0].execution.operationId, "opencode-catalog");
+  assert.equal(stopped, 1);
+});
+
+test("OpenCode verifies API keys with one bounded pure no-tools turn", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-verify-key-"));
+  const privateRoot = path.join(root, "private");
+  const workdir = path.join(root, "workdir");
+  const requests = [];
+  t.after(() => rm(root, { force: true, recursive: true }));
+
+  const result = await verifyOpenCodeApiKey({
+    apiKey: "zai-private-key",
+    async commandRunner(request) {
+      requests.push(request);
+      const auth = JSON.parse(await readFile(
+        path.join(request.credentialHome.dataRoot, "opencode", "auth.json"),
+        "utf8"
+      ));
+      assert.deepEqual(auth, {
+        zai: { key: "zai-private-key", type: "api" }
+      });
+      return { ok: true, stdout: '{"type":"text","text":"OK"}\n' };
+    },
+    modelId: "glm-4.7-flash",
+    modelProviderId: "zai",
+    privateRoot,
+    workdir
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(requests.length, 1);
+  const [request] = requests;
+  assert.deepEqual(request.args, [
+    "run",
+    "--pure",
+    "--agent",
+    OPENCODE_ECONOMY_AGENT_ID,
+    "--model",
+    "zai/glm-4.7-flash",
+    "--format",
+    "json",
+    "Reply only OK."
+  ]);
+  assert.equal(request.inheritProcessEnv, false);
+  assert.equal(request.maxBuffer, 256 * 1024);
+  assert.equal(request.timeout, 30_000);
+  assert.equal(request.baseEnv.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX, "16");
+  assert.equal(JSON.stringify(request.baseEnv).includes("zai-private-key"), false);
+  assert.equal(request.execution.lifecycle, "finite");
+  assert.equal(request.execution.operationId, "opencode-catalog");
+  await assert.rejects(access(privateRoot), { code: "ENOENT" });
+});
+
+test("OpenCode API-key verification sanitizes provider failures and removes credentials", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-verify-failure-"));
+  const privateRoot = path.join(root, "private");
+  t.after(() => rm(root, { force: true, recursive: true }));
+
+  await assert.rejects(
+    () => verifyOpenCodeApiKey({
+      apiKey: "must-not-surface",
+      async commandRunner() {
+        return {
+          error: "401 key must-not-surface rejected",
+          ok: false,
+          stderr: "must-not-surface"
+        };
+      },
+      modelId: "glm-4.7-flash",
+      modelProviderId: "zai",
+      privateRoot,
+      workdir: path.join(root, "workdir")
+    }),
+    (error) => (
+      error?.code === "vibe64_opencode_key_verification_failed" &&
+      error.statusCode === 422 &&
+      !String(error.message).includes("must-not-surface")
+    )
+  );
+  await assert.rejects(access(privateRoot), { code: "ENOENT" });
+
+  await assert.rejects(
+    () => verifyOpenCodeApiKey({
+      apiKey: "must-not-surface",
+      async commandRunner() {
+        return {
+          error: "managed helper failed with must-not-surface",
+          exitCode: 2,
+          ok: false
+        };
+      },
+      modelId: "glm-4.7-flash",
+      modelProviderId: "zai",
+      privateRoot,
+      workdir: path.join(root, "workdir")
+    }),
+    (error) => (
+      error?.code === "vibe64_opencode_key_verification_unavailable" &&
+      error.statusCode === 503 &&
+      error.retryable === true &&
+      !String(error.message).includes("must-not-surface")
+    )
+  );
   await assert.rejects(access(privateRoot), { code: "ENOENT" });
 });
 
@@ -174,6 +219,16 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
     mode: "primary",
     permission: { "*": "deny" }
   });
+  assert.deepEqual(config.permission, {
+    doom_loop: "deny",
+    external_directory: "deny",
+    question: "deny",
+    read: {
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    }
+  });
   assert.equal(config.snapshot, false);
 });
 
@@ -198,6 +253,33 @@ test("OpenCode forces Z.AI API and Coding Plan through distinct canonical billin
     "https://api.z.ai/api/coding/paas/v4"
   );
   assert.notDeepEqual(standard.provider, codingPlan.provider);
+});
+
+test("OpenCode uses native provider routes when no URL override is supplied", () => {
+  const native = JSON.parse(openCodeInlineConfig({
+    modelProviderId: "zai",
+    providerConnections: [{
+      apiKey: "not-written-to-config",
+      modelProviderId: "zai-coding-plan"
+    }]
+  }));
+  const overridden = JSON.parse(openCodeInlineConfig({
+    providerConnections: [
+      { modelProviderId: "zai" },
+      {
+        canonicalUrl: "https://gateway.example.test/v1",
+        modelProviderId: "private-zai"
+      }
+    ]
+  }));
+
+  assert.equal(native.provider, undefined);
+  assert.deepEqual(Object.keys(overridden.provider), ["private-zai"]);
+  assert.equal(
+    overridden.provider["private-zai"].options.baseURL,
+    "https://gateway.example.test/v1"
+  );
+  assert.equal(JSON.stringify(native).includes("not-written-to-config"), false);
 });
 
 test("OpenCode route configuration contains one provider and no inherited provider keys", () => {

@@ -25,6 +25,7 @@ function responseEngines(resource) {
 
 function useVibe64AssistantCatalog({
   active,
+  configuredOnly = false,
   engineId,
   modelProviderId,
   modelSearch,
@@ -47,18 +48,31 @@ function useVibe64AssistantCatalog({
       VIBE64_SURFACE_ID,
       ROUTE_VISIBILITY_PUBLIC,
       projectSlug.value,
-      "overview"
+      [
+        "overview",
+        value(configuredOnly) ? "configured" : normalizedText(engineId) || "all",
+        value(providerConnectedOnly) ? "connected" : "all"
+      ].join(":")
     )),
     queryOptions: {
       refetchOnMount: "always",
       refetchOnWindowFocus: false
     },
-    readQuery: computed(() => ({ limit: "25" })),
+    readQuery: computed(() => ({
+      ...(value(configuredOnly) ? { configuredOnly: "true" } : {}),
+      ...(value(providerConnectedOnly) ? { connectedOnly: "true" } : {}),
+      ...(!value(configuredOnly) && normalizedText(engineId)
+        ? { engineId: normalizedText(engineId) }
+        : {}),
+      limit: value(configuredOnly) ? "100" : "25"
+    })),
     requestRecoveryLabel: "AI choices"
   });
 
   const providerPage = useEndpointResource({
-    enabled: computed(() => enabled.value && normalizedText(engineId) === "opencode"),
+    enabled: computed(() => (
+      enabled.value && !value(configuredOnly) && normalizedText(engineId) === "opencode"
+    )),
     fallbackLoadError: "OpenCode providers could not be loaded.",
     path: apiPath,
     queryKey: computed(() => vibe64AssistantCapabilitiesQueryKey(
@@ -88,6 +102,7 @@ function useVibe64AssistantCatalog({
   const modelPage = useEndpointResource({
     enabled: computed(() => Boolean(
       enabled.value &&
+      !value(configuredOnly) &&
       normalizedText(engineId) &&
       normalizedText(modelProviderId)
     )),
@@ -140,8 +155,12 @@ function useVibe64AssistantCatalog({
   async function reload() {
     await Promise.all([
       overview.reload(),
-      ...(normalizedText(engineId) === "opencode" ? [providerPage.reload()] : []),
-      ...(normalizedText(modelProviderId) ? [modelPage.reload()] : [])
+      ...(!value(configuredOnly) && normalizedText(engineId) === "opencode"
+        ? [providerPage.reload()]
+        : []),
+      ...(!value(configuredOnly) && normalizedText(modelProviderId)
+        ? [modelPage.reload()]
+        : [])
     ]);
   }
 

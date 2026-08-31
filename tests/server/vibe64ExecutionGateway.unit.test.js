@@ -1568,6 +1568,24 @@ test("execution helper operation policy distinguishes account auth from GitHub w
     mode: "detached",
     purpose: "assistant"
   }), "opencode-app-server");
+  assert.equal(helperOperationForRequest({
+    execution: {
+      kind: "assistant",
+      lifecycle: "service",
+      operationId: "opencode-catalog"
+    },
+    mode: "detached",
+    purpose: "assistant"
+  }), "opencode-app-server");
+  assert.equal(helperOperationForRequest({
+    execution: {
+      kind: "assistant",
+      lifecycle: "finite",
+      operationId: "opencode-catalog"
+    },
+    mode: "capture",
+    purpose: "assistant"
+  }), "opencode-app-server");
 });
 
 test("execution helper client sends normalized payloads through sudo helper", async () => {

@@ -69,7 +69,14 @@ function helperOperationForRequest(request = {}) {
     request.mode === "detached" &&
     request.execution?.kind === "assistant" &&
     request.execution?.lifecycle === "service" &&
-    request.execution?.operationId === "opencode-server"
+    ["opencode-catalog", "opencode-server"].includes(request.execution?.operationId)
+  ) {
+    return "opencode-app-server";
+  }
+  if (
+    request.mode === "capture" &&
+    request.execution?.kind === "assistant" &&
+    request.execution?.operationId === "opencode-catalog"
   ) {
     return "opencode-app-server";
   }

@@ -1164,7 +1164,7 @@ function authTerminalCredentialHome(providerContext = {}) {
 }
 
 function authTerminalPurpose(accountId = "") {
-  return accountId === "github" ? "github" : "codex";
+  return accountId === "github" ? "github" : "account";
 }
 
 function authSessionStatus({

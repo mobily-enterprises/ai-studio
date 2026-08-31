@@ -183,11 +183,16 @@ async function controllerHarness({
   const publishedSessionChanges = [];
   const switchedAgents = [];
   const switchedModels = [];
+  const verifyConnectionCalls = [];
   const upstreamSessions = new Map();
   const outputs = new Map();
   const queuedAssistantResponses = [...assistantResponses];
+  let failNextHealth = false;
   let failNextPrompt = false;
+  let listConnectionCalls = 0;
   let nextSession = 1;
+  let readSessionCalls = 0;
+  let runtimeCreateCalls = 0;
 
   function client() {
     return {
@@ -211,6 +216,10 @@ async function controllerHarness({
         return true;
       },
       async health() {
+        if (failNextHealth) {
+          failNextHealth = false;
+          throw new Error("health failed");
+        }
         return { healthy: true, version: "1.18.22" };
       },
       async interrupt() {
@@ -260,6 +269,7 @@ async function controllerHarness({
         return catalogProviders;
       },
       async readSession(id) {
+        readSessionCalls += 1;
         if (!upstreamSessions.has(id)) {
           throw Object.assign(new Error("missing"), { statusCode: 404 });
         }
@@ -337,14 +347,21 @@ async function controllerHarness({
       return started;
     },
     async listConnections() {
+      listConnectionCalls += 1;
       return [{
+        accessLabel: "Workspace use",
+        billingLabel: "Usage-based API billing",
+        connected: true,
+        economyModelId: connection.economyModelId,
         fingerprint: connection.fingerprint,
         modelProviderId: connection.modelProviderId,
+        productLabel: "DeepSeek",
         providerRevision: connection.providerRevision
       }];
     },
     projectService: {
       async createRuntime() {
+        runtimeCreateCalls += 1;
         return runtime;
       },
       async readProjectAiPolicy() {
@@ -366,6 +383,10 @@ async function controllerHarness({
     },
     async resolveConnection() {
       return { ...connection };
+    },
+    async verifyConnectionCommand(input) {
+      verifyConnectionCalls.push(input);
+      return { ok: true };
     }
   });
 
@@ -378,16 +399,22 @@ async function controllerHarness({
     commandEnvironmentCalls,
     controller,
     createdSessions,
+    failHealth() {
+      failNextHealth = true;
+    },
     failPrompt() {
       failNextPrompt = true;
     },
+    listConnectionCalls: () => listConnectionCalls,
     metadataWrites,
     processStarts,
     processStops,
     promptCalls,
     publishedSessionChanges,
     root,
+    readSessionCalls: () => readSessionCalls,
     runtime,
+    runtimeCreateCalls: () => runtimeCreateCalls,
     selection,
     session,
     switchedAgents,
@@ -396,11 +423,12 @@ async function controllerHarness({
     terminalStarts,
     thinkingMessages,
     upstreamSessions,
-    userMessages
+    userMessages,
+    verifyConnectionCalls
   };
 }
 
-test("OpenCode cold catalog reads include every configured provider route", async (t) => {
+test("OpenCode cold catalog discovery never loads configured credentials", async (t) => {
   const harness = await controllerHarness();
   t.after(async () => {
     await harness.controller.closeAllForProject();
@@ -410,14 +438,111 @@ test("OpenCode cold catalog reads include every configured provider route", asyn
   await harness.controller.capabilities({ engineId: "opencode" });
 
   assert.equal(harness.processStarts.length, 0);
-  assert.deepEqual(harness.catalogReadCalls[0].providerConnections, [{
-    apiKey: "deepseek-key-one",
-    canonicalUrl: "https://api.deepseek.com",
-    economyModelId: "deepseek-chat",
-    endpointCode: "deepseek_api",
-    fingerprint: `sha256:${"1".repeat(64)}`,
+  assert.equal(harness.runtimeCreateCalls(), 0);
+  assert.equal(path.basename(harness.catalogReadCalls[0].workdir), "workspace");
+  assert.equal(Object.hasOwn(harness.catalogReadCalls[0], "providerConnections"), false);
+  assert.equal(typeof harness.catalogReadCalls[0].createServerProcess, "function");
+});
+
+test("configured OpenCode choices never read or start OpenCode", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const result = await harness.controller.capabilities({ configuredOnly: "true" }, {
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(result.health.status, "ready");
+  assert.deepEqual(result.modelProviders.map(({ id }) => id), ["deepseek"]);
+  assert.equal(harness.catalogReadCalls.length, 0);
+  assert.equal(harness.processStarts.length, 0);
+  assert.equal(harness.runtimeCreateCalls(), 0);
+});
+
+test("OpenCode runtime invalidation preserves its credential-free catalog snapshot", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.capabilities({ engineId: "opencode" });
+  await harness.controller.invalidateRuntimes({
+    modelProviderId: "deepseek",
+    reason: "created"
+  });
+  await harness.controller.capabilities({ engineId: "opencode" });
+
+  assert.equal(harness.catalogReadCalls.length, 1);
+});
+
+test("OpenCode exposes a finite connection verifier through its controller", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const result = await harness.controller.verifyConnection({
+    apiKey: "deepseek-key",
+    engineId: "opencode",
+    modelId: "deepseek-chat",
     modelProviderId: "deepseek"
-  }]);
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(harness.verifyConnectionCalls.length, 1);
+  assert.equal(harness.verifyConnectionCalls[0].apiKey, "deepseek-key");
+  assert.equal(Object.hasOwn(harness.verifyConnectionCalls[0], "canonicalUrl"), false);
+  assert.equal(harness.verifyConnectionCalls[0].modelId, "deepseek-chat");
+  assert.equal(harness.verifyConnectionCalls[0].modelProviderId, "deepseek");
+  assert.equal(path.basename(harness.verifyConnectionCalls[0].workdir), "workspace");
+  await assert.rejects(
+    () => harness.controller.verifyConnection({ engineId: "codex" }),
+    (error) => error?.code === "vibe64_assistant_engine_invalid" && error.statusCode === 400
+  );
+  assert.equal(harness.verifyConnectionCalls.length, 1);
+  await assert.rejects(
+    () => harness.controller.verifyConnection({
+      apiKey: "deepseek-key",
+      engineId: "opencode",
+      modelId: "removed-model",
+      modelProviderId: "deepseek"
+    }),
+    (error) => error?.code === "vibe64_assistant_catalog_stale" && error.statusCode === 409
+  );
+  assert.equal(harness.verifyConnectionCalls.length, 1);
+});
+
+test("OpenCode connections use native provider routing when no URL override exists", async (t) => {
+  const harness = await controllerHarness();
+  harness.connection.canonicalUrl = "";
+  harness.connection.endpointCode = "";
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Reply exactly OK",
+    messageId: "client-message-native-provider-route"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(harness.processStarts.length, 1);
+  assert.equal(harness.processStarts[0].options.providerConnections.length, 1);
+  assert.equal(harness.processStarts[0].options.providerConnections[0].canonicalUrl, "");
+  assert.equal(harness.processStarts[0].options.providerConnections[0].endpointCode, "");
 });
 
 test("OpenCode leaves starting state when Git identity admission fails", async (t) => {
@@ -572,6 +697,66 @@ test("OpenCode persists a user message only after upstream admission", async (t)
   assert.equal(idle?.[1]?.payload?.agentRun?.state, "completed");
   assert.equal(idle?.[1]?.payload?.agentSession?.turn?.active, false);
   assert.equal(idle?.[1]?.payload?.agentSession?.turn?.state, "idle");
+});
+
+test("OpenCode reuses an established session without repeating setup or model switches", async (t) => {
+  const harness = await controllerHarness({
+    assistantResponses: ["First turn", "Second turn"],
+    withCommandBoundary: true
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  };
+
+  await harness.controller.sendMessage("session-1", {
+    message: "First",
+    messageId: "client-message-fast-path-1"
+  }, options);
+  await harness.controller.waitForTurn("session-1", options);
+  await harness.controller.sendMessage("session-1", {
+    message: "Second",
+    messageId: "client-message-fast-path-2"
+  }, options);
+  await harness.controller.waitForTurn("session-1", options);
+
+  assert.equal(harness.commandEnvironmentCalls.length, 2);
+  assert.equal(harness.processStarts.length, 1);
+  assert.equal(harness.listConnectionCalls(), 2);
+  assert.equal(harness.readSessionCalls(), 1);
+  assert.equal(harness.createdSessions.length, 1);
+  assert.deepEqual(harness.switchedModels, []);
+  assert.deepEqual(harness.switchedAgents, []);
+});
+
+test("OpenCode rechecks its native session after recovering an unhealthy server", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  };
+
+  const first = await harness.controller.ensureSession("session-1", options);
+  harness.failHealth();
+  const recovered = await harness.controller.ensureSession("session-1", options);
+
+  assert.equal(recovered.thread.id, first.thread.id);
+  assert.equal(harness.processStarts.length, 2);
+  assert.equal(harness.processStops.length, 1);
+  assert.equal(harness.readSessionCalls(), 2);
+  assert.equal(harness.createdSessions.length, 1);
+  assert.equal(harness.switchedModels.length, 1);
+  assert.equal(harness.switchedAgents.length, 1);
 });
 
 test("OpenCode recovers a reasoning-only completion into a final answer", async (t) => {
@@ -988,6 +1173,43 @@ test("OpenCode preserves structured provider errors as readable turn failures", 
   assert.equal(result.error, "Aborted");
   assert.equal(result.state, "failed");
   assert.deepEqual(harness.systemMessages, []);
+});
+
+test("OpenCode makes structured provider API failures actionable", async (t) => {
+  const harness = await controllerHarness({
+    assistantError: {
+      data: { message: "Insufficient balance. Top up your account." },
+      name: "APIError"
+    }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Reply exactly OK",
+    messageId: "client-message-provider-api-failure"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  const result = await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.equal(result.error, "Insufficient balance. Top up your account.");
+  assert.equal(result.state, "failed");
+  assert.equal(harness.systemMessages.length, 1);
+  assert.match(harness.systemMessages[0].text, /Insufficient balance\. Top up your account\./u);
+  assert.match(harness.systemMessages[0].text, /Saved project changes remain/u);
+  assert.match(harness.systemMessages[0].text, /\[Manage AI accounts\]\(\/app\/manage\/accounts\)/u);
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-provider-failure" &&
+    payload.payload?.conversationLogPatch?.type === "upsert-turn"
+  )), true);
 });
 
 test("OpenCode does not misclassify model token limits as credential failures", async (t) => {

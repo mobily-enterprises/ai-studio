@@ -9,7 +9,6 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
-import stripAnsi from "strip-ansi";
 
 import {
   isolatedProcessEnv,
@@ -24,9 +23,10 @@ const OPENCODE_EXPECTED_VERSION = "1.18.22";
 const OPENCODE_ECONOMY_AGENT_ID = "vibe64-economy";
 const OPENCODE_HOST = "127.0.0.1";
 const OPENCODE_LOG_LIMIT_BYTES = 64 * 1024;
-const OPENCODE_CATALOG_LIMIT_BYTES = 32 * 1024 * 1024;
 const OPENCODE_MANAGED_OUTPUT_TOKEN_MAX = 128 * 1024;
-const OPENCODE_CATALOG_TIMEOUT_MS = 30_000;
+const OPENCODE_VERIFY_LIMIT_BYTES = 256 * 1024;
+const OPENCODE_VERIFY_OUTPUT_TOKEN_MAX = 16;
+const OPENCODE_VERIFY_TIMEOUT_MS = 30_000;
 const OPENCODE_READY_TIMEOUT_MS = 30_000;
 const OPENCODE_STOP_TIMEOUT_MS = 3_000;
 const OPENCODE_SESSION_ENVIRONMENT_PLUGIN_URL = new URL(
@@ -53,93 +53,21 @@ const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
       }
     }
   },
+  permission: {
+    doom_loop: "deny",
+    external_directory: "deny",
+    question: "deny",
+    read: {
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    }
+  },
   snapshot: false
 });
 
 function text(value = "") {
   return String(value ?? "").trim();
-}
-
-function openCodeCatalogBlocks(value = "") {
-  const lines = stripAnsi(String(value || ""))
-    .replace(/\r\n?/gu, "\n")
-    .split("\n");
-  const blocks = [];
-  let header = "";
-  let source = [];
-  for (const line of lines) {
-    const normalized = line.trim();
-    if (source.length === 0) {
-      if (normalized.startsWith("{") || normalized.startsWith("[")) {
-        try {
-          blocks.push({
-            header,
-            value: JSON.parse(line)
-          });
-          header = "";
-        } catch {
-          source = [line];
-        }
-      } else if (normalized) {
-        header = normalized;
-      }
-      continue;
-    }
-    source.push(line);
-    try {
-      blocks.push({
-        header,
-        value: JSON.parse(source.join("\n"))
-      });
-      header = "";
-      source = [];
-    } catch {
-      // The pretty-printed JSON block is not complete yet.
-    }
-  }
-  return blocks;
-}
-
-function parseOpenCodeModelCatalog(value = "") {
-  const providers = new Map();
-  const defaults = {};
-  for (const block of openCodeCatalogBlocks(value)) {
-    const model = block.value;
-    const providerId = text(model?.providerID || block.header.split("/")[0]);
-    const modelId = text(model?.id || block.header.slice(providerId.length + 1));
-    if (!providerId || !modelId || !model || typeof model !== "object" || Array.isArray(model)) {
-      continue;
-    }
-    const provider = providers.get(providerId) || {
-      id: providerId,
-      models: {},
-      name: providerId,
-      source: "api"
-    };
-    provider.models[modelId] = { ...model, id: modelId };
-    providers.set(providerId, provider);
-    defaults[providerId] ||= modelId;
-  }
-  if (providers.size === 0) {
-    throw new Error("OpenCode returned no parseable model catalogue.");
-  }
-  return {
-    all: [...providers.values()],
-    default: defaults
-  };
-}
-
-function parseOpenCodeAgentCatalog(value = "") {
-  return openCodeCatalogBlocks(value).map((block) => {
-    const match = block.header.match(/^(.*?)\s+\(([^)]+)\)$/u);
-    return {
-      description: "",
-      hidden: false,
-      mode: text(match?.[2]) || "primary",
-      name: text(match?.[1] || block.header),
-      permission: block.value
-    };
-  }).filter((agent) => agent.name);
 }
 
 function canonicalProviderUrl(value = "") {
@@ -173,14 +101,16 @@ function openCodeInlineConfig({
   sessionEnvironmentRegistry = ""
 } = {}) {
   const routes = new Map();
-  if (text(modelProviderId) || text(canonicalUrl)) {
+  if (text(canonicalUrl)) {
     routes.set(text(modelProviderId), canonicalProviderUrl(canonicalUrl));
   }
   for (const connection of Array.isArray(providerConnections) ? providerConnections : []) {
-    routes.set(text(connection?.modelProviderId), canonicalProviderUrl(connection?.canonicalUrl));
+    if (text(connection?.canonicalUrl)) {
+      routes.set(text(connection?.modelProviderId), canonicalProviderUrl(connection.canonicalUrl));
+    }
   }
-  if ([...routes].some(([providerId, baseURL]) => !providerId || !baseURL)) {
-    throw new TypeError("OpenCode provider id and canonical URL must be supplied together.");
+  if ([...routes].some(([providerId]) => !providerId)) {
+    throw new TypeError("OpenCode provider URL overrides require a provider id.");
   }
   return JSON.stringify({
     ...OPENCODE_INLINE_CONFIG_BASE,
@@ -210,6 +140,7 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
   dbPath = "",
   managedEnv = {},
   modelProviderId = "",
+  outputTokenMax = 0,
   password = "",
   privateRoot = "",
   providerConnections = [],
@@ -246,6 +177,9 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
       OPENCODE_PRINT_LOGS: "0",
       OPENCODE_SERVER_PASSWORD: password,
       OPENCODE_SERVER_USERNAME: "opencode",
+      ...(Number.isSafeInteger(outputTokenMax) && outputTokenMax > 0
+        ? { OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(outputTokenMax) }
+        : {}),
       ...(text(sessionEnvironmentRegistry)
         ? {
             OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(OPENCODE_MANAGED_OUTPUT_TOKEN_MAX),
@@ -599,9 +533,9 @@ async function readOpenCodeCatalog({
   cacheRoot = "",
   command = "opencode",
   commandRunner = runVibe64Command,
+  createServerProcess = createOpenCodeServerProcess,
   env = process.env,
   privateRoot = "",
-  providerConnections = [],
   workdir = ""
 } = {}) {
   const normalizedPrivateRoot = path.resolve(text(privateRoot));
@@ -609,73 +543,148 @@ async function readOpenCodeCatalog({
   if (!text(privateRoot) || !text(workdir)) {
     throw new TypeError("OpenCode catalogue reads require private and working roots.");
   }
-  await Promise.all([
-    mkdir(normalizedPrivateRoot, { mode: 0o700, recursive: true }),
-    mkdir(normalizedWorkdir, { recursive: true })
-  ]);
-  const providerAuth = Object.fromEntries((Array.isArray(providerConnections) ? providerConnections : [])
-    .map((connection) => [
-      text(connection?.modelProviderId),
-      String(connection?.apiKey || "")
-    ])
-    .filter(([providerId, apiKey]) => providerId && apiKey)
-    .map(([providerId, apiKey]) => [providerId, { key: apiKey, type: "api" }]));
-  if (Object.keys(providerAuth).length > 0) {
-    const authRoot = path.join(normalizedPrivateRoot, "data", "opencode");
-    await mkdir(authRoot, { mode: 0o700, recursive: true });
-    await writeFile(path.join(authRoot, "auth.json"), `${JSON.stringify(providerAuth)}\n`, {
-      mode: 0o600
-    });
-  }
-  const processEnv = safeOpenCodeEnvironment(env, {
+  const server = await createServerProcess({
     cacheRoot,
+    command,
+    commandRunner,
     dbPath: path.join(normalizedPrivateRoot, "opencode.db"),
+    env,
+    execution: {
+      label: "Reading OpenCode catalogue",
+      operationId: "opencode-catalog",
+      ownerId: "opencode-catalog"
+    },
     privateRoot: normalizedPrivateRoot,
-    providerConnections
+    providerConnections: [],
+    workdir: normalizedWorkdir
   });
-  const run = async (args, label) => {
-    const result = await commandRunner({
-      actor: "app",
-      allowedRoots: [normalizedWorkdir],
-      args,
-      baseEnv: processEnv,
-      command: text(command) || "opencode",
-      credentialHome: {
-        cacheRoot: text(cacheRoot) ? path.resolve(cacheRoot) : path.join(normalizedPrivateRoot, "cache"),
-        configRoot: path.join(normalizedPrivateRoot, "config"),
-        dataRoot: path.join(normalizedPrivateRoot, "data"),
-        home: path.join(normalizedPrivateRoot, "home"),
-        stateRoot: path.join(normalizedPrivateRoot, "state")
-      },
-      cwd: normalizedWorkdir,
-      envPolicy: "auth",
-      execution: {
-        kind: "assistant",
-        label,
-        lifecycle: "finite",
-        operationId: "opencode-catalog",
-        ownerId: "opencode-catalog"
-      },
-      inheritProcessEnv: false,
-      maxBuffer: OPENCODE_CATALOG_LIMIT_BYTES,
-      mode: "capture",
-      purpose: "assistant",
-      timeout: OPENCODE_CATALOG_TIMEOUT_MS
+  let catalog;
+  let readError;
+  try {
+    const [providers, agents] = await Promise.all([
+      server.client.providers({ directory: server.workdir }),
+      server.client.agents({ directory: server.workdir })
+    ]);
+    catalog = { agents, providers };
+  } catch (error) {
+    readError = error;
+  }
+  const stopped = await server.stop();
+  if (stopped?.exited !== true) {
+    const error = new Error("The temporary OpenCode catalogue process did not stop cleanly.");
+    error.code = "vibe64_opencode_catalog_stop_failed";
+    throw error;
+  }
+  if (readError) {
+    throw readError;
+  }
+  return catalog;
+}
+
+async function verifyOpenCodeApiKey({
+  apiKey = "",
+  cacheRoot = "",
+  command = "opencode",
+  commandRunner = runVibe64Command,
+  env = process.env,
+  modelId = "",
+  modelProviderId = "",
+  privateRoot = "",
+  workdir = ""
+} = {}) {
+  const key = String(apiKey || "");
+  const providerId = text(modelProviderId);
+  const selectedModelId = text(modelId);
+  const normalizedPrivateRoot = path.resolve(text(privateRoot));
+  const normalizedWorkdir = path.resolve(text(workdir));
+  if (!key || !providerId || !selectedModelId || !text(privateRoot) || !text(workdir)) {
+    throw new TypeError("OpenCode API-key verification requires a key, provider, model, and isolated roots.");
+  }
+  try {
+    await Promise.all([
+      mkdir(path.join(normalizedPrivateRoot, "data", "opencode"), {
+        mode: 0o700,
+        recursive: true
+      }),
+      mkdir(normalizedWorkdir, { recursive: true })
+    ]);
+    await writeFile(
+      path.join(normalizedPrivateRoot, "data", "opencode", "auth.json"),
+      `${JSON.stringify({ [providerId]: { key, type: "api" } })}\n`,
+      { mode: 0o600 }
+    );
+    const processEnv = safeOpenCodeEnvironment(env, {
+      cacheRoot,
+      dbPath: path.join(normalizedPrivateRoot, "opencode.db"),
+      outputTokenMax: OPENCODE_VERIFY_OUTPUT_TOKEN_MAX,
+      privateRoot: normalizedPrivateRoot
     });
-    if (result?.ok !== true) {
-      const error = new Error(text(result?.error || result?.stderr || result?.stdout) || `${label} failed.`);
-      error.code = text(result?.code) || "vibe64_opencode_catalog_failed";
+    let result;
+    try {
+      result = await commandRunner({
+        actor: "app",
+        allowedRoots: [normalizedWorkdir],
+        args: [
+          "run",
+          "--pure",
+          "--agent",
+          OPENCODE_ECONOMY_AGENT_ID,
+          "--model",
+          `${providerId}/${selectedModelId}`,
+          "--format",
+          "json",
+          "Reply only OK."
+        ],
+        baseEnv: processEnv,
+        command: text(command) || "opencode",
+        credentialHome: {
+          cacheRoot: text(cacheRoot)
+            ? path.resolve(cacheRoot)
+            : path.join(normalizedPrivateRoot, "cache"),
+          configRoot: path.join(normalizedPrivateRoot, "config"),
+          dataRoot: path.join(normalizedPrivateRoot, "data"),
+          home: path.join(normalizedPrivateRoot, "home"),
+          stateRoot: path.join(normalizedPrivateRoot, "state")
+        },
+        cwd: normalizedWorkdir,
+        envPolicy: "auth",
+        execution: {
+          kind: "assistant",
+          label: "Verifying OpenCode API key",
+          lifecycle: "finite",
+          operationId: "opencode-catalog",
+          ownerId: "opencode-catalog"
+        },
+        inheritProcessEnv: false,
+        maxBuffer: OPENCODE_VERIFY_LIMIT_BYTES,
+        mode: "capture",
+        purpose: "assistant",
+        timeout: OPENCODE_VERIFY_TIMEOUT_MS
+      });
+    } catch {
+      const error = new Error("OpenCode API-key verification could not run.");
+      error.code = "vibe64_opencode_key_verification_unavailable";
+      error.retryable = true;
+      error.statusCode = 503;
       throw error;
     }
-    return String(result.stdout || "");
-  };
-  try {
-    const models = await run(["models", "--pure", "--verbose"], "Reading OpenCode models");
-    const agents = await run(["agent", "list", "--pure"], "Reading OpenCode agents");
-    return {
-      agents: parseOpenCodeAgentCatalog(agents),
-      providers: parseOpenCodeModelCatalog(models)
-    };
+    if (result?.ok !== true) {
+      const exitCode = Number(result?.exitCode);
+      const unavailable = result?.timedOut === true ||
+        result?.retryable === true ||
+        Boolean(text(result?.code)) ||
+        (Number.isSafeInteger(exitCode) && exitCode !== 1);
+      const error = new Error(unavailable
+        ? "OpenCode API-key verification could not run."
+        : "OpenCode rejected the API-key verification request.");
+      error.code = unavailable
+        ? "vibe64_opencode_key_verification_unavailable"
+        : "vibe64_opencode_key_verification_failed";
+      error.retryable = unavailable;
+      error.statusCode = unavailable ? 503 : 422;
+      throw error;
+    }
+    return Object.freeze({ ok: true });
   } finally {
     await rm(normalizedPrivateRoot, { force: true, recursive: true });
   }
@@ -691,8 +700,7 @@ export {
   canonicalProviderUrl,
   createOpenCodeServerProcess,
   openCodeInlineConfig,
-  parseOpenCodeAgentCatalog,
-  parseOpenCodeModelCatalog,
   readOpenCodeCatalog,
-  safeOpenCodeEnvironment
+  safeOpenCodeEnvironment,
+  verifyOpenCodeApiKey
 };

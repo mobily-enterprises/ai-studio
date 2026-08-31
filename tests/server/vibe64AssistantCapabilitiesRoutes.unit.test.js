@@ -16,7 +16,7 @@ import {
   withRouteProject
 } from "./vibe64RouteTestHelpers.js";
 
-test("assistant capability routes forward the connected-provider filter", async () => {
+test("assistant capability routes forward configured and connected filters", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const app = testRouteApp();
@@ -39,6 +39,7 @@ test("assistant capability routes forward the connected-provider filter", async 
         },
         input: {
           query: {
+            configuredOnly: "true",
             connectedOnly: "true",
             engineId: "opencode",
             limit: "25"
@@ -49,6 +50,7 @@ test("assistant capability routes forward the connected-provider filter", async 
       }, testReply());
 
       assert.equal(action.actionId, ACTION_LIST_ASSISTANT_CAPABILITIES);
+      assert.equal(action.input.configuredOnly, "true");
       assert.equal(action.input.connectedOnly, "true");
       assert.equal(action.input.engineId, "opencode");
       assert.equal(action.input.limit, "25");

@@ -186,9 +186,13 @@ function normalizedModelProvider(value = {}) {
     ids.add(model.id);
   }
   return Object.freeze({
+    apiKeyCompatible: input.apiKeyCompatible === true,
     connected: input.connected === true,
     connectionMessage: text(input.connectionMessage),
     connectionStatus: text(input.connectionStatus) || (input.connected === true ? "connected" : "disconnected"),
+    defaultModelId: boundedIdentifier(input.defaultModelId, "modelProvider.defaultModelId", {
+      allowEmpty: true
+    }),
     definitionRevision: text(input.definitionRevision),
     description: text(input.description),
     id,

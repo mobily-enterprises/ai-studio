@@ -2038,6 +2038,11 @@ function createService({
       return sessionAgent.listCapabilities(input, options);
     },
 
+    verifyAssistantConnection(input = {}, options = {}) {
+      void options;
+      return opencode.verifyConnection(input);
+    },
+
     resolveAssistantSelection(input = {}, options = {}) {
       return sessionAgent.resolveSelection(input, options);
     },

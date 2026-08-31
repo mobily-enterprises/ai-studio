@@ -27,7 +27,9 @@ function capabilities(overrides = {}) {
     health: { status: "ready" },
     label: "OpenCode",
     modelProviders: [{
+      apiKeyCompatible: true,
       connected: true,
+      defaultModelId: "deepseek-chat",
       id: "deepseek",
       label: "DeepSeek",
       models: [{
@@ -42,6 +44,13 @@ function capabilities(overrides = {}) {
     ...overrides
   };
 }
+
+test("assistant capabilities preserve each provider's native default model", () => {
+  const defined = defineVibe64AssistantCapabilities(capabilities());
+
+  assert.equal(defined.modelProviders[0].defaultModelId, "deepseek-chat");
+  assert.equal(defined.modelProviders[0].apiKeyCompatible, true);
+});
 
 test("assistant selection resolves omitted fields from one live catalog revision", () => {
   const resolved = resolveVibe64AssistantSelection(capabilities(), {

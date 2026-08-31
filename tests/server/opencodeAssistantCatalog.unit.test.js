@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  openCodeAssistantCapabilities
+  openCodeAssistantCapabilities,
+  openCodeConfiguredAssistantCapabilities
 } from "../../packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js";
 
 function provider(id, {
+  apiKeyCompatible = true,
   modelCount = 2,
   name = id
 } = {}) {
   return {
+    apiKeyCompatible,
     id,
     models: Object.fromEntries(Array.from({ length: modelCount }, (_, index) => {
       const modelId = `${id}-model-${String(index + 1).padStart(2, "0")}`;
@@ -21,6 +24,7 @@ function provider(id, {
         },
         family: `${id} family`,
         id: modelId,
+        limit: { context: 200_000, output: 32_000 },
         name: `${name} Model ${index + 1}`,
         status: index === modelCount - 1 && modelCount > 2 ? "deprecated" : "active",
         variants: {
@@ -63,6 +67,62 @@ const agents = [
     name: "explore"
   }
 ];
+
+test("configured OpenCode choices come only from saved Vibe64 connections", () => {
+  const result = openCodeConfiguredAssistantCapabilities({
+    connections: [{
+      accessLabel: "Workspace use",
+      billingLabel: "Usage-based API billing",
+      connected: true,
+      economyModelId: "deepseek-v4-flash",
+      fingerprint: `sha256:${"1".repeat(64)}`,
+      modelProviderId: "deepseek",
+      productLabel: "DeepSeek",
+      providerRevision: `sha256:${"2".repeat(64)}`
+    }, {
+      accessLabel: "Personal use",
+      billingLabel: "Coding Plan quota",
+      connected: true,
+      economyModelId: "glm-5.3-flash",
+      fingerprint: `sha256:${"3".repeat(64)}`,
+      modelProviderId: "zai-coding-plan",
+      productLabel: "GLM · Personal Coding Plan",
+      providerRevision: `sha256:${"4".repeat(64)}`
+    }]
+  });
+
+  assert.equal(result.health.status, "ready");
+  assert.deepEqual(result.modelProviders.map(({ id }) => id), [
+    "deepseek",
+    "zai-coding-plan"
+  ]);
+  assert.deepEqual(result.modelProviders[1], {
+    apiKeyCompatible: true,
+    connected: true,
+    connectionMessage: "",
+    connectionStatus: "connected",
+    defaultModelId: "glm-5.3-flash",
+    definitionRevision: `sha256:${"4".repeat(64)}`,
+    description: "Coding Plan quota · Personal use",
+    id: "zai-coding-plan",
+    label: "GLM · Personal Coding Plan",
+    models: [{
+      capabilities: {},
+      description: "Saved default model",
+      id: "glm-5.3-flash",
+      label: "glm-5.3-flash",
+      status: "available",
+      variants: []
+    }]
+  });
+  assert.deepEqual(result.defaults, {
+    agentId: "build",
+    modelId: "deepseek-v4-flash",
+    modelProviderId: "deepseek",
+    variantId: ""
+  });
+  assert.match(result.revision, /^sha256:[a-f0-9]{64}$/u);
+});
 
 test("OpenCode catalog searches and pages providers without exposing hidden agents", () => {
   const all = Array.from({ length: 31 }, (_, index) => provider(
@@ -162,7 +222,11 @@ test("OpenCode catalog requires reconfirmation when a live provider definition c
     providers: providerResult
   });
   assert.equal(connected.health.status, "ready");
+  assert.equal(connected.modelProviders[0].apiKeyCompatible, true);
   assert.equal(connected.modelProviders[0].connected, true);
+  assert.equal(connected.modelProviders[0].defaultModelId, "deepseek-model-01");
+  assert.equal(connected.modelProviders[0].models[0].capabilities.contextWindow, 200_000);
+  assert.equal(connected.modelProviders[0].models[0].capabilities.maxOutputTokens, 32_000);
   assert.deepEqual(connected.defaults, {
     agentId: "build",
     modelId: "deepseek-model-01",
@@ -188,6 +252,64 @@ test("OpenCode catalog requires reconfirmation when a live provider definition c
   assert.equal(stale.modelProviders[0].connectionStatus, "reconfirmation-required");
   assert.notEqual(stale.modelProviders[0].definitionRevision, definitionRevision);
   assert.notEqual(stale.revision, connected.revision);
+});
+
+test("OpenCode includes API-key compatibility in provider definition revisions", () => {
+  const compatible = openCodeAssistantCapabilities({
+    agents,
+    providers: {
+      all: [provider("ordinary")],
+      default: { ordinary: "ordinary-model-01" }
+    }
+  });
+  const incompatible = openCodeAssistantCapabilities({
+    agents,
+    providers: {
+      all: [provider("ordinary", { apiKeyCompatible: false })],
+      default: { ordinary: "ordinary-model-01" }
+    }
+  });
+
+  assert.equal(compatible.modelProviders[0].apiKeyCompatible, true);
+  assert.equal(incompatible.modelProviders[0].apiKeyCompatible, false);
+  assert.notEqual(
+    compatible.modelProviders[0].definitionRevision,
+    incompatible.modelProviders[0].definitionRevision
+  );
+  assert.notEqual(compatible.revision, incompatible.revision);
+});
+
+test("OpenCode exposes only valid native defaults for arbitrary disconnected providers", () => {
+  const arbitrary = provider("community-provider", {
+    modelCount: 3,
+    name: "Community Provider"
+  });
+  const valid = openCodeAssistantCapabilities({
+    agents,
+    providers: {
+      all: [arbitrary],
+      default: { "community-provider": "community-provider-model-01" }
+    }
+  });
+  const foreign = openCodeAssistantCapabilities({
+    agents,
+    providers: {
+      all: [arbitrary],
+      default: { "community-provider": "another-provider-model-01" }
+    }
+  });
+  const unavailable = openCodeAssistantCapabilities({
+    agents,
+    providers: {
+      all: [arbitrary],
+      default: { "community-provider": "community-provider-model-03" }
+    }
+  });
+
+  assert.equal(valid.modelProviders[0].connectionStatus, "disconnected");
+  assert.equal(valid.modelProviders[0].defaultModelId, "community-provider-model-01");
+  assert.equal(foreign.modelProviders[0].defaultModelId, "");
+  assert.equal(unavailable.modelProviders[0].defaultModelId, "");
 });
 
 test("OpenCode catalog pages and searches one provider's live model list", () => {

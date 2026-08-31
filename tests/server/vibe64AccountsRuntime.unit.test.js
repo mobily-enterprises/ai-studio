@@ -1518,6 +1518,7 @@ test("cancelled Codex auth sessions do not clear reconnect-required state", asyn
       reason: "codex-app-server-ensure-available"
     });
 
+    const terminalRequests = [];
     const service = createService({
       accountRuntime: createAccountsRuntime({
         daemonHome,
@@ -1543,12 +1544,15 @@ test("cancelled Codex auth sessions do not clear reconnect-required state", asyn
         }
         throw new Error(`Unexpected host command: ${args.join(" ")}`);
       },
-      runAuthTerminalCommand: (input = {}) => startGatewayAuthTestTerminal(input, {
-        args: ["-e", "setTimeout(() => {}, 60_000);"],
-        command: process.execPath,
-        commandPreview: "node -e setTimeout",
-        env: {}
-      })
+      runAuthTerminalCommand: (input = {}) => {
+        terminalRequests.push(input);
+        return startGatewayAuthTestTerminal(input, {
+          args: ["-e", "setTimeout(() => {}, 60_000);"],
+          command: process.execPath,
+          commandPreview: "node -e setTimeout",
+          env: {}
+        });
+      }
     });
 
     const session = await service.startAuth({
@@ -1557,6 +1561,7 @@ test("cancelled Codex auth sessions do not clear reconnect-required state", asyn
     });
     assert.equal(session.ok, true);
     assert.equal(session.status, "authenticating");
+    assert.equal(terminalRequests[0].purpose, "account");
 
     const cancel = await service.cancelAuthSession({
       sessionId: session.id

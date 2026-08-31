@@ -6,6 +6,7 @@ import {
   codexAppServerAutomaticHookNoOutput,
   codexAppServerContextRefreshReason,
   codexAppServerErrorText,
+  codexAppServerNotificationUsageLimitExceeded,
   codexAppServerOutputOwnerTurnId,
   codexAppServerProviderThreadAssistantSegments
 } from "../../packages/vibe64-terminals/src/server/codexAppServerEvents.js";
@@ -71,6 +72,32 @@ test("Codex app-server errors retain structured provider details", () => {
     threadId: "thread-1",
     turnId: "turn-1"
   });
+});
+
+test("Codex usage-limit recovery relies on the structured provider error code", () => {
+  assert.equal(codexAppServerNotificationUsageLimitExceeded({
+    method: "turn/completed",
+    params: {
+      turn: {
+        error: {
+          codexErrorInfo: "usageLimitExceeded",
+          message: "You've hit your usage limit. Try again at 10:30 AM."
+        },
+        status: "failed"
+      }
+    }
+  }), true);
+  assert.equal(codexAppServerNotificationUsageLimitExceeded({
+    method: "turn/completed",
+    params: {
+      turn: {
+        error: {
+          message: "You've hit your usage limit."
+        },
+        status: "failed"
+      }
+    }
+  }), false);
 });
 
 test("Codex app-server event classifier keeps final answers explicit", () => {

@@ -8,6 +8,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-sessions/src/server/inputSchemas.js`
 - `packages/vibe64-sessions/src/server/registerRoutes.js`
 - `packages/vibe64-sessions/src/server/service.js`
+- `packages/vibe64-runtime/src/shared/assistantSelection.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
 - `packages/vibe64-execution/src/host/execHelper.js`
@@ -15,12 +16,15 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-terminals/src/server/agentCommandEnvironment.js`
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
 - `packages/vibe64-terminals/src/server/agent/providers/opencodeSessionAgentProvider.js`
+- `packages/vibe64-terminals/src/server/codexAppServerEvents.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
+- `packages/vibe64-terminals/src/server/codexTurnOutcomeNotice.js`
 - `packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js`
 - `packages/vibe64-terminals/src/server/opencodeServerClient.js`
 - `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
 - `packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js`
 - `packages/vibe64-terminals/src/server/opencodeTerminal.js`
+- `packages/vibe64-terminals/src/server/service.js`
 - `packages/vibe64-terminals/src/server/sessionPromptHints.js`
 - `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
@@ -60,15 +64,24 @@ The chat cog opens a compact selector for the AI used by that session. It shows
 only currently connected providers and their available models, chooses a
 compatible conversation agent automatically, and offers the selected model's
 thinking choices when present. A provider-default thinking choice delegates
-that setting to the provider instead of substituting another listed choice. A
-session keeps the assistant engine that owns its native history: Codex cannot
-be changed to OpenCode or vice versa. Between turns, the selector may apply a
-complete, compatible model choice within that fixed engine; it cannot change
-the selection during an active turn. People can choose among already connected
-AIs even when they cannot manage account connections; only people who can
-manage connections see the shortcut to configure more. Loading, retryable
-catalog failures, and the absence of a connected AI remain visible inside the
-selector.
+that setting to the provider instead of substituting another listed choice.
+The new-session AI chooser is a separate, preloaded view of Vibe64's saved AI
+connections. It presents one choice for Codex when connected and one choice for
+each saved OpenCode route, using each connection's verified default model. It
+does not start OpenCode or read OpenCode's provider and model catalogue when
+the chooser opens or when the session is created; creation validates the
+selection against the same saved connection view. A session keeps the
+assistant engine that owns its native history: Codex cannot be changed to
+OpenCode or vice versa. Between turns, the explicitly opened chat selector may
+load and apply a complete, compatible model choice within that fixed engine;
+merely opening or creating a session does not load that catalogue, and an
+active turn cannot change the selection. Distinct OpenCode provider ids remain
+distinct choices, so separate routes or plans from one provider can coexist and
+be selected independently without becoming Codex. People can choose among
+already connected AIs even when they cannot manage account connections; only
+people who can manage connections see the shortcut to configure more. Loading,
+retryable failures, and the absence of a connected AI remain visible in the
+relevant selector.
 
 Managed OpenCode requests allow up to 128K output tokens only when the selected
 model advertises that capacity. A smaller advertised output limit remains
@@ -111,9 +124,16 @@ composer normally. Selecting a suggestion inserts ordinary editable text.
 
 If an OpenCode provider later rejects a previously saved key, the failed turn
 records a durable recovery notice that links the owner to AI Accounts without
-exposing the raw provider credential error. Existing conversation and project
-changes remain available, and the person can retry after the owner verifies a
-replacement key.
+exposing the raw provider credential error. Other structured OpenCode API
+failures preserve the readable provider message and add the same durable
+account-management route. Existing conversation and project changes remain
+available for either failure, and the person can retry after the account is
+recovered.
+
+When Codex reports its exact structured usage-limit condition, the durable turn
+outcome links directly to Codex usage and billing while preserving completed
+project changes. Similar prose alone is not classified as quota exhaustion, so
+an unrelated failure cannot gain an account link merely because of its wording.
 
 ## Implementation map
 
@@ -145,11 +165,21 @@ replacement key.
   so the shared service can route commands through the authenticated session
   boundary without executing arbitrary project plugins. It raises OpenCode's
   response and compaction ceiling only alongside that trusted plugin.
-- `readOpenCodeCatalog()` gives a bounded cold catalogue read the configured
-  provider routes and an isolated temporary OpenCode credential store. This
-  lets endpoint-specific providers expose their native model definitions while
-  the resident OpenCode service stays asleep; the temporary store is removed
-  when the read finishes.
+- `readOpenCodeCatalog()` starts a bounded, credential-free temporary OpenCode
+  service and reads its complete provider and agent APIs while the resident
+  session service stays asleep. The client allowlists safe provider and model
+  capability fields before they can enter the catalogue cache, and the
+  temporary service must be proven stopped before the result is returned.
+- `openCodeConfiguredAssistantCapabilities()` projects saved connection labels,
+  access descriptions, and verified default models into the new-session choices
+  without consulting the live OpenCode catalogue. The configured-only
+  capability and session-creation paths both use that projection, while
+  `Vibe64AssistantSessionDialog` preloads it before the dialog opens.
+- `verifyConnection()` checks the exact current provider and model before
+  `verifyOpenCodeApiKey()` runs one finite, tool-free request in an isolated
+  credential home. It omits provider URL overrides so OpenCode owns native
+  routing, bounds time, output, and captured bytes, sanitizes failures, and
+  removes the temporary credential root on every outcome.
 - `Vibe64SessionEnvironment` presents ordinary shell commands rather than
   Vibe64's transport wrapper in the model-facing instructions and history. At
   execution it recognizes only canonical invocations of the session's exact
@@ -179,10 +209,13 @@ replacement key.
   owns its bounded snapshot, stream, input, resize, close, and session cleanup;
   ordinary input transport does not repeat assistant-selection authorization.
 - `helperOperationForRequest()` keeps assistant PTYs on the project command
-  policy instead of the home-only account-login policy.
-- `resolveAllowedCwd()` derives the shared assistant service runtime boundary
-  from the workspace daemon owner and admits only the exact Codex or OpenCode
-  provider workspace outside managed project roots.
+  policy instead of the home-only account-login policy, and maps both the
+  resident OpenCode service and its credential-free catalogue service to the
+  constrained OpenCode provider-workspace policy.
+- `resolveAllowedCwd()` admits only the exact Codex or OpenCode provider
+  workspace beneath either the hosted workspace runtime or the target OS
+  user's per-user runtime, covering hosted services and standalone local use
+  without granting general access outside managed project roots.
 - `runManagedExecutionPayload()` holds a managed service's controller lease and
   terminates the detached service process group if that lease closes.
 - `vite.config.mjs` temporarily preserves xterm identifiers and syntax because

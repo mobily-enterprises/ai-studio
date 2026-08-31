@@ -169,6 +169,7 @@ import {
   codexAppServerNotificationThreadId,
   codexAppServerNotificationTurnId,
   codexAppServerNotificationTurnStatus,
+  codexAppServerNotificationUsageLimitExceeded,
   codexAppServerProviderThreadAssistantSegments,
   codexAppServerOutputOwnerTurnId,
   codexAppServerStatusFromValue,
@@ -3050,7 +3051,7 @@ function createCodexTerminalController({
     return error;
   }
 
-  async function stopCodexAppServerRuntimeForShutdown(record = {}, {
+  async function stopOwnedCodexAppServerRuntime(record = {}, {
     cached = false,
     preserveProcessExitProof = false,
     requireVerifiedExit = true
@@ -3300,7 +3301,7 @@ function createCodexTerminalController({
     includeOwned = false,
     reason = "",
     requireVerifiedExit = false,
-    shutdown = false,
+    stopOwnedRuntimes = false,
     toolHomeSource = ""
   } = {}) {
     const normalizedToolHomeSource = normalizeText(toolHomeSource);
@@ -3353,19 +3354,19 @@ function createCodexTerminalController({
         fields.executionMode !== CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
       );
       try {
-        const result = shutdown && target.record
-          ? await stopCodexAppServerRuntimeForShutdown({
+        const result = stopOwnedRuntimes && target.record
+          ? await stopOwnedCodexAppServerRuntime({
               ...(target.record || {}),
               provider: target.provider,
               providerKey: target.providerKey
             }, {
               cached: target.kind === "cached",
               preserveProcessExitProof,
-              requireVerifiedExit: true
+              requireVerifiedExit
             })
           : await stopCachedCodexAppServerProvider(target.providerKey, {
               preserveProcessExitProof,
-              requireStopped: shutdown && target.record != null
+              requireStopped: stopOwnedRuntimes && target.record != null
             });
         if (
           requireVerifiedExit &&
@@ -3410,7 +3411,7 @@ function createCodexTerminalController({
           includeOwned: true,
           reason: "server-shutdown",
           requireVerifiedExit: true,
-          shutdown: true
+          stopOwnedRuntimes: true
         });
         const drain = drainCodexAppServerControllerTasks();
         const [invalidated, drained] = await Promise.allSettled([
@@ -3425,7 +3426,7 @@ function createCodexTerminalController({
           includeOwned: true,
           reason: "server-shutdown",
           requireVerifiedExit: true,
-          shutdown: true
+          stopOwnedRuntimes: true
         });
         if (invalidated.status === "rejected") {
           throw invalidated.reason;
@@ -6266,7 +6267,8 @@ function createCodexTerminalController({
     threadId = "",
     turnId = "",
     outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
-    detail = ""
+    detail = "",
+    { usageLimitExceeded = false } = {}
   ) {
     return writeCodexTurnOutcomeNotice({
       detail,
@@ -6275,7 +6277,8 @@ function createCodexTerminalController({
       sessionId,
       store: runtime?.store,
       threadId,
-      turnId
+      turnId,
+      usageLimitExceeded
     });
   }
 
@@ -6555,6 +6558,7 @@ function createCodexTerminalController({
     outcome = CODEX_TURN_OUTCOME.PROVIDER_FAILURE,
     provider = null,
     status = "failed",
+    usageLimitExceeded = false,
     verifyInactive = true
   } = {}) {
     const normalizedSessionId = normalizeText(sessionId);
@@ -6607,7 +6611,8 @@ function createCodexTerminalController({
       normalizedThreadId,
       normalizedTurnId,
       outcome,
-      error
+      error,
+      { usageLimitExceeded }
     );
     await markCodexAppServerTurnIdle(normalizedSessionId, {
       error: message,
@@ -6951,7 +6956,8 @@ function createCodexTerminalController({
             return stopCodexAppServerTurnWithProviderFailure(normalizedSessionId, normalizedThreadId, turnId, {
               error: codexAppServerNotificationError(notification),
               provider,
-              status
+              status,
+              usageLimitExceeded: codexAppServerNotificationUsageLimitExceeded(notification)
             });
           });
           return;
@@ -6992,6 +6998,7 @@ function createCodexTerminalController({
               error: codexAppServerNotificationError(notification),
               provider,
               status,
+              usageLimitExceeded: codexAppServerNotificationUsageLimitExceeded(notification)
             });
           });
           return;
@@ -12625,6 +12632,14 @@ function createCodexTerminalController({
         }
         if (serverShutdown) {
           return shutdownCodexAppServerRuntimes(input);
+        }
+        if (input.includeOwned === true) {
+          return invalidateCodexAppServerRuntimes({
+            ...input,
+            includeOwned: true,
+            requireVerifiedExit: true,
+            stopOwnedRuntimes: true
+          });
         }
         const runtime = await createRuntimeForSession();
         assertCodexAppServerEconomyThreadsRestored(

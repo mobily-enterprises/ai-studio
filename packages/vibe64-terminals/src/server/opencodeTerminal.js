@@ -31,7 +31,10 @@ import {
   writeTerminalSessionText
 } from "@local/vibe64-execution/server/terminalSessions";
 
-import { openCodeAssistantCapabilities } from "./agent/providers/opencodeAssistantCatalog.js";
+import {
+  openCodeAssistantCapabilities,
+  openCodeConfiguredAssistantCapabilities
+} from "./agent/providers/opencodeAssistantCatalog.js";
 import {
   aiTurnMetadata,
   projectAiPolicyInstructions,
@@ -44,7 +47,8 @@ import {
 import {
   OPENCODE_ECONOMY_AGENT_ID,
   createOpenCodeServerProcess,
-  readOpenCodeCatalog
+  readOpenCodeCatalog,
+  verifyOpenCodeApiKey
 } from "./opencodeServerProcess.js";
 import {
   defineSessionRenewalApprovedHandover,
@@ -148,6 +152,11 @@ function openCodeModel(selection = {}, executionProfile = null) {
     providerID: text(selection.modelProviderId),
     ...(variantId ? { variant: variantId } : {})
   };
+}
+
+function sameOpenCodeSelection(left = {}, right = {}) {
+  return ["agentId", "modelId", "modelProviderId", "variantId"]
+    .every((name) => text(left?.[name]) === text(right?.[name]));
 }
 
 function openCodeExecutionProfile(input = {}) {
@@ -282,12 +291,12 @@ function requireOpenCodeConnection(value = null, modelProviderId = "") {
   const canonicalUrl = text(connection.canonicalUrl);
   const endpointCode = text(connection.endpointCode);
   if (
-    !canonicalUrl ||
+    endpointCode &&
     !/^[a-z0-9][a-z0-9._-]{0,127}$/u.test(endpointCode)
   ) {
     throw openCodeError(
       "vibe64_assistant_connection_route_invalid",
-      "The selected OpenCode connection has no billing endpoint. Ask the owner to choose one.",
+      "The selected OpenCode connection has an invalid billing endpoint.",
       { modelProviderId: actualProviderId }
     );
   }
@@ -374,8 +383,16 @@ function openCodeCredentialFailure(value = "") {
   );
 }
 
+function openCodeProviderApiFailure(error = {}) {
+  return text(error?.name) === "APIError";
+}
+
 function openCodeCredentialFailureNoticeMessage() {
   return "OpenCode needs attention: the selected provider rejected its API key, which may have expired or been revoked. [Open AI Accounts](/app/manage/accounts) to replace and verify the key, then return here and send your message again. Saved project changes remain.";
+}
+
+function openCodeProviderApiFailureNoticeMessage(failure = "") {
+  return `OpenCode could not finish: ${text(failure)} Saved project changes remain. [Manage AI accounts](/app/manage/accounts)`;
 }
 
 function lastAssistantResult(value = null) {
@@ -546,7 +563,8 @@ function createOpenCodeTerminalController({
   publishSessionChanged = async () => null,
   readCatalogCommand = readOpenCodeCatalog,
   recordGitActor = recordSessionGitCommandActor,
-  resolveConnection = async () => null
+  resolveConnection = async () => null,
+  verifyConnectionCommand = verifyOpenCodeApiKey
 } = {}) {
   if (!projectService) {
     throw new TypeError("OpenCode terminal controllers require vibe64.project.");
@@ -682,6 +700,7 @@ function createOpenCodeTerminalController({
       if (
         !selected ||
         (
+          currentConnection?.canonicalUrl === selected.canonicalUrl &&
           currentConnection?.fingerprint === selected.fingerprint &&
           currentConnection?.endpointCode === selected.endpointCode
         )
@@ -722,6 +741,7 @@ function createOpenCodeTerminalController({
         connections: new Map(connections.map((connection) => [
           connection.modelProviderId,
           {
+            canonicalUrl: connection.canonicalUrl,
             endpointCode: connection.endpointCode,
             fingerprint: connection.fingerprint
           }
@@ -730,6 +750,8 @@ function createOpenCodeTerminalController({
       };
       for (const target of processes.values()) {
         target.server = openCodeServerForDirectory(server, target.workdir);
+        target.upstream = null;
+        target.upstreamSelection = null;
       }
       return sharedProcess;
     });
@@ -757,16 +779,14 @@ function createOpenCodeTerminalController({
         ]);
         catalog = { agents, providers };
       } else {
-        const runtime = await projectService.createRuntime({ inspectSource: false });
         const roots = sharedRoots();
-        const providerConnections = await configuredConnections();
         catalog = await readCatalogCommand({
           cacheRoot: roots.cacheRoot,
           command,
+          createServerProcess,
           env,
           privateRoot: path.join(roots.root, `catalog-${randomUUID()}`),
-          providerConnections,
-          workdir: path.resolve(runtime.projectContextRoot || roots.workdir)
+          workdir: roots.workdir
         });
       }
       catalogSnapshot = {
@@ -784,6 +804,14 @@ function createOpenCodeTerminalController({
   }
 
   async function capabilities(input = {}, options = {}) {
+    if (text(input.configuredOnly).toLowerCase() === "true") {
+      return openCodeConfiguredAssistantCapabilities({
+        connections: await listConnections({
+          engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+          vibe64User: options.vibe64User || null
+        })
+      });
+    }
     const [catalog, connections] = await Promise.all([
       readCatalog(),
       listConnections({
@@ -796,6 +824,43 @@ function createOpenCodeTerminalController({
       connections,
       input,
       providers: catalog.providers
+    });
+  }
+
+  async function verifyConnection(input = {}) {
+    if (text(input.engineId) !== VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE) {
+      throw openCodeError(
+        "vibe64_assistant_engine_invalid",
+        "OpenCode connection verification requires the OpenCode engine.",
+        { engineId: text(input.engineId) },
+        400
+      );
+    }
+    const modelProviderId = text(input.modelProviderId);
+    const modelId = text(input.modelId);
+    const catalog = await readCatalog();
+    const provider = (Array.isArray(catalog.providers?.all) ? catalog.providers.all : [])
+      .find((candidate) => text(candidate?.id) === modelProviderId);
+    const providerModels = record(provider?.models);
+    const model = Object.hasOwn(providerModels, modelId) ? providerModels[modelId] : null;
+    if (!provider || !model || text(model.status) === "deprecated") {
+      throw openCodeError(
+        "vibe64_assistant_catalog_stale",
+        "The selected OpenCode provider model is no longer available. Refresh the provider catalogue and try again.",
+        { modelId, modelProviderId },
+        409
+      );
+    }
+    const roots = sharedRoots();
+    return verifyConnectionCommand({
+      apiKey: String(input.apiKey || ""),
+      cacheRoot: roots.cacheRoot,
+      command,
+      env,
+      modelId,
+      modelProviderId,
+      privateRoot: path.join(roots.root, `verify-${randomUUID()}`),
+      workdir: roots.workdir
     });
   }
 
@@ -905,6 +970,7 @@ function createOpenCodeTerminalController({
     if (pending) {
       return pending;
     }
+    const projectContextRoot = path.resolve(context.runtime.projectContextRoot);
     const start = Promise.resolve().then(async () => {
       const commands = await managedCommandEnvironment(context);
       sessionEnvironments.set(context.key, {
@@ -917,6 +983,23 @@ function createOpenCodeTerminalController({
       });
       await writeSessionEnvironmentRegistry();
       const shared = await ensureSharedProcess(context, options, connection);
+      const current = processes.get(context.key);
+      if (
+        current &&
+        catalogSnapshot &&
+        Date.now() - catalogSnapshot.readAt < OPENCODE_CATALOG_CACHE_MS &&
+        current.canonicalUrl === connection.canonicalUrl &&
+        current.connectionFingerprint === connection.fingerprint &&
+        current.endpointCode === connection.endpointCode &&
+        current.modelProviderId === connection.modelProviderId &&
+        current.projectContextRoot === projectContextRoot &&
+        current.workdir === context.workdir &&
+        text(current.selection?.catalogRevision) === text(context.selection.catalogRevision) &&
+        sameOpenCodeSelection(current.selection, context.selection)
+      ) {
+        current.server = openCodeServerForDirectory(shared.server, context.workdir);
+        return current;
+      }
       const currentCapabilities = await capabilities({
         limit: "1",
         modelId: context.selection.modelId,
@@ -927,18 +1010,18 @@ function createOpenCodeTerminalController({
         catalogRevision: currentCapabilities.revision
       });
       const server = openCodeServerForDirectory(shared.server, context.workdir);
-      const existing = processes.get(context.key);
-      const created = existing || {
+      const created = current || {
         abortController: new AbortController(),
         key: context.key,
         sessionId: context.sessionId,
         upstreamSessionId: upstreamSessionId(context.runtime.stateRoot, context.sessionId)
       };
       Object.assign(created, {
+        canonicalUrl: connection.canonicalUrl,
         connectionFingerprint: connection.fingerprint,
         endpointCode: connection.endpointCode,
         modelProviderId: connection.modelProviderId,
-        projectContextRoot: path.resolve(context.runtime.projectContextRoot),
+        projectContextRoot,
         selection: context.selection,
         server,
         workdir: context.workdir
@@ -970,30 +1053,35 @@ function createOpenCodeTerminalController({
 
   async function ensureUpstreamSession(context = {}, options = {}) {
     const target = await ensureProcess(context, options);
-    let upstream = null;
-    try {
-      upstream = await target.server.client.readSession(target.upstreamSessionId);
-    } catch (error) {
-      if (error?.statusCode !== 404) {
-        throw error;
-      }
-    }
+    let upstream = (
+      target.upstream &&
+      sameOpenCodeSelection(target.upstreamSelection, context.selection)
+    ) ? target.upstream : null;
     if (!upstream) {
-      upstream = await target.server.client.createSession({
-        agent: context.selection.agentId,
-        id: target.upstreamSessionId,
-        location: { directory: context.workdir },
-        model: openCodeModel(context.selection)
-      });
-    } else {
-      await target.server.client.switchModel(
-        target.upstreamSessionId,
-        openCodeModel(context.selection)
-      );
-      await target.server.client.switchAgent(
-        target.upstreamSessionId,
-        context.selection.agentId
-      );
+      try {
+        upstream = await target.server.client.readSession(target.upstreamSessionId);
+      } catch (error) {
+        if (error?.statusCode !== 404) {
+          throw error;
+        }
+      }
+      if (!upstream) {
+        upstream = await target.server.client.createSession({
+          agent: context.selection.agentId,
+          id: target.upstreamSessionId,
+          location: { directory: context.workdir },
+          model: openCodeModel(context.selection)
+        });
+      } else {
+        await target.server.client.switchModel(
+          target.upstreamSessionId,
+          openCodeModel(context.selection)
+        );
+        await target.server.client.switchAgent(
+          target.upstreamSessionId,
+          context.selection.agentId
+        );
+      }
     }
     if (
       text(context.session?.metadata?.agent_identity_conversation_id) !== target.upstreamSessionId ||
@@ -1014,6 +1102,7 @@ function createOpenCodeTerminalController({
       });
     }
     target.upstream = upstream;
+    target.upstreamSelection = { ...context.selection };
     return target;
   }
 
@@ -1163,11 +1252,13 @@ function createOpenCodeTerminalController({
     requireOpenTurn = false
   } = {}) {
     let failure = "";
+    let providerApiFailure = false;
     const rows = inputMessageId
       ? openCodeAssistantRowsForInput(messages, inputMessageId)
       : openCodeMessageRows(messages).filter((message) => message?.type === "assistant");
     for (const message of rows) {
       failure ||= openCodeMessageError(message);
+      providerApiFailure ||= openCodeProviderApiFailure(message.error);
       const parts = Array.isArray(message.content) ? message.content : [];
       for (const part of parts.filter((candidate) => candidate?.type === "reasoning" && text(candidate.text))) {
         await writeReasoningMessages(context, {
@@ -1190,22 +1281,25 @@ function createOpenCodeTerminalController({
         await publishConversationTurn(context, turn, "opencode-server-assistant-message");
       }
     }
-    return { failure };
+    return { failure, providerApiFailure };
   }
 
-  async function writeCredentialFailureNotice(context = {}, turn = {}) {
+  async function writeOpenCodeFailureNotice(context = {}, turn = {}, {
+    message = "",
+    reason = "opencode-provider-failure"
+  } = {}) {
     if (typeof context.runtime.store?.writeConversationSystemMessage !== "function") {
       return null;
     }
     const written = await context.runtime.store.writeConversationSystemMessage(context.sessionId, {
-      messageId: `opencode-credential-failure-${fingerprint(
+      messageId: `${reason}-${fingerprint(
         context.sessionId,
         turn.threadId,
         turn.id
       )}`,
-      text: openCodeCredentialFailureNoticeMessage()
+      text: message
     });
-    await publishConversationTurn(context, written, "opencode-credential-failure");
+    await publishConversationTurn(context, written, reason);
     return written;
   }
 
@@ -1332,6 +1426,7 @@ function createOpenCodeTerminalController({
       let finalState = VIBE64_AGENT_RUN_STATE.COMPLETED;
       let failure = "";
       let credentialFailure = false;
+      let providerApiFailure = false;
       try {
         const waitForCompletion = () => waitForOpenCodeMessages(
           target.server.client,
@@ -1377,6 +1472,7 @@ function createOpenCodeTerminalController({
           inputMessageId: turn.inputMessageId
         });
         failure = projection.failure;
+        providerApiFailure = projection.providerApiFailure;
         if (!failure && !turn.interruptRequested && !text(completion.result?.text)) {
           failure = "OpenCode finished without a user-facing final response. Please send your message again.";
           finalState = VIBE64_AGENT_RUN_STATE.FAILED;
@@ -1389,6 +1485,7 @@ function createOpenCodeTerminalController({
       } catch (error) {
         failure = text(error?.message) || "OpenCode turn failed.";
         credentialFailure = openCodeCredentialFailure(failure);
+        providerApiFailure = openCodeProviderApiFailure(error);
         finalState = target.abortController.signal.aborted
           ? VIBE64_AGENT_RUN_STATE.CANCELLED
           : VIBE64_AGENT_RUN_STATE.FAILED;
@@ -1398,8 +1495,20 @@ function createOpenCodeTerminalController({
         target.abortController.signal.removeEventListener("abort", abortEvents);
         if (credentialFailure) {
           failure = openCodeCredentialFailureNoticeMessage();
-          await writeCredentialFailureNotice(context, turn).catch((error) => {
+          await writeOpenCodeFailureNotice(context, turn, {
+            message: failure,
+            reason: "opencode-credential-failure"
+          }).catch((error) => {
             vibe64SessionDebugLog("server.opencode.credential-notice.error", {
+              error: vibe64SessionDebugError(error),
+              sessionId: context.sessionId
+            });
+          });
+        } else if (providerApiFailure && finalState === VIBE64_AGENT_RUN_STATE.FAILED) {
+          await writeOpenCodeFailureNotice(context, turn, {
+            message: openCodeProviderApiFailureNoticeMessage(failure)
+          }).catch((error) => {
+            vibe64SessionDebugLog("server.opencode.provider-notice.error", {
               error: vibe64SessionDebugError(error),
               sessionId: context.sessionId
             });
@@ -2075,7 +2184,6 @@ function createOpenCodeTerminalController({
       if (text(input.reason) === "server-shutdown") {
         closed = true;
       }
-      catalogSnapshot = null;
       await Promise.all([...processStarts.values()].map((start) => start.catch(() => null)));
       const targets = [...processes.values()];
       const results = await Promise.all(targets.map((target) => stopProcessRecord(target)));
@@ -2173,6 +2281,7 @@ function createOpenCodeTerminalController({
       const context = await contextFor(sessionId, options);
       return monitors.get(context.key) || openCodeTurnSnapshot(turns.get(context.key));
     },
+    verifyConnection,
     resizeTerminal,
     writeTerminal
   });

@@ -482,10 +482,9 @@ test("assistant messages use the plain message contract", async () => {
   assert.equal(result.ok, true);
   assert.equal(publications.length, 1);
   assert.deepEqual(runtimeCreationOptions, [{ inspectSource: false }]);
-  assert.deepEqual(sessionReadOptions, [
-    { inspectSource: false },
-    { inspectSource: false }
-  ]);
+  assert.equal(calls[0][2].runtime, runtime);
+  assert.equal(Object.hasOwn(calls[0][2], "session"), false);
+  assert.deepEqual(sessionReadOptions, [{ inspectSource: false }]);
 });
 
 test("empty assistant messages fail without starting a provider turn", async () => {
@@ -2208,7 +2207,10 @@ test("session creation resolves a partial selection before checking access", asy
     },
     async resolveAssistantSelection(selection) {
       catalogResolutions += 1;
-      assert.deepEqual(selection, { engineId: "codex" });
+      assert.deepEqual(selection, {
+        configuredOnly: "true",
+        engineId: "codex"
+      });
       return resolvedSelection;
     }
   });
