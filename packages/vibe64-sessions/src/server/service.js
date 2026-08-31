@@ -1146,7 +1146,8 @@ function createService({
                 patch: {
                   operationId,
                   status: "running"
-                }
+                },
+                reset: true
               });
               await publishSessionChanged(sessionId, {
                 operation: "updated",
@@ -1317,7 +1318,8 @@ function createService({
                   message: "Updating this session (rebase).",
                   status: "running"
                 },
-                patch: { operationId, status: "running" }
+                patch: { operationId, status: "running" },
+                reset: true
               });
               await publishSessionChanged(sessionId, {
                 operation: "updated",

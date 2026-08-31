@@ -2095,14 +2095,17 @@ function createVibe64SessionStore({
   async function writeBackgroundTaskEvent(sessionId, taskId, {
     event = {},
     patch = {},
+    reset = false,
     shouldWrite = null
   } = {}) {
     return mutateSession(sessionId, async (sessionPaths) => {
       const normalizedTaskId = assertSafeBackgroundTaskId(taskId);
-      const previous = await readBackgroundTaskFromPath(sessionPaths, normalizedTaskId) || {
-        events: [],
-        id: normalizedTaskId
-      };
+      const previous = reset === true
+        ? { events: [], id: normalizedTaskId }
+        : await readBackgroundTaskFromPath(sessionPaths, normalizedTaskId) || {
+            events: [],
+            id: normalizedTaskId
+          };
       const eventAt = normalizeText(event.at || patch.updatedAt) || now().toISOString();
       const status = normalizeBackgroundTaskStatus(patch.status || event.status || previous.status);
       const previousStatus = normalizeText(previous.status);

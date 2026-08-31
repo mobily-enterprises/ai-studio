@@ -1029,6 +1029,9 @@ test("native Save persists bounded progress and advances the session base only a
     "canonical-refreshed",
     "saved"
   ]);
+  assert.equal(taskEvents[0].reset, true);
+  assert.equal(taskEvents[1].reset, undefined);
+  assert.equal(taskEvents[2].reset, undefined);
   assert.deepEqual(publications.map((entry) => entry[1].reason), [
     "session-save-started",
     "session-save-progress",
@@ -1345,6 +1348,7 @@ test("a failed Update persists conflict recovery and supplies it to the reviewed
     oldIndexTree: "index"
   };
   const tasks = new Map();
+  const taskWrites = [];
   const metadata = [];
   const session = {
     agentRuns: [],
@@ -1364,7 +1368,10 @@ test("a failed Update persists conflict recovery and supplies it to the reviewed
         return tasks.get(taskId) || null;
       },
       async writeBackgroundTaskEvent(_sessionId, taskId, input) {
-        const prior = tasks.get(taskId) || { events: [], id: taskId };
+        taskWrites.push({ input, taskId });
+        const prior = input.reset === true
+          ? { events: [], id: taskId }
+          : tasks.get(taskId) || { events: [], id: taskId };
         const task = {
           ...prior,
           ...input.patch,
@@ -1433,6 +1440,15 @@ test("a failed Update persists conflict recovery and supplies it to the reviewed
   assert.deepEqual(retried.operation.conflictPaths, []);
   assert.equal(retried.operation.code, "");
   assert.equal(retried.operation.error, "");
+  assert.deepEqual(
+    taskWrites.filter(({ input }) => input.event.kind === "update-started")
+      .map(({ input }) => input.reset),
+    [true, true]
+  );
+  assert.deepEqual(
+    retried.operation.events.map((event) => event.kind),
+    ["update-started", "updated"]
+  );
   assert.ok(metadata.some(([name, value]) => name === "base_commit" && value === "canonical"));
 });
 

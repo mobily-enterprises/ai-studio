@@ -3465,7 +3465,10 @@ class CodexAppServerAgentProvider {
     }
     await ensureWritablePrivateDirectory(cwd);
     return Object.freeze({
-      accountIdentitySignature: await currentCodexAccountIdentitySignature(this.options),
+      accountIdentitySignature: await currentCodexAccountIdentitySignature({
+        ...this.options,
+        executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
+      }),
       cwd,
       executionMode: CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY
     });

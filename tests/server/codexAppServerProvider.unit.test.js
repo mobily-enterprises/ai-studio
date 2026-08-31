@@ -2483,6 +2483,12 @@ test("shared Codex account identity signatures survive token refresh and change 
       toolHomeSource: chatgptHome
     });
     assert.equal((await provider.currentRuntimeInfo()).accountIdentitySignature, first);
+    provider.ensureRuntime = async () => ({
+      runtimeDir: path.join(root, "shared-runtime")
+    });
+    const economyContext = await provider.currentEconomyExecutionContext();
+    assert.equal(economyContext.accountIdentitySignature, first);
+    assert.equal(economyContext.executionMode, CODEX_APP_SERVER_EXECUTION_MODES.ECONOMY);
     await writeChatgptAuth(chatgptHome, {
       accessToken: "second-access-token",
       accountId: "account-one"

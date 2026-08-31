@@ -32,6 +32,9 @@ selected session's icon-only Save or Update action stays in the chat header
 beside the session it will affect, rather than occupying the application-wide
 toolbar.
 
+Each Save or Update attempt starts a fresh visible transcript. Retrying after a
+failure does not mix the earlier attempt's errors into the new operation.
+
 The current activity is causally bound to the Save or Update command the person
 actually invoked. If admission fails before that command creates a durable
 operation, the failure is shown without borrowing the label, icon, or transcript

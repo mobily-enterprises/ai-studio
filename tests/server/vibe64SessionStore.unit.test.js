@@ -1772,6 +1772,50 @@ test("plain session store bounds durable background-task events at write time", 
   });
 });
 
+test("plain session store starts a fresh background-task attempt when requested", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot);
+    const sessionId = "retried-background-task";
+    await store.createSession({
+      runtimeKind: "genesis",
+      sessionId
+    });
+    await store.writeBackgroundTaskEvent(sessionId, "save-work", {
+      event: {
+        kind: "save-failed",
+        message: "Old failure.",
+        status: "failed"
+      },
+      patch: {
+        code: "old_failure",
+        error: "Old failure.",
+        operationId: "old-attempt",
+        status: "failed"
+      }
+    });
+
+    await store.writeBackgroundTaskEvent(sessionId, "save-work", {
+      event: {
+        kind: "save-started",
+        message: "Saving session work.",
+        status: "running"
+      },
+      patch: {
+        operationId: "new-attempt",
+        status: "running"
+      },
+      reset: true
+    });
+
+    const task = await store.readBackgroundTask(sessionId, "save-work");
+    assert.equal(task.operationId, "new-attempt");
+    assert.equal(task.status, "running");
+    assert.equal(Object.hasOwn(task, "code"), false);
+    assert.equal(task.error, "");
+    assert.deepEqual(task.events.map((event) => event.message), ["Saving session work."]);
+  });
+});
+
 test("plain session store finalizes a background task's visible summary", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);
