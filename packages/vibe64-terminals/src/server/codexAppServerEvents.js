@@ -2,7 +2,6 @@ import {
   isPlainObject,
   normalizeText
 } from "@local/vibe64-core/server/core";
-import { VIBE64_AUTOMATIC_HOOK_NO_OUTPUT } from "@local/vibe64-genesis/server";
 
 const CODEX_APP_SERVER_CONTEXT_COMPACTION_SIGNALS = new Set(
   [
@@ -290,10 +289,6 @@ function codexAppServerHookPromptText(item = {}) {
     .join("\n\n");
 }
 
-function codexAppServerAutomaticHookNoOutput(text = "") {
-  return normalizeText(text) === VIBE64_AUTOMATIC_HOOK_NO_OUTPUT;
-}
-
 function codexAppServerNotificationItemId(notification = {}) {
   const params = codexAppServerNotificationParams(notification);
   const item = codexAppServerNotificationItem(notification);
@@ -565,7 +560,6 @@ function codexAppServerProviderTurnAssistantSegments(turn = {}) {
       if (
         !itemId ||
         !text ||
-        codexAppServerAutomaticHookNoOutput(text) ||
         seenItemIds.has(itemId)
       ) {
         return null;
@@ -607,7 +601,6 @@ function codexAppServerOutputOwnerTurnId({
 
 export {
   classifyCodexAppServerEvent,
-  codexAppServerAutomaticHookNoOutput,
   codexAppServerAssistantItemText,
   codexAppServerContentText,
   codexAppServerContextRefreshReason,

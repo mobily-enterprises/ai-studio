@@ -104,6 +104,7 @@ async function controllerHarness({
   const systemMessages = [];
   const metadataWrites = [];
   const agentRunEvents = [];
+  const renderPromptCalls = [];
   let runStartedAt = "";
   const runtime = {
     projectContextRoot: root,
@@ -111,12 +112,24 @@ async function controllerHarness({
     async getSession() {
       return session;
     },
+    async renderPrompt(_sessionId, input = {}) {
+      renderPromptCalls.push(input);
+      return { prompt: `GENESIS ${input.task}: ${input.request}` };
+    },
     store: {
       async conversationMessageIdExists() {
         return false;
       },
       async mutateSession(_sessionId, operation) {
         return operation();
+      },
+      async readConversationLogPage() {
+        return {
+          conversationLog: userMessages.slice(-1).map((message) => ({ user: message })),
+          pagination: {
+            totalTurnCount: userMessages.length
+          }
+        };
       },
       async writeAgentRunEvent(_sessionId, id, input = {}) {
         const updatedAt = new Date().toISOString();
@@ -413,6 +426,7 @@ async function controllerHarness({
     publishedSessionChanges,
     root,
     readSessionCalls: () => readSessionCalls,
+    renderPromptCalls,
     runtime,
     runtimeCreateCalls: () => runtimeCreateCalls,
     selection,
@@ -732,6 +746,49 @@ test("OpenCode reuses an established session without repeating setup or model sw
   assert.equal(harness.createdSessions.length, 1);
   assert.deepEqual(harness.switchedModels, []);
   assert.deepEqual(harness.switchedAgents, []);
+  assert.deepEqual(harness.renderPromptCalls.map(({ task }) => task), ["start"]);
+  assert.match(harness.promptCalls[0].input.prompt.text, /Session briefing instruction:/u);
+  assert.match(harness.promptCalls[0].input.prompt.text, /GENESIS start: First/u);
+  assert.doesNotMatch(harness.promptCalls[1].input.prompt.text, /Session briefing instruction:/u);
+  assert.doesNotMatch(harness.promptCalls[1].input.prompt.text, /GENESIS work:/u);
+  assert.match(harness.promptCalls[1].input.prompt.text, /Second$/u);
+});
+
+test("OpenCode renders explicit Deslop through Genesis and leaves later follow-ups ordinary", async (t) => {
+  const harness = await controllerHarness({
+    assistantResponses: ["First turn", "Deslop turn", "Follow-up turn"]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  };
+
+  await harness.controller.sendMessage("session-1", {
+    message: "First",
+    messageId: "client-message-deslop-1"
+  }, options);
+  await harness.controller.waitForTurn("session-1", options);
+  await harness.controller.sendMessage("session-1", {
+    genesisTask: "deslop",
+    message: `Deslop commit ${"a".repeat(40)}.`,
+    messageId: "client-message-deslop-2"
+  }, options);
+  await harness.controller.waitForTurn("session-1", options);
+  await harness.controller.sendMessage("session-1", {
+    message: "Explain one cleanup choice.",
+    messageId: "client-message-deslop-3"
+  }, options);
+  await harness.controller.waitForTurn("session-1", options);
+
+  assert.deepEqual(harness.renderPromptCalls.map(({ task }) => task), ["start", "deslop"]);
+  assert.match(harness.promptCalls[1].input.prompt.text, /GENESIS deslop: Deslop commit/u);
+  assert.doesNotMatch(harness.promptCalls[2].input.prompt.text, /GENESIS/u);
+  assert.match(harness.promptCalls[2].input.prompt.text, /Explain one cleanup choice\.$/u);
 });
 
 test("OpenCode rechecks its native session after recovering an unhealthy server", async (t) => {
@@ -1503,6 +1560,7 @@ test("OpenCode receives the same complete session command boundary as Codex", as
   const sessionProcess = harness.processStarts.find((entry) => (
     entry.options.execution.operationId === "opencode-server"
   ));
+  assert.deepEqual(sessionProcess.options.shimDirs, ["/managed/wrappers"]);
   const registry = JSON.parse(await readFile(
     sessionProcess.options.sessionEnvironmentRegistry,
     "utf8"

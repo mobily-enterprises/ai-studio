@@ -1,4 +1,4 @@
 interface:
   display_name: "Genesis Deslop"
-  short_description: "Simplify changed code without behavior drift"
-  default_prompt: "Use $genesis-deslop for a separate behavior-preserving cleanup pass over the current changes."
+  short_description: "Clean up committed work without behavior drift"
+  default_prompt: "Use $genesis-deslop to Deslop the latest commit."

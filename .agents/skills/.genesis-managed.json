@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "skills": {
     "genesis-deslop": {
-      "hash": "sha256:2a234b5dc1b70c4cb98fb875e2a81d7dd9f3381222bd5f7b1361a6628b8142f0",
+      "hash": "sha256:5f931612ee0483b566d4de7fc80dc67e87d2c80259cd45f9871739962c40868c",
       "source": "genesis:skills/genesis-deslop"
     },
     "genesis-program": {
@@ -10,12 +10,8 @@
       "source": "genesis:skills/genesis-program"
     },
     "genesis-project": {
-      "hash": "sha256:6d76012bf0c6f18b84bd35141578fcfe783c9f23d8e950b5c5cd1a630f4da296",
+      "hash": "sha256:1351ec701ac92e17a7eb0fb8d26e29262026c6dd4faf49bd58656435eb4b8e12",
       "source": "genesis:skills/genesis-project"
-    },
-    "jskit": {
-      "hash": "sha256:67264957bbc0f8b460c0e84409d90af002d6352006a749ec2d357efa4b46bc35",
-      "source": "npm:@jskit-ai/agent-docs/skills/jskit"
     }
   }
 }

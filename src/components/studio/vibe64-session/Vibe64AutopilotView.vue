@@ -171,6 +171,41 @@
           </template>
         </Vibe64TemporaryActionTerminal>
 
+        <v-sheet
+          v-if="savedCommitDeslop"
+          border
+          class="studio-autopilot__deslop-offer"
+          color="surface"
+          rounded="lg"
+        >
+          <div class="studio-autopilot__deslop-copy">
+            <strong>Work saved</strong>
+            <span>Run a behavior-preserving cleanup of this commit?</span>
+          </div>
+          <v-btn
+            :disabled="savedCommitDeslopSending"
+            size="small"
+            type="button"
+            variant="text"
+            @click="dismissSavedCommitDeslop"
+          >
+            Not now
+          </v-btn>
+          <v-btn
+            :aria-busy="savedCommitDeslopSending ? 'true' : undefined"
+            class="studio-autopilot__deslop-action"
+            color="primary"
+            :disabled="savedCommitDeslopSending || agentActive || composerSending"
+            :prepend-icon="mdiBroom"
+            size="small"
+            type="button"
+            variant="tonal"
+            @click="startSavedCommitDeslop"
+          >
+            {{ savedCommitDeslopSending ? "Starting…" : "Deslop" }}
+          </v-btn>
+        </v-sheet>
+
         <Vibe64TemporaryActionTerminal
           :active="workspaceSetupRunning || workspaceSetupRetrying"
           :error="workspaceSetupNeedsAttention ? workspaceSetupDiagnostic : ''"
@@ -634,6 +669,7 @@ import {
   mdiArrowLeft,
   mdiArrowTopRight,
   mdiAutorenew,
+  mdiBroom,
   mdiConsoleNetworkOutline,
   mdiContentSaveOutline,
   mdiDotsVertical,
@@ -847,6 +883,7 @@ const {
   dashboardRouteVisible,
   dashboardShellVisible,
   dismissNumberedQuestions,
+  dismissSavedCommitDeslop,
   confirmSaveWork,
   editOptimisticMessage,
   emptyConversationWelcome,
@@ -888,6 +925,8 @@ const {
   saveWorkTitle,
   saveWorkRequiresUpdate,
   saveWorkUnsaved,
+  savedCommitDeslop,
+  savedCommitDeslopSending,
   sessionId,
   sessionGithubActor,
   sessionGithubActorHeaderVisible,
@@ -897,6 +936,7 @@ const {
   sourceEditorAskCodexAvailable,
   sourceEditorOpenRequest,
   structuredQuestionActive,
+  startSavedCommitDeslop,
   submitComposerMessage,
   systemBackAvailable,
   systemRestoreRequest,
@@ -1331,6 +1371,29 @@ function requestSessionRenewal(returnFocusTarget = null) {
 .studio-autopilot__activity:empty {
   display: none;
   padding: 0;
+}
+
+.studio-autopilot__deslop-offer {
+  align-items: center;
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 0.45rem 0.5rem 0.45rem 0.75rem;
+}
+
+.studio-autopilot__deslop-copy {
+  display: grid;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.studio-autopilot__deslop-copy span {
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+.studio-autopilot__deslop-action {
+  min-inline-size: 5.75rem;
 }
 
 .studio-autopilot__recovery-action {

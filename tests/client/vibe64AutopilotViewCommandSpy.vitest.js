@@ -64,7 +64,7 @@ describe("Vibe64 direct session view", () => {
     );
     expect(component).toContain('#error-actions');
     expect(component).toContain("saveWorkRequiresUpdate ? 'warning' : (saveWorkUnsaved ? 'primary' : undefined)");
-    expect(composable).toContain("await props.saveSessionWork();");
+    expect(composable).toContain("const result = await props.saveSessionWork();");
     expect(composable).toContain("await props.updateSessionWork();");
     expect(composable).toContain("const saveWorkUnsaved = computed");
     expect(composable).toContain("const saveWorkOperationActive = computed");
@@ -82,6 +82,11 @@ describe("Vibe64 direct session view", () => {
     expect(composable).toContain("keep the latest saved version's overlapping lines byte-for-byte");
     expect(component).toContain(':active="saveWorkOperationActive || saveWorkSending"');
     expect(component).toContain(':operation-key="saveWorkOperation?.operationId || \'\'"');
+    expect(component).toContain('v-if="savedCommitDeslop"');
+    expect(component).toContain('@click="startSavedCommitDeslop"');
+    expect(component).toContain('@click="dismissSavedCommitDeslop"');
+    expect(composable).toContain('genesisTask: "deslop"');
+    expect(composable).toContain('message: `Deslop commit ${saveCommit}.`');
     expect(composable).not.toContain("SAVE_WORK_PROMPT");
     expect(combined).not.toMatch(/runGit|executeGit|merge pr|finish session/iu);
     expect(component).toContain("sessionGithubActor.displayLabel");

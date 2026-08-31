@@ -8,7 +8,6 @@ import { promisify } from "node:util";
 import { codexRuntimeContext } from "@local/studio-terminal-core/server/codexRuntimeContext";
 import {
   GENESIS_DERIVED_ARTIFACT_PATHS,
-  VIBE64_AUTOMATIC_HOOK_NO_OUTPUT,
   addGenesisStack,
   assertGenesisPromptTask,
   genesisCommandShimDirectory,
@@ -76,10 +75,6 @@ test("Vibe64 keeps structured questions as a direct-chat presentation contract",
   assert.match(prompt, /no more than three concise/u);
   assert.match(prompt, /`\[1\] Question`/u);
   assert.match(prompt, /`Possible answers:`/u);
-  assert.match(prompt, /Do not send commentary, progress announcements/u);
-  assert.match(prompt, /final automatic user-facing summary/u);
-  assert.match(prompt, /Do not use `VIBE64_AUTOMATIC_HOOK_NO_OUTPUT`/u);
-  assert.match(prompt, new RegExp(VIBE64_AUTOMATIC_HOOK_NO_OUTPUT, "u"));
   assert.doesNotMatch(prompt, /VIBE64 NEW-PROJECT OPENING/u);
 });
 
@@ -390,6 +385,23 @@ test("Vibe64 keeps its installed Stack catalog available for a migrated project 
     assert.equal(rendered.context.task, "work");
     assert.match(rendered.prompt, /Continue the existing work\./u);
     assert.match(rendered.prompt, /SELECTED STACK GUIDANCE/u);
+
+    const commit = "a".repeat(40);
+    const deslop = await renderGenesisPrompt({
+      action: {
+        genesisTask: "deslop"
+      },
+      input: {
+        request: `Deslop commit ${commit}.`
+      },
+      projectRoot
+    });
+
+    assert.equal(deslop.context.task, "deslop");
+    assert.match(deslop.prompt, new RegExp(`Deslop commit ${commit}\\.`, "u"));
+    assert.match(deslop.prompt, /Require a clean worktree before\s+editing/u);
+    assert.match(deslop.prompt, /SELECTED STACK CLEANUP GUIDANCE/u);
+    assert.match(deslop.prompt, /For every affected JSKIT screen/u);
   });
 });
 

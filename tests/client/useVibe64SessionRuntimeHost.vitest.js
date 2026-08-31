@@ -221,6 +221,18 @@ describe("Vibe64 direct session runtime host", () => {
     expect(() => validateSchemaPayload(agentMessageInputValidator, message, {
       context: "agent message request contract"
     })).not.toThrow();
+    expect(() => validateSchemaPayload(agentMessageInputValidator, {
+      ...message,
+      genesisTask: "deslop"
+    }, {
+      context: "explicit Deslop message request contract"
+    })).not.toThrow();
+    expect(() => validateSchemaPayload(agentMessageInputValidator, {
+      ...message,
+      genesisTask: "work"
+    }, {
+      context: "unsupported Genesis message request contract"
+    })).toThrow();
 
     expect(agentTurnControlPayloadFromContext({
       reason: "user_interrupt",

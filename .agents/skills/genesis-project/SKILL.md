@@ -65,19 +65,25 @@ Neither is authority or proof; both may be regenerated with the Genesis
   tradeoff. Never silently override the engineering approach.
 - Work directly in the current Git tree and leave useful edits visible in the
   ordinary diff.
-- Do not edit the Blueprint, Program, or `.genesis/` during implementation; the
-  separate reconciliation turn owns explanatory updates. Keep exact
+- Keep the Blueprint and affected Program modules aligned in this same turn
+  when implementation intentionally changes observable product behavior.
+  Private restructuring may require only corrected Sources or an informational
+  Implementation map, and may require no explanatory edit. Keep exact
   consumer-owned operation declarations, such as Vibe64 `## Outputs`, aligned
   when implementation intentionally changes the corresponding commands or
   capabilities. Record only capability metadata and environment-variable names
   there, never values or secrets; do not infer or execute the section as
-  Genesis behavior.
+  Genesis behavior. Treat `.genesis/` as replaceable derived navigation data,
+  not authored product intent.
 - Follow established project and technology seams instead of creating parallel
   frameworks, persistence layers, transports, validators, or UI systems.
 - Never invent unavailable external-resource values or pass literal
   environment-variable names as data. Report the missing resource and preserve
   useful work.
-- Keep the implementation direct and cohesive. Run focused checks when useful.
+- Keep the implementation direct and cohesive. Apply any supplied Stack
+  Post-change guidance before reporting completion; it is part of this
+  implementation turn, not a request for another agent turn. Run focused checks
+  when useful.
 
 ## Verify and report
 

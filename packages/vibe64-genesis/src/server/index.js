@@ -40,7 +40,6 @@ const {
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
-const VIBE64_AUTOMATIC_HOOK_NO_OUTPUT = "VIBE64_AUTOMATIC_HOOK_NO_OUTPUT";
 const VIBE64_POSTGRESQL_NEW_PROJECT_AVAILABLE = false;
 const VIBE64_HIDDEN_ONBOARDING_STACK_PIECES = Object.freeze([
   "vue",
@@ -251,15 +250,7 @@ function withVibe64ConversationContract(prompt = "", {
         "If the person explicitly requests PostgreSQL, explain briefly that it is not available yet and ask whether MySQL is acceptable; do not silently substitute MySQL."
       ] : []),
       "Do not offer standalone `vue` as a new-project choice. Honor an explicit technology request; otherwise ask about technology only when the product cannot use the standard web-app foundation."
-    ] : []),
-    "",
-    "AUTOMATIC HOOK FOLLOW-UPS",
-    "",
-    "A hook prompt is internal follow-up work, not a new human message. Do not send commentary, progress announcements, or routine review summaries during it.",
-    "Exception: when a hook explicitly requests the final automatic user-facing summary, provide that summary exactly as requested even though it changes no files.",
-    `If an automatic hook follow-up changes no project files and finds no new blocker or failure, make its final answer exactly \`${VIBE64_AUTOMATIC_HOOK_NO_OUTPUT}\`.`,
-    `Do not use \`${VIBE64_AUTOMATIC_HOOK_NO_OUTPUT}\` for the explicitly requested final user-facing summary.`,
-    "If it changes files or finds a new blocker or failure, give only the concise result the person needs."
+    ] : [])
   ].join("\n");
 }
 
@@ -316,7 +307,6 @@ export {
   GENESIS_PROGRAM_CITY_PATH,
   VIBE64_APPLICATION_DEPLOYMENT_CONTRACT,
   VIBE64_APPLICATION_DEPLOYMENT_SECTION,
-  VIBE64_AUTOMATIC_HOOK_NO_OUTPUT,
   VIBE64_OUTPUTS_CONTRACT,
   VIBE64_OUTPUTS_SECTION,
   VIBE64_PREVIEW_IDENTITY_COMMAND_PROTOCOL,

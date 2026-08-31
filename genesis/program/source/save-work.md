@@ -6,10 +6,12 @@ Git commands.
 
 ## Sources
 
+- `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `packages/vibe64-sessions/src/server/service.js`
 - `src/components/studio/Vibe64TemporaryActionTerminal.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
+- `src/composables/useVibe64AutopilotView.js`
 
 ## Public contract
 
@@ -30,6 +32,12 @@ a failed Save remains visible with its recovery actions. The selected session's
 icon-only Save or Update action stays in the chat header beside the session it
 will affect, rather than occupying the application-wide toolbar.
 
+After a successful reconciled Save, the chat offers a behavior-preserving
+Deslop of that exact published commit. Accepting sends one ordinary visible
+message through the session's existing assistant path; declining only hides the
+offer and records no preference. A Save that still needs reconciliation does
+not offer cleanup yet.
+
 ## Implementation map
 
 - `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,
@@ -37,6 +45,6 @@ will affect, rather than occupying the application-wide toolbar.
 - `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes
   canonical source mutations across processes.
 - `scopedSessionWorkCommand()` assigns one semantic operation identity plus
-  project and session ownership to the commands used by inspection, update,
-  Save, and recovery, and runs those commands in sequence so one operation does
-  not compete with itself for host admission.
+  project and session ownership to repository operations. Inspection and update
+  checks enter the managed host once through `runSessionWorkOperation()`, while
+  Save and recovery retain their bounded command sequencing.

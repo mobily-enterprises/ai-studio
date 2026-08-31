@@ -51,6 +51,18 @@ reply remains ordinary conversation text.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
 
+Vibe64 expands the session's opening project request with Genesis guidance once.
+Ordinary follow-ups and active-turn steering remain ordinary conversation
+instead of regenerating that complete prompt. An explicit Deslop request uses
+the same visible message-delivery path with a narrow task marker so Genesis can
+compose its committed-scope cleanup instructions for that turn.
+
+Separately, each agent receives Genesis's short project operating guide when a
+conversation is created and again after compaction. Codex receives it through
+the project SessionStart hook. OpenCode loads the ordinary project plugin that
+Genesis installs, exactly as it does outside Vibe64. This context creates no
+conversation message and no additional agent turn.
+
 Message delivery and provider work remain visibly distinct. The composer shows
 the initial send while the message is being accepted, then reports the selected
 assistant as working for the rest of the active turn. The session tab and
@@ -159,12 +171,13 @@ an unrelated failure cannot gain an account link merely because of its wording.
 - `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process
   lifecycle. Established session targets and pending starts both retain that
   process; directory-scoped clients and `Vibe64SessionEnvironment` preserve
-  each session's working and command boundary.
-- `safeOpenCodeEnvironment()` disables project configuration and default
-  plugins while loading Vibe64's single trusted session-environment plugin,
-  so the shared service can route commands through the authenticated session
-  boundary without executing arbitrary project plugins. It raises OpenCode's
-  response and compaction ceiling only alongside that trusted plugin.
+  each session's working and command boundary. The shared process receives the
+  prepared command paths so a project plugin can invoke Vibe64's bundled
+  Genesis executable through its ordinary CLI contract.
+- `safeOpenCodeEnvironment()` retains project configuration and plugins while
+  disabling OpenCode's unrelated default plugins and loading Vibe64's
+  session-environment plugin for command routing. It raises OpenCode's response
+  and compaction ceiling only alongside that host plugin.
 - `readOpenCodeCatalog()` starts a bounded, credential-free temporary OpenCode
   service and reads its complete provider and agent APIs while the resident
   session service stays asleep. The client allowlists safe provider and model
@@ -204,6 +217,11 @@ an unrelated failure cannot gain an account link merely because of its wording.
   scope.
 - `Vibe64SessionRuntimeHost` selects exactly one interactive terminal from the
   session's immutable engine id and has no cross-engine fallback.
+- `Vibe64SessionRuntime.renderPrompt()` owns Genesis prompt composition.
+  Codex and OpenCode call it for the opening request and an explicitly marked
+  Deslop request; later ordinary messages are sent without rebuilding the full
+  Genesis prompt, and Codex steering continues through its existing direct
+  steer path.
 - `startAttachedTerminal()` attaches OpenCode's native TUI to the session's
   existing upstream history in a session-owned PTY. The OpenCode controller
   owns its bounded snapshot, stream, input, resize, close, and session cleanup;

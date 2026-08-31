@@ -395,6 +395,8 @@ function useVibe64AutopilotView(props, emit, {
   const saveWorkError = ref("");
   const saveWorkFailure = ref(null);
   const saveWorkSending = ref(false);
+  const savedCommitDeslop = ref("");
+  const savedCommitDeslopSending = ref(false);
   const selectedAnswerChoice = ref("");
   const workspaceSetupRetryError = ref("");
   const workspaceSetupRetrying = ref(false);
@@ -1218,9 +1220,14 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkSending.value = true;
     saveWorkError.value = "";
     saveWorkFailure.value = null;
+    savedCommitDeslop.value = "";
     saveWorkConfirmOpen.value = false;
     try {
       const result = await props.saveSessionWork();
+      const saveCommit = normalizedAgentTurnText(result?.saveCommit);
+      if (result?.reconciled === true && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/iu.test(saveCommit)) {
+        savedCommitDeslop.value = saveCommit;
+      }
       return result;
     } catch (error) {
       saveWorkFailure.value = error && typeof error === "object"
@@ -1236,6 +1243,37 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     } finally {
       saveWorkSending.value = false;
+    }
+  }
+
+  function dismissSavedCommitDeslop() {
+    savedCommitDeslop.value = "";
+  }
+
+  async function startSavedCommitDeslop() {
+    const saveCommit = savedCommitDeslop.value;
+    if (
+      !saveCommit ||
+      savedCommitDeslopSending.value ||
+      composerSending.value ||
+      agentActive.value ||
+      !assistantMainChatAllowed.value
+    ) {
+      return false;
+    }
+    savedCommitDeslopSending.value = true;
+    try {
+      const accepted = await sendChatPayload({
+        displayMessage: `Deslop saved commit ${saveCommit.slice(0, 12)}.`,
+        genesisTask: "deslop",
+        message: `Deslop commit ${saveCommit}.`
+      });
+      if (accepted) {
+        savedCommitDeslop.value = "";
+      }
+      return accepted;
+    } finally {
+      savedCommitDeslopSending.value = false;
     }
   }
 
@@ -1558,6 +1596,8 @@ function useVibe64AutopilotView(props, emit, {
     dismissedNumberedQuestionText.value = "";
     submittedQuestionText.value = "";
     selectedAnswerChoice.value = "";
+    savedCommitDeslop.value = "";
+    savedCommitDeslopSending.value = false;
     workspaceSetupRetryError.value = "";
     systemReturnContext.value = null;
     systemRestoreRequest.value = null;
@@ -1644,6 +1684,7 @@ function useVibe64AutopilotView(props, emit, {
     dashboardRouteVisible,
     dashboardShellVisible,
     dismissNumberedQuestions,
+    dismissSavedCommitDeslop,
     confirmSaveWork,
     editOptimisticMessage,
     emptyConversationWelcome,
@@ -1687,6 +1728,8 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkTitle,
     saveWorkRequiresUpdate,
     saveWorkUnsaved,
+    savedCommitDeslop,
+    savedCommitDeslopSending,
     selectSessionTool,
     sessionId,
     sessionGithubActor,
@@ -1698,6 +1741,7 @@ function useVibe64AutopilotView(props, emit, {
     sourceEditorAskCodexAvailable,
     sourceEditorOpenRequest,
     structuredQuestionActive,
+    startSavedCommitDeslop,
     submitComposerMessage,
     systemBackAvailable,
     systemRestoreRequest,

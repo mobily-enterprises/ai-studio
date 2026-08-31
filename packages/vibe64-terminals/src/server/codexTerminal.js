@@ -154,7 +154,6 @@ import {
 } from "./aiTurnContext.js";
 import {
   classifyCodexAppServerEvent,
-  codexAppServerAutomaticHookNoOutput,
   codexAppServerAssistantItemText,
   codexAppServerContentText,
   codexAppServerContextRefreshReason,
@@ -4099,12 +4098,6 @@ function createCodexTerminalController({
     const normalizedThreadId = normalizeText(threadId);
     const assistantText = normalizeText(text);
     const normalizedItemId = normalizeText(itemId) || codexAppServerNotificationItemId(notification);
-    if (codexAppServerAutomaticHookNoOutput(assistantText)) {
-      return {
-        recorded: false,
-        reason: "automatic_hook_no_output"
-      };
-    }
     if (!normalizedSessionId || !normalizedThreadId || !assistantText || !normalizedItemId) {
       return {
         recorded: false,
@@ -8214,10 +8207,15 @@ function createCodexTerminalController({
         ? developerInstructions
         : "";
       stageStartedAt = Date.now();
-      const rendered = await runtime.renderPrompt(sessionId, {
-        request: userRequest,
-        task: sessionBriefingIsDelivered(preparedSession) ? "work" : "start"
-      });
+      const genesisTask = normalizeText(input.genesisTask);
+      const needsOpeningPrompt = !sessionBriefingIsDelivered(preparedSession);
+      const rendered = genesisTask || needsOpeningPrompt
+        ? await runtime.renderPrompt(sessionId, {
+            input,
+            request: userRequest,
+            task: genesisTask || "start"
+          })
+        : { prompt: userRequest };
       vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.stage", {
         durationMs: Date.now() - stageStartedAt,
         messageId,
@@ -8226,7 +8224,7 @@ function createCodexTerminalController({
       });
       const renderedPrompt = normalizeText(rendered?.prompt);
       if (!renderedPrompt) {
-        throw new Error("Genesis returned an empty work prompt.");
+        throw new Error("The assistant prompt is empty.");
       }
       const terminalInput = promptWithHiddenAiTurnContext(renderedPrompt, aiContext);
       vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.prepared", {

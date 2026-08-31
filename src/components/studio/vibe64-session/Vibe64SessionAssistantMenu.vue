@@ -28,7 +28,7 @@
       <header class="vibe64-session-assistant-menu__header">
         <v-icon :icon="mdiBrain" size="20" />
         <div>
-          <strong>AI for this session</strong>
+          <strong>AI Controls</strong>
           <span>{{ selectionSummary }}</span>
         </div>
       </header>
@@ -38,11 +38,7 @@
         aria-label="Loading available AIs"
         class="vibe64-session-assistant-menu__loading"
       >
-        <v-skeleton-loader
-          v-for="index in 3"
-          :key="index"
-          type="list-item"
-        />
+        <v-skeleton-loader type="text, chip@4, text, chip@4" />
       </div>
 
       <div
@@ -62,40 +58,69 @@
         No configured AIs are available for this session.
       </div>
 
-      <div v-else class="vibe64-session-assistant-menu__fields">
-        <v-select
-          :model-value="modelProviderId"
-          density="comfortable"
-          hide-details="auto"
-          item-title="label"
-          item-value="id"
-          :items="providerRows"
-          label="Provider"
-          variant="outlined"
-          @update:model-value="selectProvider"
-        />
-        <v-select
-          v-model="modelId"
-          density="comfortable"
-          hide-details="auto"
-          item-title="label"
-          item-value="id"
-          :items="availableModels"
-          label="Model"
-          no-data-text="No available models"
-          variant="outlined"
-        />
-        <v-select
+      <div v-else class="vibe64-session-assistant-menu__choices">
+        <section
+          v-if="providerRows.length > 1"
+          aria-label="Provider"
+          class="vibe64-session-assistant-menu__section"
+        >
+          <div class="vibe64-session-assistant-menu__label">Provider</div>
+          <div class="vibe64-session-assistant-menu__options">
+            <button
+              v-for="provider in providerRows"
+              :key="provider.id"
+              :aria-pressed="modelProviderId === provider.id"
+              class="vibe64-session-assistant-menu__option"
+              :class="{ 'vibe64-session-assistant-menu__option--active': modelProviderId === provider.id }"
+              type="button"
+              @click="selectProvider(provider.id)"
+            >
+              <span>{{ provider.label }}</span>
+              <v-icon v-if="modelProviderId === provider.id" :icon="mdiCheck" size="15" />
+            </button>
+          </div>
+        </section>
+
+        <section aria-label="Model" class="vibe64-session-assistant-menu__section">
+          <div class="vibe64-session-assistant-menu__label">Model</div>
+          <div v-if="availableModels.length" class="vibe64-session-assistant-menu__options">
+            <button
+              v-for="model in availableModels"
+              :key="model.id"
+              :aria-pressed="modelId === model.id"
+              class="vibe64-session-assistant-menu__option"
+              :class="{ 'vibe64-session-assistant-menu__option--active': modelId === model.id }"
+              type="button"
+              @click="selectModel(model.id)"
+            >
+              <span>{{ model.label }}</span>
+              <v-icon v-if="modelId === model.id" :icon="mdiCheck" size="15" />
+            </button>
+          </div>
+          <span v-else class="vibe64-session-assistant-menu__empty">No available models.</span>
+        </section>
+
+        <section
           v-if="variantRows.length > 1"
-          v-model="variantId"
-          density="comfortable"
-          hide-details="auto"
-          item-title="label"
-          item-value="id"
-          :items="variantRows"
-          label="Thinking"
-          variant="outlined"
-        />
+          aria-label="Thinking"
+          class="vibe64-session-assistant-menu__section"
+        >
+          <div class="vibe64-session-assistant-menu__label">Thinking</div>
+          <div class="vibe64-session-assistant-menu__options">
+            <button
+              v-for="variant in variantRows"
+              :key="variant.id || 'automatic'"
+              :aria-pressed="variantId === variant.id"
+              class="vibe64-session-assistant-menu__option"
+              :class="{ 'vibe64-session-assistant-menu__option--active': variantId === variant.id }"
+              type="button"
+              @click="selectVariant(variant.id)"
+            >
+              <span>{{ variant.label }}</span>
+              <v-icon v-if="variantId === variant.id" :icon="mdiCheck" size="15" />
+            </button>
+          </div>
+        </section>
       </div>
 
       <footer class="vibe64-session-assistant-menu__actions">
@@ -124,7 +149,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
-import { mdiBrain, mdiCogOutline } from "@mdi/js";
+import { mdiBrain, mdiCheck, mdiCogOutline } from "@mdi/js";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 
@@ -175,8 +200,9 @@ const emptyText = ref("");
 const assistantSelection = computed(() => props.session?.assistantSelection || null);
 const engineId = computed(() => String(assistantSelection.value?.engineId || ""));
 const accessLabel = computed(() => String(props.accessLabel || "").trim());
+const catalogActive = computed(() => Boolean(props.session?.sessionId && engineId.value));
 const catalog = useVibe64AssistantCatalog({
-  active: menuOpen,
+  active: catalogActive,
   engineId,
   modelProviderId,
   modelSearch: emptyText,
@@ -231,9 +257,12 @@ const selectedAgent = computed(() => compatibleAgents.value.find((agent) => (
   agent.id === agentId.value
 )) || null);
 const variantRows = computed(() => [
-  { id: "", label: "Provider default" },
+  { id: "", label: "Automatic" },
   ...(selectedModel.value?.variants || [])
 ]);
+const selectedVariant = computed(() => variantRows.value.find((variant) => (
+  variant.id === variantId.value
+)) || null);
 const selectionRevision = computed(() => String(catalog.modelEngine.value?.revision || ""));
 const draftSelection = computed(() => ({
   agentId: agentId.value,
@@ -258,11 +287,17 @@ const canSave = computed(() => Boolean(
   !catalogLoading.value &&
   !catalogError.value
 ));
-const selectionSummary = computed(() => [
-  selectedOverviewEngine.value?.label || engineId.value,
-  selectedProvider.value?.label || assistantSelection.value?.modelProviderId,
-  selectedModel.value?.label || assistantSelection.value?.modelId
-].filter(Boolean).join(" · ") || "Choose an available AI");
+const selectionSummary = computed(() => {
+  const engineLabel = selectedOverviewEngine.value?.label || engineId.value;
+  const choices = [
+    ...(providerRows.value.length > 1
+      ? [selectedProvider.value?.label || assistantSelection.value?.modelProviderId]
+      : []),
+    selectedModel.value?.label || assistantSelection.value?.modelId,
+    selectedVariant.value?.label
+  ].filter(Boolean).join(" / ");
+  return [engineLabel, choices].filter(Boolean).join(" · ") || "Choose an available AI";
+});
 const buttonTitle = computed(() => (
   `Choose AI${selectionSummary.value ? `: ${selectionSummary.value}` : ""}${
     !props.accessLoading && accessLabel.value ? ` · ${accessLabel.value}` : ""
@@ -304,6 +339,16 @@ function selectProvider(value = "") {
   variantId.value = "";
 }
 
+function selectModel(value = "") {
+  modelId.value = String(value || "");
+  agentId.value = "";
+  variantId.value = "";
+}
+
+function selectVariant(value = "") {
+  variantId.value = String(value || "");
+}
+
 function openConnectionSettings() {
   menuOpen.value = false;
   requestVibe64AccountConnectionsDialog({ section: "ai" });
@@ -329,11 +374,13 @@ async function save() {
   }
 }
 
-watch([menuOpen, assistantSelection], ([open]) => {
+watch(assistantSelection, hydrateSelection, { immediate: true });
+
+watch(menuOpen, (open) => {
   if (open) {
     hydrateSelection();
   }
-}, { immediate: true });
+});
 
 watch([modelProvider, availableModels], ([provider, models]) => {
   if (!menuOpen.value || !provider) {
@@ -420,10 +467,70 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
   white-space: nowrap;
 }
 
-.vibe64-session-assistant-menu__fields,
+.vibe64-session-assistant-menu__choices,
 .vibe64-session-assistant-menu__loading {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.55rem;
+}
+
+.vibe64-session-assistant-menu__section {
+  display: grid;
+  gap: 0.32rem;
+}
+
+.vibe64-session-assistant-menu__label {
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.2;
+  padding-inline: 0.12rem;
+  text-transform: uppercase;
+}
+
+.vibe64-session-assistant-menu__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.vibe64-session-assistant-menu__option {
+  align-items: center;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-outline), 0.16);
+  border-radius: 7px;
+  color: rgb(var(--v-theme-on-surface));
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.82rem;
+  gap: 0.34rem;
+  letter-spacing: 0;
+  line-height: 1.2;
+  min-height: 2rem;
+  padding: 0.34rem 0.52rem;
+  text-align: left;
+}
+
+.vibe64-session-assistant-menu__option:hover {
+  background: rgba(var(--v-theme-primary), 0.06);
+}
+
+.vibe64-session-assistant-menu__option:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
+
+.vibe64-session-assistant-menu__option--active {
+  background: rgba(var(--v-theme-primary), 0.09);
+  border-color: rgba(var(--v-theme-primary), 0.36);
+  color: rgb(var(--v-theme-primary));
+  font-weight: 650;
+}
+
+.vibe64-session-assistant-menu__empty {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 0.82rem;
+  padding: 0.35rem 0.12rem;
 }
 
 .vibe64-session-assistant-menu__state {
@@ -452,6 +559,10 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
     min-height: 3rem;
     min-width: 3rem;
     width: 3rem;
+  }
+
+  .vibe64-session-assistant-menu__option {
+    min-height: 3rem;
   }
 }
 </style>

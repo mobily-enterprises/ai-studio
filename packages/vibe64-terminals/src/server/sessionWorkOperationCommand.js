@@ -7,6 +7,12 @@ import {
 } from "./sessionWorkSave.js";
 
 const MAX_INPUT_BYTES = 1024 * 1024;
+const OPERATION_IMPLEMENTATIONS = {
+  "change-diff": inspectSessionChangeDiffDirect,
+  "changes": inspectSessionChangesDirect,
+  "check-updates": checkSessionUpdatesDirect,
+  "work": inspectSessionWorkDirect
+};
 
 function runLocalCommand(request = {}) {
   return runCaptureCommand(request.command, request.args, {
@@ -34,15 +40,6 @@ async function readInput() {
   return JSON.parse(serialized || "{}");
 }
 
-function operationImplementation(operation = "") {
-  return ({
-    "change-diff": inspectSessionChangeDiffDirect,
-    "changes": inspectSessionChangesDirect,
-    "check-updates": checkSessionUpdatesDirect,
-    "work": inspectSessionWorkDirect
-  })[operation] || null;
-}
-
 function errorResponse(error) {
   return {
     error: {
@@ -58,7 +55,7 @@ function errorResponse(error) {
 
 try {
   const payload = await readInput();
-  const implementation = operationImplementation(String(payload?.operation || ""));
+  const implementation = OPERATION_IMPLEMENTATIONS[String(payload?.operation || "")];
   if (!implementation) {
     const error = new Error("Unsupported session repository operation.");
     error.code = "vibe64_session_work_operation_unsupported";

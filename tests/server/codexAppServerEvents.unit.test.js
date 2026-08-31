@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   classifyCodexAppServerEvent,
-  codexAppServerAutomaticHookNoOutput,
   codexAppServerContextRefreshReason,
   codexAppServerErrorText,
   codexAppServerNotificationUsageLimitExceeded,
@@ -222,7 +221,7 @@ test("Codex app-server event classifier recognizes task completion final text", 
   });
 });
 
-test("Codex app-server identifies native hook prompts and omits their no-output result", () => {
+test("Codex app-server identifies native hook prompts without filtering assistant results", () => {
   const hookPrompt = {
     fragments: [{
       hookRunId: "stop:1",
@@ -246,20 +245,20 @@ test("Codex app-server identifies native hook prompts and omits their no-output 
     threadId: "thread-1",
     turnId: "turn-1"
   });
-  assert.equal(codexAppServerAutomaticHookNoOutput("VIBE64_AUTOMATIC_HOOK_NO_OUTPUT"), true);
   assert.deepEqual(codexAppServerProviderThreadAssistantSegments({
     turns: [{
       id: "turn-1",
       items: [
         { id: "main-answer", phase: "final_answer", text: "Here is the answer.", type: "agentMessage" },
         hookPrompt,
-        { id: "no-output", phase: "final_answer", text: "VIBE64_AUTOMATIC_HOOK_NO_OUTPUT", type: "agentMessage" },
+        { id: "second-answer", phase: "final_answer", text: "Another answer.", type: "agentMessage" },
         { id: "cleanup", phase: "final_answer", text: "Cleanup corrected one helper.", type: "agentMessage" },
         { id: "summary", phase: "final_answer", text: "The requested change is complete and verified.", type: "agentMessage" }
       ]
     }]
   }, "turn-1"), [
     { itemId: "main-answer", text: "Here is the answer." },
+    { itemId: "second-answer", text: "Another answer." },
     { itemId: "cleanup", text: "Cleanup corrected one helper." },
     { itemId: "summary", text: "The requested change is complete and verified." }
   ]);

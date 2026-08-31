@@ -97,6 +97,12 @@ const agentMessageFields = {
     noTrim: false,
     required: false
   },
+  genesisTask: {
+    type: "string",
+    enum: ["deslop"],
+    noTrim: false,
+    required: false
+  },
   message: {
     type: "string",
     noTrim: false,

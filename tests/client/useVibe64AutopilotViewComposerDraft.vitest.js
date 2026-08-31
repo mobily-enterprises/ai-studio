@@ -1246,9 +1246,15 @@ describe("useVibe64AutopilotView direct chat", () => {
     ]);
   });
 
-  it("saves work through the native Save operation without sending a chat prompt", async () => {
+  it("offers exact-commit Deslop after a reconciled native Save", async () => {
+    const saveCommit = "a".repeat(40);
     const sendAgentMessage = vi.fn(async () => true);
-    const saveSessionWork = vi.fn(async () => ({ ok: true, status: "saved" }));
+    const saveSessionWork = vi.fn(async () => ({
+      ok: true,
+      reconciled: true,
+      saveCommit,
+      status: "saved"
+    }));
     const view = await createView({
       saveSessionWork,
       sendAgentMessage,
@@ -1263,12 +1269,43 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkConfirmOpen.value).toBe(true);
     await expect(view.confirmSaveWork()).resolves.toEqual({
       ok: true,
+      reconciled: true,
+      saveCommit,
       status: "saved"
     });
 
     expect(saveSessionWork).toHaveBeenCalledWith();
     expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(view.saveWorkConfirmOpen.value).toBe(false);
+    expect(view.savedCommitDeslop.value).toBe(saveCommit);
+
+    await expect(view.startSavedCommitDeslop()).resolves.toBe(true);
+    expect(sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
+      displayMessage: "Deslop saved commit aaaaaaaaaaaa.",
+      genesisTask: "deslop",
+      message: `Deslop commit ${saveCommit}.`
+    }));
+    expect(view.savedCommitDeslop.value).toBe("");
+  });
+
+  it("does not offer Deslop until Save has reconciled the session", async () => {
+    const view = await createView({
+      saveSessionWork: vi.fn(async () => ({
+        ok: true,
+        reconciled: false,
+        saveCommit: "b".repeat(40),
+        status: "published_needs_reconcile"
+      })),
+      workState: {
+        unsaved: true,
+        updateAvailable: false,
+        updateStatusPending: false
+      }
+    });
+
+    view.requestSaveWork();
+    await view.confirmSaveWork();
+    expect(view.savedCommitDeslop.value).toBe("");
   });
 
   it("shows the Save action only in the active session chat", async () => {

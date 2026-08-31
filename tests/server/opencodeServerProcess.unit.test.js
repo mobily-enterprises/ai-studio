@@ -202,7 +202,7 @@ test("OpenCode process environment is minimal and injects Vibe64's deny-all help
   assert.equal(env.VIBE64_GIT_COMMAND_SOCKET, "/run/vibe64/git.sock");
   assert.equal(env.OPENCODE_DB, "/state/opencode.sqlite");
   assert.equal(env.OPENCODE_SERVER_PASSWORD, "loopback-password");
-  assert.equal(env.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
+  assert.equal(env.OPENCODE_DISABLE_PROJECT_CONFIG, undefined);
   assert.equal(env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX, "131072");
   assert.equal(env.OPENCODE_PURE, undefined);
   assert.equal(
@@ -397,7 +397,7 @@ test("OpenCode servers run and drain through one managed execution id", async (t
   assert.equal(request.execution.projectSlug, "catalogue");
   assert.equal(request.execution.sessionId, "session-1");
   assert.equal(request.args.includes("--pure"), false);
-  assert.equal(request.baseEnv.OPENCODE_DISABLE_PROJECT_CONFIG, "1");
+  assert.equal(request.baseEnv.OPENCODE_DISABLE_PROJECT_CONFIG, undefined);
   assert.equal(request.baseEnv.OPENCODE_PURE, undefined);
   assert.match(
     request.args[1],

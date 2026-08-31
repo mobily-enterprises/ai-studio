@@ -1343,6 +1343,7 @@ async function withAgentMessageController(operation) {
     onSteerTurn: null,
     provider: null,
     providerOptions: [],
+    renderPrompts: [],
     sendTurnWait: null,
     sessionThreadIds: [],
     steers: [],
@@ -1356,9 +1357,10 @@ async function withAgentMessageController(operation) {
     async getSession(sessionId) {
       return store.readSession(sessionId);
     },
-    async renderPrompt(_sessionId, { request } = {}) {
+    async renderPrompt(_sessionId, { request, task } = {}) {
+      captures.renderPrompts.push({ request, task });
       return {
-        prompt: String(request || "Continue.")
+        prompt: `GENESIS ${task}: ${String(request || "Continue.")}`
       };
     },
     projectContextRoot,
@@ -1925,6 +1927,42 @@ test("duplicate agent messages with the same message id call the provider once",
     assert.equal(captures.turns.length, 1);
     assert.equal(captures.steers.length, 0);
     assert.equal(captures.turns[0].settings.clientUserMessageId, input.messageId);
+  });
+});
+
+test("Codex renders only opening and explicit Deslop prompts through Genesis", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const waitForIdle = (turnId) => waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.active === false && run?.providerTurnId === turnId,
+      `${turnId} to complete`
+    );
+
+    await controller.sendMessage(sessionId, {
+      message: "Start this session.",
+      messageId: "message-prompt-opening"
+    });
+    completeAgentMessageHarnessTurn(captures, captures.provider, "turn-1", "Completed turn-1.");
+    await waitForIdle("turn-1");
+    await controller.sendMessage(sessionId, {
+      genesisTask: "deslop",
+      message: `Deslop commit ${"a".repeat(40)}.`,
+      messageId: "message-prompt-deslop"
+    });
+    completeAgentMessageHarnessTurn(captures, captures.provider, "turn-2", "Completed turn-2.");
+    await waitForIdle("turn-2");
+    await controller.sendMessage(sessionId, {
+      message: "Explain one cleanup choice.",
+      messageId: "message-prompt-follow-up"
+    });
+    completeAgentMessageHarnessTurn(captures, captures.provider, "turn-3", "Completed turn-3.");
+    await waitForIdle("turn-3");
+
+    assert.deepEqual(captures.renderPrompts.map(({ task }) => task), ["start", "deslop"]);
+    assert.match(captures.turns[0].input, /GENESIS start: Start this session\./u);
+    assert.match(captures.turns[1].input, /GENESIS deslop: Deslop commit/u);
+    assert.doesNotMatch(captures.turns[2].input, /GENESIS/u);
+    assert.match(captures.turns[2].input, /Explain one cleanup choice\.$/u);
   });
 });
 

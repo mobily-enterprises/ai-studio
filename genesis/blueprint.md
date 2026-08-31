@@ -7,8 +7,11 @@ People can open or create a project, work in isolated sessions, and have a
 direct conversation with the agent while seeing the source, changes, running
 application, environment, and the system's explained structure in one place.
 Each session keeps valuable work recoverable and separate from unrelated work.
-Internal no-op follow-up chatter stays hidden, while completed code-changing
-work ends with one concise, useful account of what happened.
+The first project message carries the relevant Genesis task prompt; later
+messages and active-turn steering stay concise instead of rebuilding it. The
+project's shorter durable operating guide is loaded when a conversation is
+created and refreshed after compaction without becoming a visible message or
+extra agent turn.
 
 The chat selector stays focused on choosing among AIs that are already
 configured and available. Workspace owners manage AI accounts and add further
@@ -70,6 +73,12 @@ transports other named Stack sections without interpreting them. Vibe64 owns
 the strict mechanical contracts for workspace setup, launch, preview identity,
 and application deployment, then executes them under its host policy without
 inventing commands from a framework or project shape.
+
+Deslop is a deliberate cleanup of committed work, not an automatic extra agent
+turn. After Save, Vibe64 may offer Deslop for the exact commit it just
+published. Accepting uses the ordinary visible project conversation; declining
+has no lasting effect. People can also request Deslop directly for a commit or
+recent commits outside Vibe64.
 
 People can choose how cautiously the AI engineers a project. The choice follows
 the project's source, always keeps ordinary work simple and targeted, and makes

@@ -693,7 +693,7 @@ function createOpenCodeTerminalController({
     }
   }
 
-  async function ensureSharedProcess(context = {}, options = {}, selected = null) {
+  async function ensureSharedProcess(context = {}, options = {}, selected = null, shimDirs = []) {
     await sharedProcessStop?.catch(() => null);
     if (sharedProcess) {
       const currentConnection = sharedProcess.connections.get(selected?.modelProviderId);
@@ -735,6 +735,7 @@ function createOpenCodeTerminalController({
         privateRoot: path.join(roots.root, `private-${randomUUID()}`),
         providerConnections: connections,
         sessionEnvironmentRegistry: roots.registryPath,
+        shimDirs,
         workdir: roots.workdir
       });
       sharedProcess = {
@@ -982,7 +983,12 @@ function createOpenCodeTerminalController({
         workdir: context.workdir
       });
       await writeSessionEnvironmentRegistry();
-      const shared = await ensureSharedProcess(context, options, connection);
+      const shared = await ensureSharedProcess(
+        context,
+        options,
+        connection,
+        commands.shimDirs
+      );
       const current = processes.get(context.key);
       if (
         current &&
@@ -1636,11 +1642,21 @@ function createOpenCodeTerminalController({
         projectService,
         vibe64User: options.vibe64User || null
       });
-      const rendered = typeof context.runtime.renderPrompt === "function"
+      const genesisTask = text(input.genesisTask);
+      const conversation = genesisTask
+        ? null
+        : await context.runtime.store.readConversationLogPage(context.sessionId, { limit: 1 });
+      const needsOpeningPrompt = Boolean(
+        genesisTask || (
+          !conversation?.pagination?.totalTurnCount &&
+          text(context.session?.metadata?.agent_briefing_delivered) !== "yes"
+        )
+      );
+      const rendered = needsOpeningPrompt
         ? await context.runtime.renderPrompt(context.sessionId, {
             input,
             request: message,
-            task: "work"
+            task: genesisTask || "start"
           })
         : { prompt: message };
       const renderedPrompt = text(rendered?.prompt) || message;
@@ -1650,10 +1666,12 @@ function createOpenCodeTerminalController({
         id: providerMessageId,
         model: openCodeModel(context.selection),
         prompt: {
-          text: promptWithHiddenAiTurnContext([
-            openCodeSessionInstructions(actor?.session || context.session, aiContext.policy),
-            renderedPrompt
-          ].join("\n\n"), aiContext)
+          text: promptWithHiddenAiTurnContext(needsOpeningPrompt
+            ? [
+                openCodeSessionInstructions(actor?.session || context.session, aiContext.policy),
+                renderedPrompt
+              ].join("\n\n")
+            : renderedPrompt, aiContext)
         },
         resume: true
       });

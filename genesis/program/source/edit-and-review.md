@@ -6,7 +6,11 @@ from saved project work, and inspect one exact file change at a time.
 ## Sources
 
 - `packages/vibe64-source-editor/src/server/service.js`
+- `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
+- `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `src/composables/useVibe64SourceEditor.js`
+- `src/composables/useVibe64RepositoryWorkspace.js`
+- `src/composables/useVibe64SessionRuntimeHost.js`
 - `src/components/studio/repository/Vibe64RepositoryWorkspace.vue`
 - `src/components/studio/repository/Vibe64RepositoryDiff.vue`
 - `src/lib/vibe64RepositoryRealtime.js`
@@ -23,3 +27,13 @@ Current changes refreshes when an assistant turn becomes idle and when Vibe64
 observes editor, Save, or repository-status events, so work completed during a
 turn appears without a manual reload. Arbitrary filesystem writes that produce
 none of those events are not promised to appear immediately.
+
+## Implementation map
+
+- `runSessionWorkOperation()` admits each Current Changes, file-diff, work-state,
+  or update-check request as one managed job. `sessionWorkOperationCommand.js`
+  performs that request's exact Git queries inside the admitted child instead
+  of paying managed-host admission cost for every individual Git command.
+- `refreshWorkState(observedWork)` accepts the complete work-state snapshot
+  already returned by Current Changes, so the selected session's Save or Update
+  control does not immediately repeat the same repository inspection.

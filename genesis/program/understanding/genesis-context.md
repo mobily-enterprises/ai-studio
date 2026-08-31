@@ -16,7 +16,9 @@ Genesis without creating another interpretation of the application.
 ## Public contract
 
 New projects begin with Genesis and existing repositories can be adopted without
-moving their source. Agent turns receive Genesis task guidance. People can
+moving their source. Agent turns receive Genesis task guidance, while new and
+compacted conversations receive the shorter portable Genesis session context.
+People can
 refresh and explore the detailed Machine City and explanatory Program City,
 navigate subsystems and operations to their participating files, and open those
 files for editing or discussion. Task guidance names Genesis operations without
