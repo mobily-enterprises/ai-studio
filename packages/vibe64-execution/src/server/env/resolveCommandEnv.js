@@ -5,7 +5,8 @@ import {
   databaseEnv
 } from "./databaseEnv.js";
 import {
-  commandCallerEnv
+  commandCallerEnv,
+  rejectCallerEnvPolicy
 } from "./callerEnv.js";
 import {
   DATABASE_ENV_NAMES
@@ -35,6 +36,9 @@ import {
 import {
   resolveRuntimePath
 } from "../runtime/resolveRuntimePath.js";
+import {
+  envRecord
+} from "../normalize.js";
 
 const BASE_ENV_POLICY_NAMES = new Set([
   ...DATABASE_ENV_NAMES,
@@ -78,19 +82,24 @@ function projectEnvRecordsForPolicy(request = {}) {
 }
 
 function commandProjectEnv(request = {}) {
-  return projectEnvRecordsForPolicy(request).reduce((env, record) => ({
-    ...env,
-    ...commandCallerEnv(record, request)
-  }), {});
+  return projectEnvRecordsForPolicy(request).reduce((env, record) => {
+    if (request.envPolicy === "deployment") {
+      rejectCallerEnvPolicy(record);
+      return {
+        ...env,
+        ...envRecord(record)
+      };
+    }
+    return {
+      ...env,
+      ...commandCallerEnv(record, request)
+    };
+  }, {});
 }
 
 function databaseEnvRecordsForPolicy(baseEnv = {}, request = {}) {
   if (request.envPolicy === "deployment") {
-    return [
-      request.project?.deploymentDatabaseEnv,
-      request.project?.deployment?.databaseEnv,
-      request.project?.databaseEnv
-    ];
+    return [];
   }
   if (request.envPolicy === "project") {
     return projectEnvRecordsForPolicy(request);

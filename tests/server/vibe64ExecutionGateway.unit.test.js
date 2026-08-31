@@ -556,15 +556,18 @@ test("execution gateway preserves database env names without projecting aliases"
   });
 });
 
-test("execution gateway gives preview and deployment commands only explicitly declared database names", async () => {
+test("execution gateway transports exact trusted deployment names without a database registry", async () => {
   const dbProbeArgs = [
     "-e",
     [
       "console.log(JSON.stringify({",
+      "applicationDatabase: process.env.APPLICATION_DATABASE_NAME || '',",
       "db: process.env.DB_NAME,",
+      "database: process.env.DB_DATABASE || '',",
       "mysql: process.env.MYSQL_DATABASE || '',",
       "password: process.env.MYSQL_PWD || '',",
-      "port: process.env.MYSQL_TCP_PORT || ''",
+      "port: process.env.MYSQL_TCP_PORT || '',",
+      "username: process.env.DB_USERNAME || ''",
       "}));"
     ].join("")
   ];
@@ -587,11 +590,14 @@ test("execution gateway gives preview and deployment commands only explicitly de
     command: process.execPath,
     envPolicy: "deployment",
     project: {
-      deploymentDatabaseEnv: {
+      deploymentEnv: {
+        APPLICATION_DATABASE_NAME: "catalogue",
         DB_CLIENT: "mysql2",
+        DB_DATABASE: "deployment_database",
         DB_NAME: "deployment_db",
         DB_PASSWORD: "deployment-secret",
-        DB_PORT: "3306"
+        DB_PORT: "3306",
+        DB_USERNAME: "deployment_writer"
       }
     },
     purpose: "deployment"
@@ -600,16 +606,22 @@ test("execution gateway gives preview and deployment commands only explicitly de
   assert.equal(preview.ok, true, preview.output);
   assert.equal(deployment.ok, true, deployment.output);
   assert.deepEqual(JSON.parse(preview.stdout), {
+    applicationDatabase: "",
     db: "preview_db",
+    database: "",
     mysql: "",
     password: "",
-    port: ""
+    port: "",
+    username: ""
   });
   assert.deepEqual(JSON.parse(deployment.stdout), {
+    applicationDatabase: "catalogue",
     db: "deployment_db",
+    database: "deployment_database",
     mysql: "",
     password: "",
-    port: ""
+    port: "",
+    username: "deployment_writer"
   });
 });
 
@@ -636,7 +648,7 @@ test("execution gateway env policies keep deployment commands away from session-
     },
     envPolicy: "deployment",
     project: {
-      databaseEnv: {
+      deploymentEnv: {
         DB_CLIENT: "mysql2",
         DB_NAME: "production_db",
         DB_PASSWORD: "production-secret"
@@ -681,7 +693,7 @@ test("execution gateway gives deployment commands production DB env, Git identit
     envPolicy: "deployment",
     gitTransport: "github-https",
     project: {
-      deploymentDatabaseEnv: {
+      deploymentEnv: {
         DB_CLIENT: "mysql2",
         DB_HOST: "127.0.0.1",
         DB_NAME: "prod_sas_app",
@@ -1703,6 +1715,22 @@ test("execution gateway rejects caller-owned identity and temp policy", async ()
     assert.equal(result.ok, false, envName);
     assert.equal(result.code, "vibe64_command_env_policy_reserved", envName);
   }
+});
+
+test("execution gateway rejects reserved policy names in trusted deployment env", async () => {
+  const result = await runVibe64Command({
+    args: ["-e", ""],
+    command: process.execPath,
+    envPolicy: "deployment",
+    project: {
+      deploymentEnv: {
+        HOME: "/tmp/not-allowed"
+      }
+    }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "vibe64_command_env_policy_reserved");
 });
 
 test("execution gateway rejects cwd outside allowed roots", async () => {

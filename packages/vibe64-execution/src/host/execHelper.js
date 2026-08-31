@@ -1553,6 +1553,25 @@ function resolveAllowedCwd(cwd = "", ownerUsername = "", {
   ) {
     return resolveAllowedUserHomePath(normalized, targetUser);
   }
+  if (
+    operation === "vibe64-command" &&
+    targetUser.username === ownerUsername
+  ) {
+    const resolved = path.resolve(normalized);
+    const ownerProjectStateRoot = path.join(
+      targetUser.home,
+      ".local",
+      "state",
+      "vibe64",
+      "projects"
+    );
+    if (
+      resolved === ownerProjectStateRoot ||
+      resolved.startsWith(`${ownerProjectStateRoot}${path.sep}`)
+    ) {
+      return resolved;
+    }
+  }
   if (operation === "codex-app-server" || operation === "opencode-app-server") {
     const resolved = path.resolve(normalized);
     const targetUid = Number(targetUser.uid);
