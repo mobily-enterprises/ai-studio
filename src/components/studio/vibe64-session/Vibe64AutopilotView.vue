@@ -140,10 +140,11 @@
       <div class="studio-autopilot__activity" aria-label="Session activity">
         <Vibe64TemporaryActionTerminal
           :active="saveWorkOperationActive || saveWorkSending"
+          :dismissed="saveWorkActivityDismissed"
           :error="saveWorkError"
           :error-title="`${saveWorkActivityLabel} needs attention`"
           height="clamp(8rem, 22vh, 14rem)"
-          :operation-key="saveWorkOperation?.operationId || ''"
+          :operation-key="saveWorkActivityKey"
           :output="saveWorkOutput"
           :retryable="saveWorkRetryable"
           :stage="saveWorkStage"
@@ -152,6 +153,7 @@
           :subtitle="saveWorkActivityIsUpdate ? 'Replay current work on the latest saved version' : 'Canonical project Save'"
           :title="saveWorkActivityLabel"
           @copy="copyActivityOutput(saveWorkOutput)"
+          @dismiss="dismissSaveWorkActivity"
           @retry="retrySaveWork"
         >
           <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
@@ -175,7 +177,7 @@
           v-if="savedCommitDeslop"
           border
           class="studio-autopilot__deslop-offer"
-          color="surface"
+          color="surface-variant"
           rounded="lg"
         >
           <div class="studio-autopilot__deslop-copy">
@@ -208,9 +210,11 @@
 
         <Vibe64TemporaryActionTerminal
           :active="workspaceSetupRunning || workspaceSetupRetrying"
+          :dismissed="workspaceSetupDismissed"
           :error="workspaceSetupNeedsAttention ? workspaceSetupDiagnostic : ''"
           error-title="Workspace preparation needs attention"
           height="clamp(8rem, 22vh, 14rem)"
+          :operation-key="workspaceSetupActivityKey"
           :output="workspaceSetupOutput"
           :retryable="workspaceSetupNeedsAttention && !workspaceSetupRetryDisabled"
           :stage="workspaceSetupCurrentLabel"
@@ -219,6 +223,7 @@
           subtitle="Project dependency preparation"
           :title="workspaceSetupTitle"
           @copy="copyActivityOutput(workspaceSetupOutput)"
+          @dismiss="dismissWorkspaceSetupActivity"
           @retry="retryWorkspaceSetup"
         >
           <template v-if="workspaceSetupNeedsAttention" #error-actions>
@@ -882,8 +887,10 @@ const {
   dashboardSessionContext,
   dashboardRouteVisible,
   dashboardShellVisible,
+  dismissSaveWorkActivity,
   dismissNumberedQuestions,
   dismissSavedCommitDeslop,
+  dismissWorkspaceSetupActivity,
   confirmSaveWork,
   editOptimisticMessage,
   emptyConversationWelcome,
@@ -908,6 +915,8 @@ const {
   rightPaneTab,
   rightPaneTabMounted,
   saveWorkConfirmOpen,
+  saveWorkActivityDismissed,
+  saveWorkActivityKey,
   saveWorkActivityIsUpdate,
   saveWorkActivityLabel,
   saveWorkDisabled,
@@ -915,7 +924,6 @@ const {
   saveWorkHeaderAriaLabel,
   saveWorkHeaderVisible,
   saveWorkCanResolveWithTemporaryAi,
-  saveWorkOperation,
   saveWorkOperationActive,
   saveWorkOutput,
   saveWorkRetryable,
@@ -945,8 +953,10 @@ const {
   updateComposerAttachments,
   updatePreviewAttachmentState,
   workspaceSetupAskDisabled,
+  workspaceSetupActivityKey,
   workspaceSetupCurrentLabel,
   workspaceSetupDiagnostic,
+  workspaceSetupDismissed,
   workspaceSetupFixSending,
   workspaceSetupNeedsAttention,
   workspaceSetupOutput,

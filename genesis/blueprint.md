@@ -58,9 +58,11 @@ session's chosen service instead of keeping another assistant service running.
 Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.
 
-Short actions show one compact progress line unless a person opens their full
-history. Long-running application output stays out of the way until opened and
-remains available after the run ends. An interactive AI terminal is launched
+Short actions show one compact progress line that a person can dismiss or open
+for full history. The browser remembers a dismissal for that exact attempt
+across reloads, while a new attempt appears normally. Long-running application
+output stays out of the way until opened and remains available after the run
+ends. An interactive AI terminal is launched
 explicitly, always matches the kind of assistant chosen when the session began,
 and can be closed independently of the conversation. A project that declares
 no application output remains idle: Preview says there is nothing to run and

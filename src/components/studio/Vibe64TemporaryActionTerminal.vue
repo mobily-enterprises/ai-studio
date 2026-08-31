@@ -4,7 +4,7 @@
     class="vibe64-temporary-action-terminal__summary"
     :class="{ 'vibe64-temporary-action-terminal__summary--error': Boolean(error) }"
     rounded="lg"
-    color="surface"
+    color="surface-variant"
     role="status"
   >
     <strong class="vibe64-temporary-action-terminal__title">{{ title }}</strong>
@@ -19,21 +19,31 @@
     <span class="vibe64-temporary-action-terminal__line">
       {{ summaryText }}
     </span>
-    <v-btn
-      :aria-label="`Show ${title} details`"
-      :color="error ? 'error' : undefined"
-      :icon="error ? mdiAlertCircleOutline : mdiConsoleLine"
-      size="small"
-      :title="`Show ${title} details`"
-      variant="text"
-      @click="openDetails"
-    />
+    <div class="vibe64-temporary-action-terminal__actions">
+      <v-btn
+        :aria-label="`Show ${title} details`"
+        :color="error ? 'error' : undefined"
+        :icon="error ? mdiAlertCircleOutline : mdiConsoleLine"
+        size="small"
+        :title="`Show ${title} details`"
+        variant="text"
+        @click="openDetails"
+      />
+      <v-btn
+        :aria-label="`Dismiss ${title}`"
+        :icon="mdiClose"
+        size="small"
+        :title="`Dismiss ${title}`"
+        variant="text"
+        @click="dismiss"
+      />
+    </div>
   </v-sheet>
 
   <Vibe64TerminalSurface
     v-else-if="visible"
     body-mode="log"
-    close-label="Hide"
+    close-label="Dismiss"
     :collapsible="false"
     :error="error"
     :error-title="errorTitle"
@@ -50,7 +60,7 @@
     :status="status"
     :subtitle="subtitle"
     :title="title"
-    @close="hideDetails"
+    @close="dismiss"
     @copy="$emit('copy')"
     @retry="$emit('retry')"
   >
@@ -62,12 +72,16 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
-import { mdiAlertCircleOutline, mdiConsoleLine } from "@mdi/js";
+import { mdiAlertCircleOutline, mdiClose, mdiConsoleLine } from "@mdi/js";
 import Vibe64TerminalSurface from "@/components/studio/Vibe64TerminalSurface.vue";
 import { terminalLastMeaningfulLine } from "@/lib/codexOutput.js";
 
 const props = defineProps({
   active: {
+    default: false,
+    type: Boolean
+  },
+  dismissed: {
     default: false,
     type: Boolean
   },
@@ -117,7 +131,7 @@ const props = defineProps({
   }
 });
 
-defineEmits(["copy", "retry"]);
+const emit = defineEmits(["copy", "dismiss", "retry"]);
 
 const detailsOpen = ref(false);
 const forwardedSlots = [
@@ -126,7 +140,7 @@ const forwardedSlots = [
   "error-actions",
   "output"
 ];
-const visible = computed(() => Boolean(
+const visible = computed(() => !props.dismissed && Boolean(
   props.active || props.error || detailsOpen.value
 ));
 const summaryText = computed(() => {
@@ -144,8 +158,9 @@ function openDetails() {
   detailsOpen.value = true;
 }
 
-function hideDetails() {
+function dismiss() {
   detailsOpen.value = false;
+  emit("dismiss");
 }
 
 watch(() => props.operationKey, () => {
@@ -171,6 +186,11 @@ watch(() => props.active, (active, previousActive) => {
 
 .vibe64-temporary-action-terminal__summary--error {
   border-inline-start: 0.25rem solid rgb(var(--v-theme-error));
+}
+
+.vibe64-temporary-action-terminal__actions {
+  align-items: center;
+  display: flex;
 }
 
 .vibe64-temporary-action-terminal__title,

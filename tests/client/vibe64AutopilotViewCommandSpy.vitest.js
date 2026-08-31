@@ -81,8 +81,12 @@ describe("Vibe64 direct session view", () => {
     expect(composable).toContain("Resolve only by editing the conflicting working-tree files");
     expect(composable).toContain("keep the latest saved version's overlapping lines byte-for-byte");
     expect(component).toContain(':active="saveWorkOperationActive || saveWorkSending"');
-    expect(component).toContain(':operation-key="saveWorkOperation?.operationId || \'\'"');
+    expect(component).toContain(':dismissed="saveWorkActivityDismissed"');
+    expect(component).toContain(':operation-key="saveWorkActivityKey"');
+    expect(component).toContain('@dismiss="dismissSaveWorkActivity"');
+    expect(composable).toContain("SHORT_ACTION_DISMISSALS_STORAGE_PREFIX");
     expect(component).toContain('v-if="savedCommitDeslop"');
+    expect(component).toMatch(/v-if="savedCommitDeslop"[\s\S]{0,160}color="surface-variant"/u);
     expect(component).toContain('@click="startSavedCommitDeslop"');
     expect(component).toContain('@click="dismissSavedCommitDeslop"');
     expect(composable).toContain('genesisTask: "deslop"');

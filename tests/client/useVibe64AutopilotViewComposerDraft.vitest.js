@@ -1,5 +1,5 @@
 import { nextTick, reactive } from "vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const route = reactive({
   path: "/app/project/chat-test/dashboard/env"
@@ -115,7 +115,19 @@ function deferredResult() {
   return { promise, reject, resolve };
 }
 
+function memoryStorage() {
+  const values = new Map();
+  return {
+    getItem: (key) => values.get(String(key)) ?? null,
+    setItem: (key, value) => values.set(String(key), String(value))
+  };
+}
+
 describe("useVibe64AutopilotView direct chat", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     route.path = "/app/project/chat-test/dashboard/env";
     router.push.mockReset();
@@ -1585,6 +1597,64 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkActivityLabel.value).toBe("Update this session (rebase)");
     expect(view.saveWorkOutput.value).toContain("Live Update");
     expect(view.saveWorkOutput.value).not.toContain("Newer completed Save");
+  });
+
+  it("remembers dismissed Save and workspace attempts across reloads without hiding new attempts", async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("window", { localStorage: storage });
+    const failedSave = {
+      error: "The managed repository could not publish this Save.",
+      operationId: "save-failed-1",
+      status: "failed"
+    };
+    const failedWorkspace = {
+      diagnostic: "Dependency installation exited with code 1.",
+      startedAt: "2026-08-31T08:35:00.000Z",
+      status: "failed",
+      updatedAt: "2026-08-31T08:36:00.000Z"
+    };
+    const overrides = {
+      session: {
+        ...viewProps().session,
+        workspaceSetup: failedWorkspace
+      },
+      workState: {
+        operation: failedSave,
+        unsaved: true
+      }
+    };
+    const firstView = await createView(overrides);
+
+    expect(firstView.saveWorkActivityDismissed.value).toBe(false);
+    expect(firstView.workspaceSetupDismissed.value).toBe(false);
+    expect(firstView.dismissSaveWorkActivity()).toBe(true);
+    expect(firstView.dismissWorkspaceSetupActivity()).toBe(true);
+    expect(firstView.saveWorkActivityDismissed.value).toBe(true);
+    expect(firstView.workspaceSetupDismissed.value).toBe(true);
+
+    const reloadedView = await createView(overrides);
+    expect(reloadedView.saveWorkActivityDismissed.value).toBe(true);
+    expect(reloadedView.workspaceSetupDismissed.value).toBe(true);
+
+    const nextAttemptView = await createView({
+      session: {
+        ...viewProps().session,
+        workspaceSetup: {
+          ...failedWorkspace,
+          startedAt: "2026-08-31T08:40:00.000Z",
+          updatedAt: "2026-08-31T08:41:00.000Z"
+        }
+      },
+      workState: {
+        operation: {
+          ...failedSave,
+          operationId: "save-failed-2"
+        },
+        unsaved: true
+      }
+    });
+    expect(nextAttemptView.saveWorkActivityDismissed.value).toBe(false);
+    expect(nextAttemptView.workspaceSetupDismissed.value).toBe(false);
   });
 
   it("turns the toolbar Save action into Update when the panel monitor finds an incoming version", async () => {

@@ -47,6 +47,10 @@ import {
   defineVibe64AsyncComponent
 } from "@/lib/vibe64AsyncComponent.js";
 import {
+  readLocalStorageJson,
+  writeLocalStorageJson
+} from "@/lib/browserLocalStorage.js";
+import {
   useVibe64Accounts
 } from "@local/vibe64-accounts/client";
 
@@ -88,6 +92,7 @@ const EXECUTION_SAFETY_ERROR_CODES = new Set([
   "vibe64_execution_ownership_unknown",
   "vibe64_managed_execution_provider_unavailable"
 ]);
+const SHORT_ACTION_DISMISSALS_STORAGE_PREFIX = "vibe64:short-action-dismissals:v1";
 const vibe64AutopilotViewEmits = [
   "busy-change",
   "chat-attention",
@@ -399,6 +404,10 @@ function useVibe64AutopilotView(props, emit, {
   const savedCommitDeslop = ref("");
   const savedCommitDeslopSending = ref(false);
   const selectedAnswerChoice = ref("");
+  const shortActionDismissals = ref({
+    saveWork: "",
+    workspaceSetup: ""
+  });
   const workspaceSetupRetryError = ref("");
   const workspaceSetupRetrying = ref(false);
   const workspaceSetupFixSending = ref(false);
@@ -412,6 +421,36 @@ function useVibe64AutopilotView(props, emit, {
     diagnosticsBusy: false
   });
   let messageSequence = 0;
+
+  const shortActionDismissalsStorageKey = computed(() => {
+    const slug = normalizedAgentTurnText(projectSlug.value);
+    const selectedSessionId = sessionId.value;
+    return slug && selectedSessionId
+      ? `${SHORT_ACTION_DISMISSALS_STORAGE_PREFIX}:${encodeURIComponent(slug)}:${encodeURIComponent(selectedSessionId)}`
+      : "";
+  });
+
+  watch(shortActionDismissalsStorageKey, (storageKey) => {
+    const stored = readLocalStorageJson(storageKey, {});
+    shortActionDismissals.value = {
+      saveWork: normalizedAgentTurnText(stored?.saveWork),
+      workspaceSetup: normalizedAgentTurnText(stored?.workspaceSetup)
+    };
+  }, { flush: "sync", immediate: true });
+
+  function dismissShortAction(name, activityKey = "") {
+    const key = normalizedAgentTurnText(activityKey);
+    const storageKey = shortActionDismissalsStorageKey.value;
+    if (!key || !storageKey) {
+      return false;
+    }
+    shortActionDismissals.value = {
+      ...shortActionDismissals.value,
+      [name]: key
+    };
+    writeLocalStorageJson(storageKey, shortActionDismissals.value);
+    return true;
+  }
 
   const latestAssistantQuestionText = computed(() => (
     latestAssistantMessageAwaitingUserReply(props.conversationLog)
@@ -567,6 +606,16 @@ function useVibe64AutopilotView(props, emit, {
       ? status
       : "unconfigured";
   });
+  const workspaceSetupActivityKey = computed(() => {
+    const operationKey = normalizedAgentTurnText(
+      workspaceSetup.value?.startedAt || workspaceSetup.value?.updatedAt
+    );
+    return operationKey ? `workspace-setup:${operationKey}` : "";
+  });
+  const workspaceSetupDismissed = computed(() => Boolean(
+    workspaceSetupActivityKey.value &&
+    shortActionDismissals.value.workspaceSetup === workspaceSetupActivityKey.value
+  ));
   const workspaceSetupRunning = computed(() => workspaceSetupStatus.value === "running");
   const workspaceSetupNeedsAttention = computed(() => (
     workspaceSetupStatus.value === "failed" || workspaceSetupStatus.value === "ambiguous"
@@ -619,6 +668,10 @@ function useVibe64AutopilotView(props, emit, {
     } finally {
       workspaceSetupRetrying.value = false;
     }
+  }
+
+  function dismissWorkspaceSetupActivity() {
+    return dismissShortAction("workspaceSetup", workspaceSetupActivityKey.value);
   }
 
   async function askCodexToFixWorkspaceSetup() {
@@ -1163,6 +1216,17 @@ function useVibe64AutopilotView(props, emit, {
       (!saveWorkOperation.value && saveWorkRequiresUpdate.value)
     );
   });
+  const saveWorkActivityKey = computed(() => {
+    const operationId = normalizedAgentTurnText(saveWorkOperation.value?.operationId);
+    if (!operationId) {
+      return "";
+    }
+    return `${saveWorkActivityIsUpdate.value ? "update-session" : "save-work"}:${operationId}`;
+  });
+  const saveWorkActivityDismissed = computed(() => Boolean(
+    saveWorkActivityKey.value &&
+    shortActionDismissals.value.saveWork === saveWorkActivityKey.value
+  ));
   const saveWorkActivityLabel = computed(() => (
     saveWorkActivityIsUpdate.value ? "Update this session (rebase)" : "Save work"
   ));
@@ -1254,6 +1318,10 @@ function useVibe64AutopilotView(props, emit, {
 
   function retrySaveWork() {
     return saveWorkRetryable.value ? requestSaveWork() : false;
+  }
+
+  function dismissSaveWorkActivity() {
+    return dismissShortAction("saveWork", saveWorkActivityKey.value);
   }
 
   function cancelSaveWork() {
@@ -1735,8 +1803,10 @@ function useVibe64AutopilotView(props, emit, {
     dashboardSessionContext,
     dashboardRouteVisible,
     dashboardShellVisible,
+    dismissSaveWorkActivity,
     dismissNumberedQuestions,
     dismissSavedCommitDeslop,
+    dismissWorkspaceSetupActivity,
     confirmSaveWork,
     editOptimisticMessage,
     emptyConversationWelcome,
@@ -1762,6 +1832,8 @@ function useVibe64AutopilotView(props, emit, {
     rightPaneTabMounted,
     saveWorkConfirmOpen,
     saveWorkDisabled,
+    saveWorkActivityDismissed,
+    saveWorkActivityKey,
     saveWorkActivityIsUpdate,
     saveWorkActivityLabel,
     saveWorkActionLabel,
@@ -1803,8 +1875,10 @@ function useVibe64AutopilotView(props, emit, {
     updateComposerAttachments,
     updatePreviewAttachmentState,
     workspaceSetupAskDisabled,
+    workspaceSetupActivityKey,
     workspaceSetupCurrentLabel,
     workspaceSetupDiagnostic,
+    workspaceSetupDismissed,
     workspaceSetupFixSending,
     workspaceSetupNeedsAttention,
     workspaceSetupOutput,

@@ -26,11 +26,13 @@ is reconciled only when the canonical authority proves the prepared commit was
 already published.
 
 While Save runs, the workspace shows one compact progress line. Opening its
-details reveals the bounded command progress. A successful Save disappears on
-completion; a failed Save remains visible with its recovery actions. The
-selected session's icon-only Save or Update action stays in the chat header
-beside the session it will affect, rather than occupying the application-wide
-toolbar.
+details reveals the bounded command progress. The browser remembers a
+dismissal across reloads for that exact Save or Update attempt without changing
+its result; a new attempt is visible again. A successful Save disappears on
+completion; a failed Save remains visible with its recovery actions until
+dismissed. The selected session's icon-only Save or Update action stays in the
+chat header beside the session it will affect, rather than occupying the
+application-wide toolbar.
 
 Each Save or Update attempt starts a fresh visible transcript. Retrying after a
 failure does not mix the earlier attempt's errors into the new operation.
