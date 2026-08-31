@@ -8,6 +8,8 @@ session history.
 
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
+- `packages/vibe64-database-tools/src/server/assistant.js`
+- `packages/vibe64-database-tools/src/server/service.js`
 - `packages/vibe64-terminals/src/server/codexEconomyThreadLedger.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
@@ -34,3 +36,10 @@ account identity, so a credential refresh for the same account remains valid
 while an account switch cannot reuse earlier helper ownership. OpenCode tasks
 use the same model-advertised response-limit policy as the main conversation,
 and any narrower task-specific limit remains authoritative.
+
+Database Copilot gives its temporary helper a compact but complete SQL schema
+view: every table or view and its semantic columns, constraints, keys, and
+indexes remain present, while database-browser identities and derived duplicate
+lists do not consume the bounded prompt. It never truncates the schema. A
+schema that still exceeds the helper limit fails visibly, and any requested
+query runs only through the session's read-only database identity.

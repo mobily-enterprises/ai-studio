@@ -16,6 +16,8 @@ const MAX_ASSISTANT_MESSAGE_BYTES = 64 * 1024;
 const MAX_ASSISTANT_QUERY_RESULT_BYTES = 2 * 1024 * 1024;
 const MAX_ASSISTANT_QUERY_ROUNDS = 4;
 const DATABASE_ASSISTANT_TURN_TIMEOUT_MS = 90_000;
+const DATABASE_ASSISTANT_ANSWER_MAX_CHARACTERS = 1_500;
+const DATABASE_ASSISTANT_SQL_MAX_CHARACTERS = 1_000;
 const DATABASE_ASSISTANT_EXECUTION_PROFILE = defineVibe64AgentExecutionProfileRequest({
   profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
   workloadId: VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.DATABASE_ASSISTANT
@@ -29,6 +31,7 @@ const DATABASE_ASSISTANT_OUTPUT_SCHEMA = Object.freeze({
       type: "string"
     },
     answer: {
+      maxLength: DATABASE_ASSISTANT_ANSWER_MAX_CHARACTERS,
       type: "string"
     },
     intent: {
@@ -36,6 +39,7 @@ const DATABASE_ASSISTANT_OUTPUT_SCHEMA = Object.freeze({
       type: "string"
     },
     sql: {
+      maxLength: DATABASE_ASSISTANT_SQL_MAX_CHARACTERS,
       type: "string"
     }
   },
@@ -62,14 +66,53 @@ function databaseAssistantAvailability(session = {}) {
   };
 }
 
+function assistantSchemaView(schema = {}) {
+  const {
+    relationships: _relationships,
+    schemas: _schemas,
+    ...view
+  } = schema;
+  return {
+    ...view,
+    tables: (Array.isArray(schema.tables) ? schema.tables : []).map((sourceTable) => {
+      const {
+        physicalId: _physicalId,
+        ...table
+      } = sourceTable;
+      return {
+        ...table,
+        columns: (Array.isArray(sourceTable.columns) ? sourceTable.columns : [])
+          .map((sourceColumn) => {
+            const {
+              databaseIdentity: _databaseIdentity,
+              immutable: _immutable,
+              ordinal: _ordinal,
+              ...column
+            } = sourceColumn;
+            return column;
+          }),
+        indexes: (Array.isArray(sourceTable.indexes) ? sourceTable.indexes : [])
+          .map((sourceIndex) => {
+            const {
+              id: _id,
+              ...index
+            } = sourceIndex;
+            return index;
+          })
+      };
+    })
+  };
+}
+
 function schemaPrompt(schema = {}) {
-  const serialized = JSON.stringify(schema);
-  if (!serialized || serialized === "{}") {
+  const source = JSON.stringify(schema);
+  if (!source || source === "{}") {
     throw vibe64Error(
       "Refresh the database schema before using the database assistant.",
       "vibe64_database_schema_refresh_required"
     );
   }
+  const serialized = JSON.stringify(assistantSchemaView(schema));
   if (Buffer.byteLength(serialized, "utf8") > MAX_ASSISTANT_SCHEMA_BYTES) {
     throw vibe64Error(
       "The complete database schema is too large for full-schema assistant mode. No tables were omitted; the assistant request was stopped.",
@@ -334,10 +377,15 @@ async function runDatabaseAssistant({
         observedExecutionProfile
       );
     } catch (error) {
-      if (failure && error !== failure) {
-        error.cause = failure;
+      if (
+        !failure ||
+        text(error?.code) !== "vibe64_codex_economy_thread_unavailable"
+      ) {
+        if (failure && error !== failure) {
+          error.cause = failure;
+        }
+        failure = error;
       }
-      failure = error;
     }
   }
   if (failure) {
