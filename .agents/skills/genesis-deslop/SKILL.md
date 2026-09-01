@@ -15,6 +15,23 @@ package. Otherwise use `genesis <arguments>` only when that executable is
 already available on `PATH`. Never install or update Genesis merely to satisfy
 a workflow instruction.
 
+## Load the effective project instructions once
+
+A Deslop request may arrive either as a complete Genesis-generated prompt or
+as a direct request such as `Deslop` in an agent session.
+
+If the current task already contains `GENESIS CONTEXT` whose task is `deslop`,
+continue with it directly. Do not generate another prompt.
+
+Otherwise, before resolving Git scope, run the Genesis
+`prompt --task deslop` operation once using the invocation rule above. For a
+bare `Deslop` request, pass no request argument. When the user names a count,
+commit, or range, pass that exact request as one safely quoted argument. Treat
+the printed prompt as the instructions for this same turn; do not dispatch it
+to another agent and do not generate it again. This step composes the selected
+Stack's technology-specific Deslop guidance and any project customization with
+the portable contract below.
+
 ## Resolve the committed scope
 
 Before reading or editing the selected change, require a clean worktree and

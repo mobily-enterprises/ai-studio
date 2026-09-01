@@ -9,6 +9,22 @@
 - `vue`
 - `shell`
 
+## Environment files
+
+- Dotenv `.env`
+
+## Verification
+
+- Verify `application`: `npm` `run` `verify`
+
+## Deployment
+
+- Runtimes: `nodejs`
+- Ready when: `GET` `/api/health` returns `200`
+- Prepare `Install dependencies`: `npm` `install`
+- Build `Build`: `npm` `run` `build`
+- Serve `Start`: `npm` `start`
+
 ## Outputs
 
 ### Target `app`: Run Vibe64
@@ -26,10 +42,6 @@
 - URL path: `/`
 - Ready when: `GET` `/api/health` returns `200`
 
-## Deployment
+## Workspace setup
 
-- Runtimes: `nodejs`
-- Ready when: `GET` `/api/health` returns `200`
-- Prepare `Install dependencies`: `npm` `install`
-- Build `Build`: `npm` `run` `build`
-- Serve `Start`: `npm` `start`
+- Prepare `Install dependencies` with `nodejs` when `package.json` exists: `npm` `install`

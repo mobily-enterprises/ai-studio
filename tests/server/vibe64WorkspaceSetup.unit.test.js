@@ -57,7 +57,7 @@ function readySetup(overrides = {}) {
     diagnostics: [],
     recipeHash: "sha256:recipe",
     runtimeRequirements: ["nodejs"],
-    source: "component:jskit",
+    source: "project",
     stackHash: "sha256:stack",
     status: "ready",
     steps: [{
@@ -340,6 +340,158 @@ test("workspace preparation treats a missing Genesis Stack as unconfigured", asy
     assert.equal(result.completion, null);
     assert.equal(result.state.status, "unconfigured");
     assert.equal(result.state.diagnostic, "");
+  });
+});
+
+test("workspace preparation retry migrates a recognized legacy Genesis project before setup", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session, sourceRoot } = await workspaceSession(targetRoot);
+    const calls = [];
+    let inspectionCount = 0;
+    let formatInspectionCount = 0;
+    const legacyError = () => {
+      const error = new Error("Genesis project files are unversioned. Run genesis migrate.");
+      error.code = "PROJECT_FORMAT_UNVERSIONED";
+      return error;
+    };
+    const runner = createWorkspaceSetupRunner({
+      inspect() {
+        inspectionCount += 1;
+        if (inspectionCount < 3) {
+          throw legacyError();
+        }
+        return readySetup();
+      },
+      inspectProjectFormat() {
+        formatInspectionCount += 1;
+        return {
+          action: "migrate",
+          projectVersion: null,
+          status: "unversioned",
+          supportedVersion: 2
+        };
+      },
+      projectService: {},
+      async runCommand(request) {
+        calls.push(request);
+        return {
+          exitCode: 0,
+          ok: true,
+          output: request.command === "genesis"
+            ? "Migrated Genesis project format to 2."
+            : "Dependencies are current."
+        };
+      }
+    });
+
+    const failed = await runner.start({ runtime, session });
+    assert.equal(failed.completion, null);
+    assert.equal(failed.state.status, "failed");
+    assert.equal(formatInspectionCount, 0);
+    assert.equal(calls.length, 0);
+
+    const retried = await runner.start({
+      retry: true,
+      runtime,
+      session: await runtime.getSession(session.sessionId, {
+        inspectSource: false
+      })
+    });
+    assert.equal(retried.state.status, "running");
+    const succeeded = await retried.completion;
+    assert.equal(succeeded.status, "succeeded");
+    assert.equal(formatInspectionCount, 1);
+    assert.equal(inspectionCount, 3);
+    assert.deepEqual(calls.map(({ args, command, cwd }) => ({ args, command, cwd })), [{
+      args: ["migrate"],
+      command: "genesis",
+      cwd: sourceRoot
+    }, {
+      args: ["install"],
+      command: "npm",
+      cwd: sourceRoot
+    }]);
+    assert.equal(calls[0].actor, "app");
+    assert.deepEqual(calls[0].allowedRoots, [sourceRoot]);
+    assert.equal(calls[0].envPolicy, "project");
+    assert.equal(calls[0].purpose, "source");
+    assert.deepEqual(calls[0].runtimes, ["node26"]);
+    assert.equal(calls[0].shimDirs.some((directory) => (
+      directory.endsWith(path.join("packages", "vibe64-genesis", "bin"))
+    )), true);
+    assert.equal(calls[0].timeout, WORKSPACE_SETUP_COMMAND_TIMEOUT_MS);
+    assert.match(succeeded.transcript, /Workspace preparation retry started\./u);
+    assert.match(succeeded.transcript, /\[Migrate Genesis project\] Running\./u);
+    assert.match(succeeded.transcript, /Migrated Genesis project format to 2\./u);
+    assert.match(succeeded.transcript, /\[Migrate Genesis project\] Succeeded\./u);
+    assert.match(succeeded.transcript, /\[Install JavaScript dependencies\] Succeeded\./u);
+  });
+});
+
+test("workspace preparation never migrates a current project after an inspection failure", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session } = await workspaceSession(targetRoot);
+    let commandCount = 0;
+    const runner = createWorkspaceSetupRunner({
+      inspect() {
+        throw new Error("The current Stack contract is incomplete.");
+      },
+      inspectProjectFormat() {
+        return {
+          action: null,
+          projectVersion: 2,
+          status: "current",
+          supportedVersion: 2
+        };
+      },
+      projectService: {},
+      async runCommand() {
+        commandCount += 1;
+        return { exitCode: 0, ok: true };
+      }
+    });
+
+    const result = await runner.start({ retry: true, runtime, session });
+    assert.equal(result.completion, null);
+    assert.equal(result.state.status, "failed");
+    assert.match(result.state.diagnostic, /current Stack contract is incomplete/u);
+    assert.equal(commandCount, 0);
+  });
+});
+
+test("workspace preparation keeps a failed Genesis migration recoverable", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const { runtime, session } = await workspaceSession(targetRoot);
+    let inspectionCount = 0;
+    const runner = createWorkspaceSetupRunner({
+      inspect() {
+        inspectionCount += 1;
+        throw new Error("Run genesis migrate.");
+      },
+      inspectProjectFormat() {
+        return {
+          action: "migrate",
+          status: "outdated"
+        };
+      },
+      projectService: {},
+      async runCommand() {
+        return {
+          exitCode: 1,
+          ok: false,
+          stderr: "The legacy Stack cannot be migrated automatically."
+        };
+      }
+    });
+
+    const result = await runner.start({ retry: true, runtime, session });
+
+    assert.equal(result.completion, null);
+    assert.equal(result.state.status, "failed");
+    assert.equal(inspectionCount, 1);
+    assert.match(result.state.diagnostic, /cannot be migrated automatically/u);
+    assert.match(result.state.transcript, /\[Migrate Genesis project\] Running\./u);
+    assert.match(result.state.transcript, /\[Migrate Genesis project\] Failed\./u);
   });
 });
 

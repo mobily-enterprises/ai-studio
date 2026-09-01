@@ -18,17 +18,17 @@ that genuinely belong together.
 <section class="vibe-adapter-section">
 <h2>How technology knowledge works</h2>
 <p>
-Genesis Stack components can contribute concise guidance, an authoritative
-Agent Skill, resource requirements, source indexers, cleanup advice, concrete
-verification commands, and optional launch descriptions. Vibe64 consumes those
-contracts while retaining control of Git, credentials, runtimes, processes,
-ports, previews, and browser binaries.
+Genesis Stack components can contribute concise guidance, optional authoritative
+Agent Skills, resource requirements, source indexers, cleanup advice, and
+initial proposals for project-owned verification and consumer operations.
+Vibe64 consumes the resulting project contracts while retaining control of Git,
+credentials, runtimes, processes, ports, previews, and browser binaries.
 </p>
 <div class="vibe-adapter-grid">
 <article class="vibe-adapter-card">
 <div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">∅</div><span>ANY STACK</span></div>
 <h3>Blank Genesis project</h3>
-<p>Start with Git, a Blueprint, Program space, skills, and hooks. No language, framework, package manager, or database is assumed.</p>
+<p>Start with Git, a Blueprint, an engineering profile, Program space, workflow skills, and Codex/OpenCode session guidance. No language, framework, package manager, or database is assumed.</p>
 <a href="/start-building">Start blank</a>
 </article>
 
@@ -49,7 +49,7 @@ ports, previews, and browser binaries.
 <article class="vibe-adapter-card">
 <div class="vibe-adapter-card__top"><div class="vibe-adapter-icon">JS</div><span>STACK</span></div>
 <h3>JSKIT</h3>
-<p>The JSKIT component selects its authoritative Agent Skill and supplies JSKIT-specific guidance, cleanup rules, resources, and verification commands.</p>
+<p>The JSKIT component links its authoritative framework documentation and supplies focused guidance, adoption and cleanup rules, plus initial project-contract proposals. It does not install a substitute generic JSKIT skill.</p>
 <a href="/start-building">Choose in Stack</a>
 </article>
 

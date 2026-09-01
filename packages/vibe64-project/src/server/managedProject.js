@@ -19,7 +19,10 @@ import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
-  materializeInitialProjectFoundation
+  initializeGenesisProject
+} from "@local/vibe64-genesis/server";
+import {
+  materializeJskitProjectFoundation
 } from "./projectFoundation.js";
 
 function initialProjectError(result = {}, fallback = "Initial project materialization failed.") {
@@ -118,18 +121,18 @@ function absoluteRuntimeRoot(projectRuntimeRoot = "") {
   return path.resolve(input);
 }
 
-async function materializeInitialJskitProject({
+async function materializeInitialProject({
   afterAuthorityVerification = null,
   beforeAuthorityMutation = null,
   defaultBranch = "main",
-  initializeProject = materializeInitialProjectFoundation,
+  initializeProject = initializeGenesisProject,
   projectName = "",
   projectRuntimeRoot = "",
   publish,
   runCommand = runVibe64Command
 } = {}) {
   if (typeof publish !== "function") {
-    throw new TypeError("materializeInitialJskitProject requires publish.");
+    throw new TypeError("materializeInitialProject requires publish.");
   }
   const runtimeRoot = absoluteRuntimeRoot(projectRuntimeRoot);
   const branch = normalizeText(defaultBranch) || "main";
@@ -137,7 +140,7 @@ async function materializeInitialJskitProject({
   await mkdir(temporaryRoot, {
     recursive: true
   });
-  const sourceRoot = await mkdtemp(path.join(temporaryRoot, "initial-jskit-"));
+  const sourceRoot = await mkdtemp(path.join(temporaryRoot, "initial-project-"));
   const allowedRoots = [sourceRoot, runtimeRoot];
   try {
     await runGit(["init", `--initial-branch=${branch}`], {
@@ -218,9 +221,9 @@ async function materializeInitialJskitProject({
   }
 }
 
-async function initializeManagedJskitProject({
+async function initializeManagedProject({
   defaultBranch = "main",
-  initializeProject = materializeInitialProjectFoundation,
+  initializeProject = initializeGenesisProject,
   projectContextRoot = "",
   projectName = "",
   projectRuntimeRoot = "",
@@ -252,7 +255,7 @@ async function initializeManagedJskitProject({
     projectRuntimeRoot: runtimeRoot
   });
   const repositoryRoot = path.dirname(repositoryPath);
-  const result = await materializeInitialJskitProject({
+  const result = await materializeInitialProject({
     defaultBranch,
     initializeProject,
     projectName,
@@ -296,6 +299,7 @@ async function initializeManagedJskitProject({
 }
 
 export {
-  initializeManagedJskitProject,
-  materializeInitialJskitProject
+  initializeManagedProject,
+  materializeInitialProject,
+  materializeJskitProjectFoundation
 };

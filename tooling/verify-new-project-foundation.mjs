@@ -12,7 +12,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  initializeManagedJskitProject
+  initializeManagedProject,
+  materializeJskitProjectFoundation
 } from "@local/vibe64-project/server/managedProject";
 
 const START_TIMEOUT_MS = 30_000;
@@ -80,7 +81,8 @@ async function main() {
       mkdir(namespaceRoot),
       mkdir(projectRuntimeRoot)
     ]);
-    const initialized = await initializeManagedJskitProject({
+    const initialized = await initializeManagedProject({
+      initializeProject: materializeJskitProjectFoundation,
       projectContextRoot: namespaceRoot,
       projectName: "created-project-proof",
       projectRuntimeRoot
@@ -95,7 +97,7 @@ async function main() {
     ));
     assert.equal(packageJson.name, "created-project-proof");
     assert.deepEqual(packageJson.workspaces, ["packages/*"]);
-    assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.200");
+    assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.204");
     assert.equal(packageJson.devDependencies["@jskit-ai/jskit-cli"], undefined);
     assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
     assert.equal(packageJson.scripts["jskit:check"], "jskit check");

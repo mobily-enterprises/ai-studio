@@ -7,8 +7,9 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  initializeManagedJskitProject,
-  materializeInitialJskitProject
+  initializeManagedProject,
+  materializeInitialProject,
+  materializeJskitProjectFoundation
 } from "@local/vibe64-project/server/managedProject";
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +38,7 @@ async function directCommand({ args = [], command = "", cwd = "" } = {}) {
   }
 }
 
-test("initial JSKIT materialization publishes one authoritative commit through explicit callbacks", async (t) => {
+test("initial project materialization publishes one authoritative commit through explicit callbacks", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-initial-project-"));
   t.after(() => rm(root, {
     force: true,
@@ -47,7 +48,7 @@ test("initial JSKIT materialization publishes one authoritative commit through e
   await mkdir(projectRuntimeRoot);
   const calls = [];
 
-  const result = await materializeInitialJskitProject({
+  const result = await materializeInitialProject({
     afterAuthorityVerification: ({ commit }) => {
       calls.push(["after", commit]);
     },
@@ -80,6 +81,46 @@ test("initial JSKIT materialization publishes one authoritative commit through e
   assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
 });
 
+test("managed projects begin as one canonical technology-neutral Genesis commit", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-genesis-project-"));
+  t.after(() => rm(root, {
+    force: true,
+    recursive: true
+  }));
+  const namespaceRoot = path.join(root, "namespace");
+  const projectRuntimeRoot = path.join(root, "runtime");
+  await Promise.all([
+    mkdir(namespaceRoot),
+    mkdir(projectRuntimeRoot)
+  ]);
+
+  const initialized = await initializeManagedProject({
+    projectContextRoot: namespaceRoot,
+    projectRuntimeRoot,
+    runCommand: directCommand
+  });
+  const files = (await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "ls-tree", "-r", "--name-only", "main"
+  ])).stdout.trim().split("\n");
+  const stack = (await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:genesis/stack.md"
+  ])).stdout;
+
+  assert.equal((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "rev-list", "--count", "main"
+  ])).stdout.trim(), "1");
+  assert.equal((await execFileAsync("git", [
+    "--git-dir", initialized.repositoryPath, "show", "main:genesis/version"
+  ])).stdout, "2\n");
+  assert.match(stack, /## Components/u);
+  assert.doesNotMatch(stack, /- `jskit`/u);
+  assert.equal(files.includes("genesis/engineering.md"), true);
+  assert.equal(files.includes(".opencode/plugins/genesis-project-guidance.js"), true);
+  assert.equal(files.includes("package.json"), false);
+  assert.deepEqual(await readdir(namespaceRoot), []);
+  assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
+});
+
 test("managed projects begin as one canonical JSKIT foundation commit without a namespace checkout", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-"));
   t.after(() => rm(root, {
@@ -93,7 +134,8 @@ test("managed projects begin as one canonical JSKIT foundation commit without a 
     mkdir(projectRuntimeRoot)
   ]);
 
-  const initialized = await initializeManagedJskitProject({
+  const initialized = await initializeManagedProject({
+    initializeProject: materializeJskitProjectFoundation,
     projectName: "managed-foundation",
     projectContextRoot: namespaceRoot,
     projectRuntimeRoot,
@@ -117,7 +159,7 @@ test("managed projects begin as one canonical JSKIT foundation commit without a 
     "--git-dir", initialized.repositoryPath, "show", "main:package.json"
   ])).stdout);
   assert.equal(packageJson.name, "managed-foundation");
-  assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.201");
+  assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.204");
   assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
   assert.equal(packageJson.scripts["jskit:check"], "jskit check");
   assert.equal(packageJson.workspaces[0], "packages/*");
@@ -135,7 +177,7 @@ test("managed projects begin as one canonical JSKIT foundation commit without a 
   assert.equal(initialized.sourceRoot, undefined);
 });
 
-test("managed JSKIT initialization removes its temporary checkout after every failure stage", async (t) => {
+test("managed project initialization removes its temporary checkout after every failure stage", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-failures-"));
   t.after(() => rm(root, {
     force: true,
@@ -179,7 +221,7 @@ test("managed JSKIT initialization removes its temporary checkout after every fa
     };
 
     await assert.rejects(
-      () => initializeManagedJskitProject({
+      () => initializeManagedProject({
         ...(stage === "genesis" ? {
           initializeProject: async () => {
             throw new Error("simulated Genesis failure");

@@ -18,6 +18,17 @@ Genesis without creating another interpretation of the application.
 New projects begin with Genesis and existing repositories can be adopted without
 moving their source. Agent turns receive Genesis task guidance, while new and
 compacted conversations receive the shorter portable Genesis session context.
+For a new project, Genesis's opening task establishes product intent, presents
+only relevant installed Stack choices, and waits for explicit confirmation
+before selecting a technology. Vibe64 supplies the pinned catalog and its
+conversation presentation contract but does not replace those onboarding rules
+or choose a technology itself.
+For an existing initialized project, the opening carries the full Blueprint,
+bounded selected-Stack and Program summaries, and complete selected guidance
+under its owning component headings. Exact Program modules, indexed source,
+operations, verification commands, and applicable skills are loaded only after
+the relevant path is known through `genesis context <path...>`.
+
 People can
 refresh and explore the detailed Machine City and explanatory Program City,
 navigate subsystems and operations to their participating files, and open those

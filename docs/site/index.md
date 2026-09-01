@@ -149,7 +149,7 @@ Vibe64 decides whether this host can run them safely.
 
 <details class="vibe-faq-item">
 <summary>Will it work with my stack?</summary>
-<p>Existing repositories keep their own technology choices. A newly created hosted web app starts from Vibe64's current JSKIT foundation, while local projects continue to use the folder and tools you selected.</p>
+<p>A new project starts with a technology-neutral Genesis foundation and asks before selecting relevant Stack components. Existing repositories and local folders keep their own technology choices.</p>
 </details>
 </div>
 </div>

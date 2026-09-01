@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -18,6 +18,7 @@ import {
   inspectGenesisDerivedArtifacts,
   inspectGenesisEngineering,
   inspectGenesisEnvironment,
+  inspectGenesisProjectFormat,
   inspectVibe64Outputs,
   inspectVibe64WorkspaceSetup,
   inspectVibe64Deployment,
@@ -48,10 +49,30 @@ test("Genesis inspection never falls back to the server working directory", asyn
     () => inspectGenesisEnvironment({ projectRoot: "relative-project" }),
     /explicit absolute projectRoot/u
   );
+  await assert.rejects(
+    () => inspectGenesisProjectFormat({}),
+    /explicit absolute projectRoot/u
+  );
+});
+
+test("Genesis project-format inspection identifies a migratable unversioned project", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await rm(path.join(projectRoot, "genesis", "version"));
+
+    const projectFormat = await inspectGenesisProjectFormat({ projectRoot });
+
+    assert.equal(projectFormat.status, "unversioned");
+    assert.equal(projectFormat.action, "migrate");
+    assert.equal(projectFormat.projectVersion, null);
+    assert.equal(projectFormat.supportedVersion, 2);
+  });
 });
 
 test("the Genesis integration maps Vibe actions to explicit Genesis tasks and requests", () => {
   assert.equal(genesisPromptTask({ genesisTask: "program" }), "program");
+  assert.equal(genesisPromptTask({ genesisTask: "adopt" }), "adopt");
   assert.equal(genesisPromptTask({ genesisTask: "deslop", promptId: "anything" }), "deslop");
   assert.equal(genesisPromptTask({ promptId: "obsolete-prompt-id" }), "work");
   assert.equal(genesisPromptTask({ promptId: "unknown" }), "work");
@@ -85,9 +106,19 @@ test("Genesis initialization creates its complete technology-neutral project", a
     const result = await initializeGenesisProject({ projectRoot });
 
     assert.equal(result.status, "updated");
+    assert.equal(await readFile(path.join(projectRoot, "genesis", "version"), "utf8"), "2\n");
     assert.match(await readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"), /# Blueprint/u);
+    assert.match(await readFile(path.join(projectRoot, "genesis", "engineering.md"), "utf8"), /focused\.v1/u);
     assert.match(await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8"), /# Stack/u);
-    assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".codex", "hooks.json"), "utf8")));
+    const hooks = JSON.parse(await readFile(path.join(projectRoot, ".codex", "hooks.json"), "utf8"));
+    assert.deepEqual(Object.keys(hooks.hooks), ["SessionStart"]);
+    assert.match(
+      await readFile(
+        path.join(projectRoot, ".opencode", "plugins", "genesis-project-guidance.js"),
+        "utf8"
+      ),
+      /session\.compacted/u
+    );
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".genesis", "machine-city.json"), "utf8")));
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".genesis", "program-city.json"), "utf8")));
   });
@@ -145,9 +176,15 @@ test("Vibe64 interprets setup from the pinned Stack package and owns the opaque 
     assert.equal(waitingSetup.diagnostics[0].code, "VIBE64_WORKSPACE_SETUP_WAITING");
 
     await writeFile(path.join(projectRoot, "package.json"), "{}\n", "utf8");
+    const stackPath = path.join(projectRoot, "genesis", "stack.md");
+    const stack = await readFile(stackPath, "utf8");
+    const outputsStart = stack.indexOf("## Outputs\n");
+    const outputsEnd = stack.indexOf("\n## ", outputsStart + 1);
+    assert.notEqual(outputsStart, -1);
+    assert.notEqual(outputsEnd, -1);
     await writeFile(
-      path.join(projectRoot, "genesis", "stack.md"),
-      `${await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8")}\n## Outputs\n\n### Target \`app\`: Run app\n\n- Default.\n- Mode: \`interactive\`\n- Runtimes: \`nodejs\`\n- Run \`Develop\`: \`npm\` \`run\` \`develop\`\n\n#### Presentation\n\n- Kind: \`web\`\n- Ready when: \`GET\` \`/api/health\` returns \`200\`\n`,
+      stackPath,
+      `${stack.slice(0, outputsStart)}## Outputs\n\n### Target \`app\`: Run app\n\n- Default.\n- Mode: \`interactive\`\n- Runtimes: \`nodejs\`\n- Run \`Develop\`: \`npm\` \`run\` \`develop\`\n\n#### Presentation\n\n- Kind: \`web\`\n- Ready when: \`GET\` \`/api/health\` returns \`200\`\n${stack.slice(outputsEnd)}`,
       "utf8"
     );
     const setup = await inspectVibe64WorkspaceSetup({
@@ -274,7 +311,7 @@ test("Vibe64 setup and Outputs parse only their canonical Markdown grammar", () 
   );
 });
 
-test("Vibe64 executes the current JSKIT Deployment declaration exactly", async () => {
+test("Vibe64 executes the materialized JSKIT Deployment declaration exactly", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await initializeGenesisProject({ projectRoot });
@@ -283,12 +320,11 @@ test("Vibe64 executes the current JSKIT Deployment declaration exactly", async (
     const deployment = await inspectVibe64Deployment({ projectRoot });
 
     assert.equal(deployment.contract, "vibe64.application-deployment.v1");
-    assert.equal(deployment.source, "component:jskit");
+    assert.equal(deployment.source, "project");
     assert.deepEqual(deployment.artifact, { disposablePaths: ["node_modules"] });
     assert.deepEqual(deployment.steps.map(({ role, argv }) => ({ role, argv })), [
       { role: "prepare", argv: ["npm", "ci"] },
       { role: "build", argv: ["npm", "run", "build"] },
-      { role: "migrate", argv: ["npm", "run", "db:prepare"] },
       { role: "serve", argv: ["npm", "start"] }
     ]);
     assert.deepEqual(deployment.readiness, {
@@ -340,25 +376,20 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
     assert.doesNotMatch(rendered.prompt, /"id": "vue"/u);
     assert.doesNotMatch(rendered.prompt, /"id": "jskit-postgresql"/u);
     assert.doesNotMatch(rendered.prompt, /"id": "postgresql"/u);
-    assert.match(rendered.prompt, /interface has already welcomed the person/u);
-    assert.match(rendered.prompt, /without repeating that greeting/u);
-    assert.match(rendered.prompt, /invite them to write what they would like to make/u);
-    assert.match(rendered.prompt, /Genesis `stack add jskit-mysql` operation/u);
-    assert.match(rendered.prompt, /otherwise run the Genesis `stack add jskit` operation/u);
-    assert.match(rendered.prompt, /Do not ask the person to choose a database/u);
-    assert.match(rendered.prompt, /PostgreSQL is temporarily unavailable/u);
-    assert.match(rendered.prompt, /explicitly requests PostgreSQL/u);
-    assert.match(rendered.prompt, /do not silently substitute MySQL/u);
-    assert.match(rendered.prompt, /Do not offer standalone `vue`/u);
-    assert.match(rendered.prompt, /Do not mention Genesis, Stack, JSKIT, Vue/u);
-    assert.ok(
-      rendered.prompt.indexOf("explicit Vibe64 host default") >
-        rendered.prompt.indexOf("Never silently select a technology")
+    assert.match(
+      rendered.prompt,
+      /being built, who or what will use or invoke it, and the first observable\s+useful outcome/u
     );
+    assert.match(rendered.prompt, /A Stack choice is not product intent/u);
+    assert.match(rendered.prompt, /offer only relevant technology choices/u);
+    assert.match(rendered.prompt, /Never silently select one/u);
+    assert.match(rendered.prompt, /On confirmation, run\s+the Genesis `stack add <piece\.\.\.>` operation/u);
+    assert.doesNotMatch(rendered.prompt, /VIBE64 NEW-PROJECT OPENING/u);
+    assert.doesNotMatch(rendered.prompt, /explicit Vibe64 host default/u);
   });
 });
 
-test("Vibe64 keeps its installed Stack catalog available for a migrated project prompt", async () => {
+test("Vibe64 uses the current bounded opening and component-scoped Stack guidance", async () => {
   await withTemporaryRoot(async (projectRoot) => {
     await initializeGit(projectRoot);
     await initializeGenesisProject({ projectRoot });
@@ -367,12 +398,28 @@ test("Vibe64 keeps its installed Stack catalog available for a migrated project 
       "# Blueprint\n\nPeople manage an existing application.\n",
       "utf8"
     );
-    await writeFile(
-      path.join(projectRoot, "genesis", "stack.md"),
-      "# Stack\n\n## Components\n- `nodejs`\n- `jskit`\n- `vue`\n",
-      "utf8"
-    );
+    await addGenesisStack({ pieces: ["jskit", "vue"], projectRoot });
     await writeFile(path.join(projectRoot, "app.js"), "export const app = true;\n", "utf8");
+
+    const opening = await renderGenesisPrompt({
+      action: {
+        genesisTask: "start"
+      },
+      input: {
+        conversationRequest: "Continue the existing work."
+      },
+      projectRoot
+    });
+
+    assert.equal(opening.context.genesis, true);
+    assert.equal(opening.context.task, "start");
+    assert.match(opening.prompt, /"projectKind": "existing"/u);
+    assert.match(opening.prompt, /"moduleCount": 0/u);
+    assert.doesNotMatch(opening.prompt, /"availableStackPieces"/u);
+    assert.match(opening.prompt, /run the Genesis `context <relevant-path\.\.\.>`\s+operation/u);
+    assert.match(opening.prompt, /### `jskit`/u);
+    assert.match(opening.prompt, /### `vue`/u);
+    assert.match(opening.prompt, /https:\/\/vuejs\.org\//u);
 
     const rendered = await renderGenesisPrompt({
       input: {
@@ -423,10 +470,10 @@ test("Genesis owns the opening conversation for an existing uninitialized projec
     assert.match(rendered.prompt, /"projectKind": "existing-uninitialized"/u);
     assert.match(
       rendered.prompt,
-      /strongly recommend preparing the existing project for\s+guided editing/u
+      /strongly recommend preparing the project for guided editing/u
     );
-    assert.match(rendered.prompt, /Do not require the user to know\s+Genesis terminology/u);
-    assert.match(rendered.prompt, /If they approve, run the Genesis `adopt`\s+operation yourself/u);
+    assert.match(rendered.prompt, /Do not require the person to know Genesis terminology/u);
+    assert.match(rendered.prompt, /If they approve, run the Genesis `adopt` operation/u);
     await assert.rejects(
       () => readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"),
       { code: "ENOENT" }
@@ -489,6 +536,33 @@ test("the managed Genesis command exposes Vibe64's curated Stack catalog", async
     assert.match(stack, /- `genesis-stack`/u);
     assert.match(stack, /- `jskit`/u);
     assert.match(stack, /- `nodejs`/u);
+  });
+});
+
+test("the managed Genesis command migrates a legacy Stack into Vibe64 contracts", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await Promise.all([
+      rm(path.join(projectRoot, "genesis", "version")),
+      writeFile(
+        path.join(projectRoot, "genesis", "stack.md"),
+        "# Stack\n\n## Stack packages\n\n- `genesis-stack`\n\n## Components\n\n- `nodejs`\n- `jskit`\n",
+        "utf8"
+      )
+    ]);
+
+    await execFileAsync(path.join(genesisCommandShimDirectory(), "genesis"), [
+      "migrate"
+    ], {
+      cwd: projectRoot
+    });
+
+    assert.equal(await readFile(path.join(projectRoot, "genesis", "version"), "utf8"), "2\n");
+    const stack = await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8");
+    assert.match(stack, /## Workspace setup/u);
+    assert.match(stack, /## Outputs/u);
+    assert.match(stack, /## Verification/u);
   });
 });
 

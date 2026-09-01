@@ -22,7 +22,7 @@ const FOUNDATION_NAME_PATHS = Object.freeze([
   "tests/client/smoke.vitest.js"
 ]);
 
-function projectFoundationTemplateRoot() {
+function jskitProjectFoundationTemplateRoot() {
   const packageEntrypoint = require.resolve("@local/vibe64-project/server/managedProject");
   return path.resolve(path.dirname(packageEntrypoint), "../../templates/jskit-shell");
 }
@@ -57,12 +57,12 @@ async function copyFoundationFiles(templateRoot, projectRoot) {
   )));
 }
 
-async function materializeInitialProjectFoundation({
+async function materializeJskitProjectFoundation({
   initializeProject = initializeGenesisProject,
   projectName = "",
   projectRoot = "",
   selectStack = addGenesisStack,
-  templateRoot = projectFoundationTemplateRoot()
+  templateRoot = jskitProjectFoundationTemplateRoot()
 } = {}) {
   const root = path.resolve(String(projectRoot || ""));
   const name = normalizeFoundationProjectName(projectName);
@@ -80,7 +80,7 @@ async function materializeInitialProjectFoundation({
 }
 
 export {
-  materializeInitialProjectFoundation,
-  normalizeFoundationProjectName,
-  projectFoundationTemplateRoot
+  jskitProjectFoundationTemplateRoot,
+  materializeJskitProjectFoundation,
+  normalizeFoundationProjectName
 };

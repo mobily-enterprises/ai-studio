@@ -18,7 +18,9 @@ A Genesis-enabled project has this portable shape:
 <project>/
   .git/
   genesis/
+    version
     blueprint.md
+    engineering.md
     stack.md
     stack/
     program/
@@ -28,6 +30,9 @@ A Genesis-enabled project has this portable shape:
     skills/
   .codex/
     hooks.json
+  .opencode/
+    plugins/
+      genesis-project-guidance.js
   .genesis/
     machine-city.json
     program-city.json
@@ -37,25 +42,35 @@ A Genesis-enabled project has this portable shape:
 
 The files have deliberately different jobs:
 
+- `genesis/version` records the deterministic Genesis project-file format.
 - `genesis/blueprint.md` contains non-technical, human product intent.
-- `genesis/stack.md` selects technology components and may replace their
-  verification or launch declarations.
-- `genesis/stack/` contains project additions or overrides to a selected
-  component's Description and Deslop guidance.
+- `genesis/engineering.md` selects the engineering profile and records any
+  project-specific engineering requirements.
+- `genesis/stack.md` selects technology components and owns the project's
+  composed resources, defaults, environment files, verification commands, and
+  consumer-specific operation sections.
+- `genesis/stack/` contains optional per-component additions or overrides for
+  Description, Guidance, Adoption, Post-change, and Deslop prose.
 - `genesis/program/` explains public operations in conceptual subsystem
   directories. It does not mirror source files.
 - `.agents/skills/` contains Genesis workflow skills and any authoritative
   technology skill selected by Stack.
-- `.codex/hooks.json` contains the optional project-local Codex lifecycle
+- `.codex/hooks.json` contains the project-local Codex lifecycle
   integration installed by Genesis.
+- `.opencode/plugins/genesis-project-guidance.js` provides the equivalent
+  project operating guide to OpenCode sessions and refreshes it after
+  compaction.
 - `.genesis/machine-city.json` and `.genesis/program-city.json` are derived
   navigation documents.
 - `.genesis/verification.json` is present only after declared checks pass. It
   records exact code and Stack hashes; it is evidence, not a correctness claim.
 
-`genesis init` creates a technology-neutral Genesis project. `genesis adopt`
-preserves an existing implementation and produces the prompt used to describe
-it. Neither operation needs a Vibe64 project type.
+`genesis init` creates a technology-neutral Genesis project in the current
+format. `genesis adopt` preserves an existing implementation and produces the
+prompt used to describe it. `genesis migrate` advances a recognized older
+format, snapshots its effective operations as project-owned Stack sections,
+and refreshes managed skills, lifecycle integration, and indexes. These
+operations do not need a Vibe64 project type.
 
 A newly initialized blank project starts chat with the Genesis `start` prompt.
 The agent asks what the application is for, records the resulting product intent

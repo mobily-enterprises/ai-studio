@@ -19,7 +19,9 @@ import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
-  inspectVibe64WorkspaceSetup
+  inspectGenesisProjectFormat,
+  inspectVibe64WorkspaceSetup,
+  withGenesisCommandShim
 } from "@local/vibe64-genesis/server";
 import {
   workspaceSetupState,
@@ -161,6 +163,7 @@ function workspaceSetupRunKey(sessionId = "") {
 function createWorkspaceSetupRunner({
   clock = () => new Date(),
   inspect = inspectVibe64WorkspaceSetup,
+  inspectProjectFormat = inspectGenesisProjectFormat,
   projectService,
   runCommand = runVibe64Command
 } = {}) {
@@ -367,6 +370,9 @@ function createWorkspaceSetupRunner({
       return { completion: null, state };
     }
     const previous = workspaceSetupState(session.workspaceSetup);
+    let stateBase = previous;
+    let migrationStartedAt = "";
+    let migrationTranscript = "";
 
     let setup;
     try {
@@ -386,19 +392,148 @@ function createWorkspaceSetupRunner({
         }, renewal);
         return { completion: null, state };
       }
-      const state = await persistInspectedState(runtime, sessionId, previous, {
-        currentLabel: "",
-        diagnostic: normalizeText(error?.message) || "Vibe64 could not inspect workspace preparation.",
-        finishedAt: stateTimestamp(clock),
+      let projectFormat = null;
+      if (retry === true) {
+        try {
+          projectFormat = await inspectProjectFormat({
+            environment: runtime.promptEnvironment,
+            projectRoot: sourcePath
+          });
+        } catch {
+          projectFormat = null;
+        }
+      }
+      if (
+        retry !== true ||
+        normalizeText(projectFormat?.action) !== "migrate" ||
+        !["outdated", "unversioned"].includes(normalizeText(projectFormat?.status))
+      ) {
+        const state = await persistInspectedState(runtime, sessionId, previous, {
+          currentLabel: "",
+          diagnostic: normalizeText(error?.message) || "Vibe64 could not inspect workspace preparation.",
+          finishedAt: stateTimestamp(clock),
+          recipeHash: "",
+          startedAt: "",
+          status: "failed"
+        }, renewal);
+        return { completion: null, state };
+      }
+
+      const currentLabel = "Migrate Genesis project";
+      migrationStartedAt = stateTimestamp(clock);
+      migrationTranscript = appendWorkspaceSetupTranscript(
+        previous.transcript,
+        "Workspace preparation retry started.",
+        stepStatus(currentLabel, "Running")
+      );
+      await persist(runtime, sessionId, {
+        currentLabel,
+        diagnostic: "",
+        finishedAt: "",
         recipeHash: "",
-        startedAt: "",
-        status: "failed"
+        startedAt: migrationStartedAt,
+        status: "running",
+        transcript: migrationTranscript
       }, renewal);
-      return { completion: null, state };
+
+      let projectEnv = {};
+      let redactionSecrets = [];
+      try {
+        projectEnv = await loadProjectExecutionEnv({
+          projectService,
+          session,
+          target: "workspace-setup"
+        });
+        redactionSecrets = operationRedactionSecrets(projectEnv);
+        migrationTranscript = workspaceSetupTranscript(sanitizeOperationText(
+          migrationTranscript,
+          redactionSecrets
+        ));
+        const migrationRuntime = vibe64RuntimePacks(["nodejs"]);
+        if (!migrationRuntime.available) {
+          throw new Error(migrationRuntime.disabledReason);
+        }
+        const result = await runCommand({
+          actor: "app",
+          allowedRoots: [sourcePath],
+          args: ["migrate"],
+          baseEnv: runtime.promptEnvironment,
+          command: "genesis",
+          cwd: sourcePath,
+          envPolicy: "project",
+          mode: "capture",
+          project: {
+            runtimeConfigEnv: projectEnv
+          },
+          purpose: "source",
+          runtimes: migrationRuntime.runtimes,
+          shimDirs: withGenesisCommandShim(),
+          timeout: WORKSPACE_SETUP_COMMAND_TIMEOUT_MS
+        });
+        migrationTranscript = appendWorkspaceSetupTranscript(
+          migrationTranscript,
+          capturedCommandOutput(result, redactionSecrets)
+        );
+        if (result?.ok !== true) {
+          const state = await failed(runtime, sessionId, {
+            currentLabel,
+            diagnostic: commandDiagnostic(result, currentLabel, redactionSecrets),
+            redactionSecrets,
+            renewal,
+            startedAt: migrationStartedAt,
+            transcript: migrationTranscript
+          });
+          return { completion: null, state };
+        }
+        migrationTranscript = appendWorkspaceSetupTranscript(
+          migrationTranscript,
+          stepStatus(currentLabel, "Succeeded", redactionSecrets)
+        );
+      } catch (migrationError) {
+        const state = await failed(runtime, sessionId, {
+          currentLabel,
+          diagnostic: normalizeText(migrationError?.message) || "Genesis project migration failed.",
+          redactionSecrets,
+          renewal,
+          startedAt: migrationStartedAt,
+          transcript: migrationTranscript
+        });
+        return { completion: null, state };
+      }
+
+      try {
+        setup = await inspect({
+          environment: runtime.promptEnvironment,
+          projectRoot: sourcePath
+        });
+      } catch (inspectionError) {
+        const state = await persist(runtime, sessionId, {
+          currentLabel: "",
+          diagnostic: sanitizeOperationText(
+            normalizeText(inspectionError?.message) || "Vibe64 could not inspect the migrated workspace preparation.",
+            redactionSecrets
+          ),
+          finishedAt: stateTimestamp(clock),
+          recipeHash: "",
+          startedAt: migrationStartedAt,
+          status: "failed",
+          transcript: migrationTranscript
+        }, renewal);
+        return { completion: null, state };
+      }
+      stateBase = workspaceSetupState({
+        ...previous,
+        currentLabel: "",
+        diagnostic: "",
+        finishedAt: "",
+        startedAt: migrationStartedAt,
+        status: "running",
+        transcript: migrationTranscript
+      });
     }
 
     if (normalizeText(setup?.status) === "unconfigured") {
-      const state = await persistInspectedState(runtime, sessionId, previous, {
+      const state = await persistInspectedState(runtime, sessionId, stateBase, {
         currentLabel: "",
         diagnostic: "",
         finishedAt: "",
@@ -413,7 +548,7 @@ function createWorkspaceSetupRunner({
         setup?.diagnostics,
         "STACK_SECTION_AMBIGUOUS"
       );
-      const state = await persistInspectedState(runtime, sessionId, previous, {
+      const state = await persistInspectedState(runtime, sessionId, stateBase, {
         currentLabel: "",
         diagnostic: diagnosticText(setup?.diagnostics) || "Vibe64 could not select one workspace preparation recipe.",
         finishedAt: stateTimestamp(clock),
@@ -428,7 +563,7 @@ function createWorkspaceSetupRunner({
     try {
       recipe = preparedRecipe(setup, sourcePath);
     } catch (error) {
-      const state = await persistInspectedState(runtime, sessionId, previous, {
+      const state = await persistInspectedState(runtime, sessionId, stateBase, {
         currentLabel: "",
         diagnostic: normalizeText(error?.message),
         finishedAt: stateTimestamp(clock),
@@ -439,23 +574,26 @@ function createWorkspaceSetupRunner({
       return { completion: null, state };
     }
     if (
-      previous.recipeHash === recipe.recipeHash &&
-      (previous.status === "succeeded" || (previous.status === "failed" && retry !== true))
+      !migrationTranscript &&
+      stateBase.recipeHash === recipe.recipeHash &&
+      (stateBase.status === "succeeded" || (stateBase.status === "failed" && retry !== true))
     ) {
       return {
         completion: null,
-        state: previous
+        state: stateBase
       };
     }
-    const startedAt = stateTimestamp(clock);
+    const startedAt = migrationStartedAt || stateTimestamp(clock);
     const currentLabel = safeSetupLabel(recipe.steps[0].label);
-    const attemptLabel = previous.transcript
+    const attemptLabel = migrationTranscript
+      ? ""
+      : stateBase.transcript
       ? (retry === true
           ? "Workspace preparation retry started."
           : "Workspace preparation started for updated configuration.")
       : "Workspace preparation started.";
     const transcript = appendWorkspaceSetupTranscript(
-      previous.transcript,
+      stateBase.transcript,
       attemptLabel,
       stepStatus(currentLabel, "Running")
     );

@@ -8,6 +8,21 @@ description: Work safely in a Genesis-enriched codebase using its Blueprint, Sta
 Genesis is an explanatory and verification companion. It does not replace the
 codebase, tests, Git review, or the coding agent.
 
+## Establish new-product direction
+
+For a new project whose Blueprint does not yet establish product direction,
+do not research technology or create source until the user has made clear what
+is being built, who or what will use or invoke it, and the first observable
+useful outcome. Ask only unresolved high-impact questions. A reply confirms only
+what it explicitly answers; Stack confirmation is not product intent.
+
+Once product direction is clear, choose one smallest implementation path
+through selected technology guidance, or authoritative technology documentation
+when the catalog has no match, and read only what that path requires. Do not
+survey alternatives, clone whole technology repositories, inspect unrelated
+package internals, or delegate research unless one concrete failure requires
+one exact investigation.
+
 ## Run Genesis commands
 
 When this repository is Genesis itself or has `genesis-compiler` installed
@@ -16,6 +31,28 @@ locally, invoke every Genesis CLI operation through the project-pinned package:
 package. Otherwise use `genesis <arguments>` only when that executable is
 already available on `PATH`. Never install or update Genesis merely to satisfy
 a workflow instruction.
+
+## Resolve explicit technology choices
+
+Before external technology research or implementation, when the user explicitly
+names a technology, framework, language, or database that is not selected:
+
+1. Run the Genesis `stack list` operation as the first technology action.
+2. If one catalog component exactly matches the choice, ask: "<Technology> is
+   available in Genesis. Would you like me to add it to this project and prepare
+   the app with its official guidance?" Do not run `stack add <piece...>`
+   without that confirmation.
+3. If confirmed, add the component, let Genesis apply its declared dependency
+   closure and synchronize any authoritative Agent Skill declared by that
+   component. Follow the preparation prompt returned by `stack add` in the same
+   task: make each materialized project contract true or replace a complete
+   section with evidenced reality. Then run `context .`, or the relevant source
+   path once source exists, load the applicable installed skill if present, and
+   follow that technology-owned guidance to prepare actual project
+   dependencies. Never infer an installation command from a component id.
+4. If declined, continue without adding the component or asking again. If no
+   catalog component matches, do not invent one; continue normally using
+   authoritative documentation owned by that technology.
 
 ## Establish context
 
@@ -34,13 +71,13 @@ a workflow instruction.
    agent's own installed skill catalog.
 
 For an existing application's first Stack selection, inspect its real setup,
-build, and output commands before relying on component defaults. A selected
-component describes its current foundation; it does not silently port older
-source. When the existing commands differ, keep the implementation unchanged
-and declare exact project-owned consumer-operation overrides (for Vibe64,
-`## Workspace setup` and `## Outputs`). Genesis composes those sections as
+build, and output commands before accepting materialized component proposals.
+A selected component describes its current foundation; it does not silently
+port older source. When the existing commands differ, keep the implementation
+unchanged and replace the complete project-owned consumer operation (for
+Vibe64, `## Workspace setup` or `## Outputs`). Genesis treats those sections as
 opaque text; the named consumer alone owns their meaning and execution. Do not
-claim the inherited component recipe is usable until it matches the source.
+claim a proposed recipe is usable until it matches the source.
 
 Program is concise, fallible explanation. Its Sources and optional
 Implementation maps aid navigation but never substitute for reading code,
@@ -90,6 +127,8 @@ Neither is authority or proof; both may be regenerated with the Genesis
 After the selected technology's workspace substrate exists, use the Genesis
 `verify` operation for the Stack's declared final checks. An unconfigured result
 means the declared workspace or checks do not exist yet; it is not a failing
-check. Report files changed, checks actually run, and anything still requiring
-attention. Never claim that an unrun check passed or that passing checks prove
-the whole product.
+check. Before reporting completion, compare the requested observable behavior,
+required inputs and resources, declared project operations, and focused evidence
+with what actually exists. Report files changed, checks actually run,
+anything not proven, and anything still requiring attention. Never claim that
+an unrun check passed or that passing checks prove the whole product.

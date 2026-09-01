@@ -11,7 +11,9 @@ The first project message carries the relevant Genesis task prompt; later
 messages and active-turn steering stay concise instead of rebuilding it. The
 project's shorter durable operating guide is loaded when a conversation is
 created and refreshed after compaction without becoming a visible message or
-extra agent turn.
+extra agent turn. For a new project, the opening conversation first establishes
+what the person wants to make, who it is for, and the first useful outcome, then
+asks before selecting any technology.
 
 The chat selector stays focused on choosing among AIs that are already
 configured and available. Workspace owners manage AI accounts and add further
