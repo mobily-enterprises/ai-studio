@@ -74,13 +74,14 @@ async function createGitTurnCheckpointUnlocked({
     "--verify",
     refs.latestRef
   ], { project });
-  const baseCommit = latestCommit || await requiredGitOutput(runCommand, identity.worktreePath, [
+  const headCommit = await requiredGitOutput(runCommand, identity.worktreePath, [
     "rev-parse",
     "--verify",
     "HEAD"
   ], { project });
+  const parentCommit = latestCommit || headCommit;
   const tree = await writeGitWorktreeTreeUnlocked({
-    baseCommit,
+    baseCommit: headCommit,
     project,
     runCommand,
     temporaryDiskBudgetBytes,
@@ -92,7 +93,7 @@ async function createGitTurnCheckpointUnlocked({
     "commit-tree",
     tree,
     "-p",
-    baseCommit
+    parentCommit
   ], {
     env: checkpointDateEnv(identity.timestamp),
     input: message,
@@ -112,7 +113,7 @@ async function createGitTurnCheckpointUnlocked({
     latestCommit || absentObject
   ], { project });
   return {
-    baseCommit,
+    baseCommit: parentCommit,
     commit,
     created: true,
     latestRef: refs.latestRef,

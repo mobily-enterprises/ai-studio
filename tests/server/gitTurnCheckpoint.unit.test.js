@@ -75,6 +75,42 @@ test("turn checkpoint retries are object-identical and a later turn advances lat
   }
 });
 
+test("later checkpoints drop files that became ignored without removing them from the worktree", async () => {
+  const root = await createRepository();
+  try {
+    const localPath = path.join(root, "local.bin");
+    await writeFile(localPath, "local only\n", "utf8");
+    const first = await createGitTurnCheckpoint({
+      outerTurnId: "client-message-1",
+      outcome: "completed",
+      sessionId: "session-1",
+      timestamp: "2026-08-18T09:00:00.000Z",
+      worktreePath: root
+    });
+    assert.equal(await git(root, ["show", `${first.commit}:local.bin`]), "local only");
+
+    await writeFile(path.join(root, ".gitignore"), "/local.bin\n", "utf8");
+    const second = await createGitTurnCheckpoint({
+      outerTurnId: "client-message-2",
+      outcome: "completed",
+      sessionId: "session-1",
+      timestamp: "2026-08-18T09:05:00.000Z",
+      worktreePath: root
+    });
+
+    assert.equal(second.baseCommit, first.commit);
+    await assert.rejects(git(root, ["cat-file", "-e", `${second.commit}:local.bin`]));
+    assert.equal(await readFile(localPath, "utf8"), "local only\n");
+    assert.equal(await git(root, ["show", `${second.commit}:.gitignore`]), "/local.bin");
+    assert.equal(second.tree, await writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      worktreePath: root
+    }));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("a worktree tree can overlay only selected resolution paths onto a prepared tree", async () => {
   const root = await createRepository();
   try {

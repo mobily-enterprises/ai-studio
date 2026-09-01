@@ -57,7 +57,10 @@ not offer cleanup yet.
 ## Implementation map
 
 - `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,
-  non-advertised worktree checkpoints without changing the user's index.
+  non-advertised worktree checkpoints without changing the user's index. Each
+  checkpoint retains the preceding checkpoint as recoverable history while its
+  tree reflects the current saveable worktree, so a newly ignored local file is
+  left on disk without remaining in later checkpoint trees.
 - `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes
   canonical source mutations across processes.
 - `scopedSessionWorkCommand()` assigns one semantic operation identity plus
