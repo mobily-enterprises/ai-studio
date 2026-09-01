@@ -47,10 +47,10 @@ test.describe("Dashboard repository Temporary AI recovery", () => {
 
       await expect(page.getByRole("button", { name: "Show chat", exact: true })).toBeVisible();
       await expectTouchTarget(page.getByRole("button", {
-        name: "Fix with temporary AI",
+        name: "Fix it with AI",
         exact: true
       }));
-      await page.getByRole("button", { name: "Fix with temporary AI", exact: true }).click();
+      await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
 
       const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
       await expect(workspace).toBeVisible();

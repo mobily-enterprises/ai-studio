@@ -64,7 +64,7 @@ const RecoveryAutopilot = defineComponent({
       "data-test": "recovery-action",
       onClick: () => emit("chat-attention"),
       type: "button"
-    }, "Fix with temporary AI");
+    }, "Fix it with AI");
   }
 });
 

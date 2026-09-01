@@ -17,6 +17,9 @@ session history.
 - `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
 - `packages/vibe64-terminals/src/server/opencodeTerminal.js`
 - `src/composables/useVibe64TemporaryAi.js`
+- `src/composables/useVibe64AutopilotView.js`
+- `src/components/studio/Vibe64TemporaryAiFixAction.vue`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue`
 
 ## Public contract
@@ -28,6 +31,26 @@ distinct from the durable project conversation. Closing a task stops its live
 turn, deletes its provider conversation and exact uploaded attachments, and
 removes its browser-local state. Tasks are not restored after reload and never
 appear in session History.
+
+Every product-owned repair entry uses the shared Fix it with AI control. It
+opens, selects, and focuses a separate Temporary AI task immediately. That task
+shows a concise user-facing repair request plus a prominent explanation that it
+can edit the session, where to follow progress or answer questions, and what
+the product will do after the AI finishes. Detailed diagnostics remain in the
+AI request without overwhelming the visible user message.
+
+A product-owned recovery action may remember the exact temporary task it
+started and observe that task's terminal result. Workspace preparation uses
+this narrow handoff: after an accepted repair turn completes or fails, Vibe64
+reruns its own safe deterministic preparation operation because a provider
+timeout may arrive after useful edits were made. An unrelated, still-active,
+or deliberately interrupted task does nothing. Temporary AI can edit or
+explain, but it never declares the managed operation successful; the managed
+operation's own result remains authoritative and visible.
+When that deterministic check succeeds, its verified result becomes the task's
+headline even if the AI provider timed out after making useful edits. The
+provider timeout remains visible as secondary audit detail instead of leaving
+the user with a false failure conclusion.
 
 Temporary and lightweight helper conversations use the parent session's
 selected Codex or OpenCode service and its bounded low-cost execution profile.

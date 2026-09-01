@@ -99,7 +99,9 @@ function useVibe64TemporaryAi({
     }
     try {
       onTaskFinished(Object.freeze({
+        completionMessage: temporaryAiText(task.completionMessage),
         error: temporaryAiText(task.error),
+        failureMessage: temporaryAiText(task.failureMessage),
         id: task.id,
         status: temporaryAiText(task.status),
         title: temporaryAiText(task.title) || "Temporary AI"
@@ -110,9 +112,14 @@ function useVibe64TemporaryAi({
   }
 
   function openTask({
+    completionMessage = "",
     dedupeKey = "",
+    displayMessage = "",
     draft = "",
+    failureMessage = "",
+    nextStepMessage = "",
     policy = "read",
+    recoveryNotice = "",
     title = ""
   } = {}) {
     const number = nextTaskNumber;
@@ -121,17 +128,24 @@ function useVibe64TemporaryAi({
       agentSettings: normalizeVibe64AgentSettings(readRefOrGetterValue(agentSettings)),
       attachments: [],
       busy: false,
+      completionMessage: temporaryAiText(completionMessage),
       conversationId: "",
       dedupeKey: temporaryAiText(dedupeKey),
+      displayMessage: temporaryAiText(displayMessage),
       draft: temporaryAiText(draft),
       error: "",
+      failureMessage: temporaryAiText(failureMessage),
       id: temporaryAiId("temporary-ai"),
       messages: [],
+      nextStepMessage: temporaryAiText(nextStepMessage),
       ownedAttachmentIds: [],
       pendingMessageId: "",
       policy: policy === TEMPORARY_AI_WORKSPACE_WRITE_POLICY
         ? TEMPORARY_AI_WORKSPACE_WRITE_POLICY
         : "read",
+      recoveryOutcome: "",
+      recoveryOutcomeMessage: "",
+      recoveryNotice: temporaryAiText(recoveryNotice),
       runId: "",
       status: "ready",
       title: temporaryAiText(title) || `Temporary ${number}`
@@ -211,6 +225,7 @@ function useVibe64TemporaryAi({
 
   function updateDraft(taskId = "", draft = "") {
     updateTask(taskId, {
+      displayMessage: "",
       draft: String(draft || ""),
       pendingMessageId: ""
     });
@@ -235,6 +250,21 @@ function useVibe64TemporaryAi({
         ? TEMPORARY_AI_WORKSPACE_WRITE_POLICY
         : "read"
     });
+  }
+
+  function reportRecoveryOutcome(taskId = "", {
+    message = "",
+    status = ""
+  } = {}) {
+    const outcome = temporaryAiText(status);
+    if (!tasks.value.some((task) => task.id === taskId) || !["failed", "succeeded"].includes(outcome)) {
+      return false;
+    }
+    updateTask(taskId, {
+      recoveryOutcome: outcome,
+      recoveryOutcomeMessage: temporaryAiText(message)
+    });
+    return true;
   }
 
   function updateAttachments(taskId = "", attachments = []) {
@@ -379,7 +409,7 @@ function useVibe64TemporaryAi({
           id: messageId,
           role: "user",
           status: "completed",
-          text: payload.displayMessage
+          text: task.displayMessage || payload.displayMessage
         },
         {
           id: temporaryAiId("message"),
@@ -394,6 +424,7 @@ function useVibe64TemporaryAi({
         attachments: [],
         busy: true,
         conversationId,
+        displayMessage: "",
         messages,
         ownedAttachmentIds: [],
         pendingMessageId: "",
@@ -526,6 +557,7 @@ function useVibe64TemporaryAi({
     closeWorkspace,
     open,
     openTask,
+    reportRecoveryOutcome,
     selectTask,
     send,
     showWorkspace,

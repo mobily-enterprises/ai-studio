@@ -83,21 +83,68 @@
 
         <section aria-label="Model" class="vibe64-session-assistant-menu__section">
           <div class="vibe64-session-assistant-menu__label">Model</div>
-          <div v-if="availableModels.length" class="vibe64-session-assistant-menu__options">
+          <div v-if="modelRows.length" class="vibe64-session-assistant-menu__options">
             <button
-              v-for="model in availableModels"
+              v-for="model in modelRows"
               :key="model.id"
               :aria-pressed="modelId === model.id"
               class="vibe64-session-assistant-menu__option"
-              :class="{ 'vibe64-session-assistant-menu__option--active': modelId === model.id }"
+              :class="{
+                'vibe64-session-assistant-menu__option--active': modelId === model.id,
+                'vibe64-session-assistant-menu__option--locked': model.status !== 'available'
+              }"
+              :disabled="model.status !== 'available'"
+              :title="model.status === 'available' ? model.label : model.lockMessage || 'This model is not available.'"
               type="button"
               @click="selectModel(model.id)"
             >
               <span>{{ model.label }}</span>
-              <v-icon v-if="modelId === model.id" :icon="mdiCheck" size="15" />
+              <v-icon
+                v-if="model.status !== 'available'"
+                :icon="mdiLockOutline"
+                size="15"
+              />
+              <v-icon v-else-if="modelId === model.id" :icon="mdiCheck" size="15" />
             </button>
           </div>
           <span v-else class="vibe64-session-assistant-menu__empty">No available models.</span>
+        </section>
+
+        <v-btn
+          v-if="canRestoreRecommendedModel"
+          block
+          color="primary"
+          :disabled="saving || modelAccessUpdating"
+          size="small"
+          type="button"
+          variant="tonal"
+          @click="restoreRecommendedModel"
+        >
+          {{ saving ? `Switching to ${recommendedModel.label}…` : `Use ${recommendedModel.label}` }}
+        </v-btn>
+
+        <section
+          v-if="modelAccess.configurable"
+          aria-label="Provider model access"
+          class="vibe64-session-assistant-menu__section"
+        >
+          <div class="vibe64-session-assistant-menu__label">Model access</div>
+          <div class="vibe64-session-assistant-menu__access">
+            <v-switch
+              color="primary"
+              density="compact"
+              :disabled="!canConfigure || modelAccessUpdating || saving"
+              hide-details
+              :label="modelAccessUpdating ? modelAccessPendingLabel : modelAccess.label"
+              :model-value="modelAccessUnlocked"
+              @update:model-value="requestModelAccessChange"
+            />
+            <small>
+              {{ modelAccessUnlocked
+                ? "Paid Z.AI models are selectable and can consume API credit."
+                : `${recommendedModel?.label || "The recommended model"} stays available without paid-model access.` }}
+            </small>
+          </div>
         </section>
 
         <section
@@ -144,12 +191,36 @@
         </v-btn>
       </footer>
     </v-sheet>
+
+    <v-dialog v-model="unlockConfirmOpen" max-width="31rem" persistent>
+      <v-card rounded="xl">
+        <v-card-title>{{ modelAccess.label || "Unlock provider models" }}?</v-card-title>
+        <v-card-text>
+          {{ modelAccess.warning || "These models may consume paid provider credit." }}
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn :disabled="modelAccessUpdating" type="button" variant="text" @click="unlockConfirmOpen = false">
+            Keep free only
+          </v-btn>
+          <v-btn
+            color="warning"
+            :disabled="modelAccessUpdating"
+            type="button"
+            variant="flat"
+            @click="confirmUnlockModelAccess"
+          >
+            Unlock paid models
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-menu>
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
-import { mdiBrain, mdiCheck, mdiCogOutline } from "@mdi/js";
+import { computed, nextTick, ref, watch } from "vue";
+import { mdiBrain, mdiCheck, mdiCogOutline, mdiLockOutline } from "@mdi/js";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 
@@ -159,7 +230,9 @@ import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 import {
   VIBE64_SESSIONS_API_SUFFIX,
+  VIBE64_ASSISTANT_MODEL_ACCESS_API_SUFFIX,
   VIBE64_SURFACE_ID,
+  vibe64AssistantModelAccessPath,
   vibe64SessionPath
 } from "@/lib/vibe64SessionRequestConfig.js";
 
@@ -192,6 +265,8 @@ const props = defineProps({
 
 const menuOpen = ref(false);
 const saving = ref(false);
+const modelAccessUpdating = ref(false);
+const unlockConfirmOpen = ref(false);
 const modelProviderId = ref("");
 const modelId = ref("");
 const agentId = ref("");
@@ -240,9 +315,24 @@ const modelProvider = computed(() => (
     provider.id === modelProviderId.value && provider.connected === true
   )) || null
 ));
+const modelRows = computed(() => modelProvider.value?.models || []);
 const availableModels = computed(() => (
-  (modelProvider.value?.models || []).filter((model) => model.status === "available")
+  modelRows.value.filter((model) => model.status === "available")
 ));
+const modelAccess = computed(() => (
+  modelProvider.value?.modelAccess || selectedProvider.value?.modelAccess || {}
+));
+const modelAccessUnlocked = computed(() => modelAccess.value.mode === "all");
+const recommendedModel = computed(() => modelRows.value.find((model) => (
+  model.id === modelAccess.value.recommendedModelId && model.status === "available"
+)) || null);
+const canRestoreRecommendedModel = computed(() => Boolean(
+  recommendedModel.value && modelId.value !== recommendedModel.value.id
+));
+const modelAccessPendingLabel = computed(() => modelAccessUnlocked.value
+  ? `Returning to ${recommendedModel.value?.label || "the recommended model"}…`
+  : "Unlocking paid models…"
+);
 const selectedModel = computed(() => availableModels.value.find((model) => (
   model.id === modelId.value
 )) || null);
@@ -285,7 +375,8 @@ const canSave = computed(() => Boolean(
   selectedAgent.value &&
   selectionRevision.value &&
   !catalogLoading.value &&
-  !catalogError.value
+  !catalogError.value &&
+  !modelAccessUpdating.value
 ));
 const selectionSummary = computed(() => {
   const engineLabel = selectedOverviewEngine.value?.label || engineId.value;
@@ -323,6 +414,28 @@ const updateCommand = useCommand({
   surfaceId: VIBE64_SURFACE_ID,
   writeMethod: "PATCH"
 });
+const modelAccessCommand = useCommand({
+  access: "never",
+  apiSuffix: VIBE64_ASSISTANT_MODEL_ACCESS_API_SUFFIX,
+  buildCommandOptions: (_model, { context }) => ({
+    method: "PATCH",
+    path: String(context?.path || "")
+  }),
+  buildRawPayload: (_model, { context }) => ({
+    engineId: String(context?.engineId || ""),
+    modelProviderId: String(context?.modelProviderId || ""),
+    unlocked: context?.unlocked === true
+  }),
+  fallbackRunError: "Provider model access could not be changed.",
+  messages: {
+    error: "Provider model access could not be changed.",
+    success: "Provider model access updated."
+  },
+  ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+  placementSource: "vibe64.assistants.model-access.update",
+  surfaceId: VIBE64_SURFACE_ID,
+  writeMethod: "PATCH"
+});
 
 function hydrateSelection() {
   const selection = assistantSelection.value || {};
@@ -349,28 +462,125 @@ function selectVariant(value = "") {
   variantId.value = String(value || "");
 }
 
+function selectionForModel(model = null) {
+  if (!model || model.status !== "available" || !selectionRevision.value) {
+    return null;
+  }
+  const agents = (catalog.modelEngine.value?.agents || []).filter((agent) => (
+    ["all", "primary"].includes(agent.mode) &&
+    (!agent.modelProviderId || agent.modelProviderId === modelProviderId.value) &&
+    (!agent.modelId || agent.modelId === model.id)
+  ));
+  const agent = agents.find((candidate) => (
+    candidate.id === selectedOverviewEngine.value?.defaults?.agentId
+  )) || agents[0] || null;
+  if (!agent) {
+    return null;
+  }
+  const requestedVariantId = String(agent.variantId || "");
+  const variants = Array.isArray(model.variants) ? model.variants : [];
+  return {
+    agentId: agent.id,
+    catalogRevision: selectionRevision.value,
+    engineId: engineId.value,
+    modelId: model.id,
+    modelProviderId: modelProviderId.value,
+    variantId: variants.some((variant) => variant.id === requestedVariantId)
+      ? requestedVariantId
+      : ""
+  };
+}
+
 function openConnectionSettings() {
   menuOpen.value = false;
   requestVibe64AccountConnectionsDialog({ section: "ai" });
 }
 
-async function save() {
+async function applySelection(selection, { closeMenu = true } = {}) {
   const sessionId = String(props.session?.sessionId || "").trim();
   const sessionsPath = String(readRefOrGetterValue(props.sessionsApiPath) || "").trim();
-  if (!canSave.value || !sessionId || !sessionsPath || saving.value) {
-    return;
+  if (!selection || !sessionId || !sessionsPath || saving.value) {
+    return null;
   }
   saving.value = true;
   try {
     const response = await updateCommand.run({
-      assistantSelection: draftSelection.value,
+      assistantSelection: selection,
       path: vibe64SessionPath(sessionsPath, sessionId, "/assistant-selection")
     });
     if (response?.ok !== false) {
-      menuOpen.value = false;
+      modelId.value = selection.modelId;
+      agentId.value = selection.agentId;
+      variantId.value = selection.variantId;
+      if (closeMenu) menuOpen.value = false;
     }
+    return response;
   } finally {
     saving.value = false;
+  }
+}
+
+async function save() {
+  if (!canSave.value) return;
+  await applySelection(draftSelection.value);
+}
+
+async function restoreRecommendedModel({ closeMenu = true } = {}) {
+  const selection = selectionForModel(recommendedModel.value);
+  return applySelection(selection, { closeMenu });
+}
+
+function requestModelAccessChange(unlocked) {
+  if (!props.canConfigure || modelAccessUpdating.value || saving.value) return;
+  if (unlocked === true) {
+    unlockConfirmOpen.value = true;
+    return;
+  }
+  void updateModelAccess(false);
+}
+
+async function confirmUnlockModelAccess() {
+  unlockConfirmOpen.value = false;
+  await updateModelAccess(true);
+}
+
+async function updateModelAccess(unlocked) {
+  const providerId = String(modelProviderId.value || "").trim();
+  const path = vibe64AssistantModelAccessPath(catalog.apiPath.value);
+  if (
+    !props.canConfigure ||
+    !providerId ||
+    !path ||
+    !modelAccess.value.configurable ||
+    modelAccessUpdating.value
+  ) {
+    return null;
+  }
+  modelAccessUpdating.value = true;
+  try {
+    const current = assistantSelection.value || {};
+    if (
+      unlocked !== true &&
+      current.modelProviderId === providerId &&
+      recommendedModel.value &&
+      current.modelId !== recommendedModel.value.id
+    ) {
+      const recovery = await restoreRecommendedModel({ closeMenu: false });
+      if (recovery?.ok === false || !recovery) return recovery;
+      await nextTick();
+    }
+    const response = await modelAccessCommand.run({
+      engineId: engineId.value,
+      modelProviderId: providerId,
+      path,
+      unlocked: unlocked === true
+    });
+    if (response?.ok !== false) {
+      await catalog.reload();
+    }
+    return response;
+  } finally {
+    modelAccessUpdating.value = false;
   }
 }
 
@@ -379,11 +589,15 @@ watch(assistantSelection, hydrateSelection, { immediate: true });
 watch(menuOpen, (open) => {
   if (open) {
     hydrateSelection();
+    void catalog.reload().catch(() => null);
   }
 });
 
-watch([modelProvider, availableModels], ([provider, models]) => {
+watch([modelProvider, availableModels, modelRows], ([provider, models, allModels]) => {
   if (!menuOpen.value || !provider) {
+    return;
+  }
+  if (allModels.some((model) => model.id === modelId.value)) {
     return;
   }
   if (!models.some((model) => model.id === modelId.value)) {
@@ -515,6 +729,13 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
   background: rgba(var(--v-theme-primary), 0.06);
 }
 
+.vibe64-session-assistant-menu__option--locked,
+.vibe64-session-assistant-menu__option:disabled {
+  background: rgba(var(--v-theme-on-surface), 0.035);
+  color: rgba(var(--v-theme-on-surface), 0.46);
+  cursor: not-allowed;
+}
+
 .vibe64-session-assistant-menu__option:focus-visible {
   outline: 2px solid rgb(var(--v-theme-primary));
   outline-offset: 2px;
@@ -531,6 +752,20 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
   color: rgba(var(--v-theme-on-surface), 0.62);
   font-size: 0.82rem;
   padding: 0.35rem 0.12rem;
+}
+
+.vibe64-session-assistant-menu__access {
+  background: rgba(var(--v-theme-primary), 0.045);
+  border: 1px solid rgba(var(--v-theme-outline), 0.14);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.35rem 0.55rem 0.5rem;
+}
+
+.vibe64-session-assistant-menu__access small {
+  color: rgba(var(--v-theme-on-surface), 0.65);
+  line-height: 1.35;
 }
 
 .vibe64-session-assistant-menu__state {

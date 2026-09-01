@@ -16,11 +16,16 @@ what the person wants to make, who it is for, and the first useful outcome, then
 asks before selecting any technology.
 
 The chat selector stays focused on choosing among AIs that are already
-configured and available. Workspace owners manage AI accounts and add further
-connections in the separate account-management area. Each distinct connected
-OpenCode provider route remains its own choice, including separate plans from
-the same provider. Starting a session presents that saved list promptly without
-waiting for an AI provider to start or discover models. A session stays within
+configured and connected. A host may contribute an always-available built-in
+OpenCode connection and identify one connected provider as the preferred
+new-session default. Workspace owners manage account credentials and add
+further connections in the separate account-management area. Each distinct
+connected OpenCode provider route remains its own choice, including separate
+plans from the same provider. A host model-access policy can leave restricted
+models visible but locked, expose one recommended recovery model, and give the
+owner a warned switch for broader access. Starting a session presents the
+configured list promptly without waiting for an AI provider to start or
+discover models. A session stays within
 the assistant application that owns its conversation. Leaving a model's
 thinking choice at its provider default leaves that choice to the provider
 instead of silently selecting another listed option. Vibe64 also respects each

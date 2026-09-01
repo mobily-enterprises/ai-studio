@@ -271,11 +271,18 @@ function sessionNavLabel(session = {}) {
 function workspaceSetupFixPrompt(workspaceSetup = {}) {
   const diagnostic = normalizedAgentTurnText(workspaceSetup?.diagnostic) ||
     "Workspace preparation did not complete.";
+  const transcript = normalizedAgentTurnText(workspaceSetup?.transcript);
+  const recentTranscript = transcript.length > 12_000
+    ? `[Earlier preparation output omitted.]\n${transcript.slice(-12_000)}`
+    : transcript;
   return [
-    "Workspace preparation needs attention:",
-    diagnostic,
-    "Please diagnose and fix this in the current workspace, preserving the existing work. When it is fixed, tell me to retry workspace preparation."
-  ].join("\n\n");
+    "Workspace preparation needs attention.",
+    `Diagnostic:\n${diagnostic}`,
+    recentTranscript ? `Recent preparation output:\n${recentTranscript}` : "",
+    "Diagnose and repair the current workspace while preserving its existing work.",
+    "When your turn finishes, Vibe64 will automatically rerun its deterministic workspace preparation. Do not merely tell the user to retry.",
+    "If the repair needs information only the user can provide, ask for it in this temporary conversation."
+  ].filter(Boolean).join("\n\n");
 }
 
 function previewIdentityFixPrompt({
@@ -300,6 +307,8 @@ const REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY = [
   "Record the initial HEAD and index with read-only commands, leave both byte-for-byte unchanged, and do not publish. Resolve only by editing the conflicting working-tree files so the user can retry the Vibe64 operation.",
   "For an overlapping edit, keep the latest saved version's overlapping lines byte-for-byte and preserve this session's additional intent in adjacent non-overlapping content. Do not report success while Git has unmerged index entries or while HEAD/index differ from their initial values."
 ].join("\n");
+
+const TEMPORARY_AI_RECOVERY_NOTICE = "This is a separate temporary chat. Temporary AI can edit this session to make the repair. Follow progress here and reply below if it needs a decision.";
 
 function repositoryTemporaryAiDedupeKey({
   code = "",
@@ -385,7 +394,6 @@ function useVibe64AutopilotView(props, emit, {
 
   const composerDraft = ref("");
   const composerAttachments = ref([]);
-  const composerError = ref("");
   const composerAcceptedAttachments = ref(false);
   const composerRetrySubmission = ref(null);
   const composerSending = ref(false);
@@ -411,6 +419,7 @@ function useVibe64AutopilotView(props, emit, {
   const workspaceSetupRetryError = ref("");
   const workspaceSetupRetrying = ref(false);
   const workspaceSetupFixSending = ref(false);
+  const workspaceSetupFixTaskId = ref("");
   const repositoryRecoverySending = ref(false);
   const previewAttachmentState = ref({
     attachDiagnostics: null,
@@ -685,6 +694,7 @@ function useVibe64AutopilotView(props, emit, {
     workspaceSetupFixSending.value = true;
     try {
       const result = await requestTemporaryAi({
+        completionMessage: "AI repair finished. Vibe64 is verifying workspace preparation now.",
         dedupeKey: [
           "workspace-setup",
           sessionId.value,
@@ -692,14 +702,39 @@ function useVibe64AutopilotView(props, emit, {
           normalizedAgentTurnText(setup.updatedAt),
           normalizedAgentTurnText(setup.diagnostic)
         ].join("|"),
+        displayMessage: "Fix workspace preparation.",
+        failureMessage: "Temporary AI stopped before confirming completion. Vibe64 is checking whether its edits repaired workspace preparation.",
         message: workspaceSetupFixPrompt(setup),
+        nextStepMessage: "When the AI finishes, Vibe64 will automatically retry workspace preparation to verify the repair.",
         policy: "workspace_write",
+        recoveryNotice: TEMPORARY_AI_RECOVERY_NOTICE,
         title: "Fix workspace preparation"
       });
-      return result !== false && result?.ok !== false;
+      const accepted = result !== false && result?.ok !== false;
+      const taskId = normalizedAgentTurnText(result?.taskId);
+      if (accepted && taskId) {
+        workspaceSetupFixTaskId.value = taskId;
+      }
+      return accepted;
     } finally {
       workspaceSetupFixSending.value = false;
     }
+  }
+
+  async function handleTemporaryAiTaskFinished(task = {}) {
+    const taskId = normalizedAgentTurnText(task?.id);
+    const status = normalizedAgentTurnText(task?.status);
+    if (
+      taskId !== workspaceSetupFixTaskId.value ||
+      !["completed", "failed"].includes(status)
+    ) {
+      return false;
+    }
+    workspaceSetupFixTaskId.value = "";
+    if (workspaceSetupNeedsAttention.value) {
+      await retryWorkspaceSetup();
+    }
+    return true;
   }
 
   async function askCodexToFixPreviewIdentity(input = {}) {
@@ -714,8 +749,10 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     }
     const identity = input?.identity || {};
+    const identityName = normalizedAgentTurnText(identity.name) || "the selected identity";
     const error = normalizedAgentTurnText(input?.error);
     const result = await requestTemporaryAi({
+      completionMessage: "AI repair finished. Try the preview identity again from the sign-in menu.",
       dedupeKey: [
         "preview-identity",
         sessionId.value,
@@ -723,8 +760,12 @@ function useVibe64AutopilotView(props, emit, {
         normalizedAgentTurnText(identity.value),
         error
       ].join("|"),
+      displayMessage: `Fix preview sign-in for ${identityName}.`,
+      failureMessage: "Temporary AI stopped before completing the preview identity repair. Review the error and progress below before trying again.",
       message: previewIdentityFixPrompt(input),
+      nextStepMessage: "When the AI finishes, try this preview identity again from the sign-in menu.",
       policy: "workspace_write",
+      recoveryNotice: TEMPORARY_AI_RECOVERY_NOTICE,
       title: "Fix preview identity"
     });
     return result !== false && result?.ok !== false;
@@ -750,17 +791,22 @@ function useVibe64AutopilotView(props, emit, {
     repositoryRecoverySending.value = true;
     try {
       const result = await requestTemporaryAi({
+        completionMessage: `AI repair finished. Review its result, then retry ${action}.`,
         dedupeKey: repositoryTemporaryAiDedupeKey({
           code: saveWorkFailure.value?.code,
           diagnostic: saveWorkError.value,
           sessionId: sessionId.value
         }),
+        displayMessage: `Fix this ${action} problem without losing work.`,
+        failureMessage: `Temporary AI stopped before completing the ${action} repair. Review the error and progress below before retrying.`,
         message: [
           `Help resolve this Vibe64 ${action} problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:`,
           REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY,
           saveWorkError.value
         ].filter(Boolean).join("\n\n"),
+        nextStepMessage: `When the AI finishes, review its result here, then retry ${action} from Main chat.`,
         policy: "workspace_write",
+        recoveryNotice: TEMPORARY_AI_RECOVERY_NOTICE,
         title: `Resolve ${action}`
       });
       return result !== false && result?.ok !== false;
@@ -781,17 +827,22 @@ function useVibe64AutopilotView(props, emit, {
     repositoryRecoverySending.value = true;
     try {
       const result = await requestTemporaryAi({
+        completionMessage: "AI repair finished. Review its result, then retry the repository operation.",
         dedupeKey: repositoryTemporaryAiDedupeKey({
           code,
           diagnostic,
           sessionId: sessionId.value
         }),
+        displayMessage: "Fix this repository problem without losing work.",
+        failureMessage: "Temporary AI stopped before completing the repository repair. Review the error and progress below before retrying.",
         message: [
           "Help resolve this Vibe64 repository problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
           REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY,
           diagnostic
         ].join("\n\n"),
+        nextStepMessage: "When the AI finishes, review its result here, then retry the repository operation.",
         policy: "workspace_write",
+        recoveryNotice: TEMPORARY_AI_RECOVERY_NOTICE,
         title
       });
       return result !== false && result?.ok !== false;
@@ -878,7 +929,6 @@ function useVibe64AutopilotView(props, emit, {
       ...optimisticMessages.value.filter((message) => message.id !== messageId),
       optimistic
     ];
-    composerError.value = "";
     composerSubmissionKind.value = submissionKind === "steer" ? "steer" : "send";
     composerSending.value = true;
     try {
@@ -908,7 +958,6 @@ function useVibe64AutopilotView(props, emit, {
       return accepted;
     } catch (error) {
       const message = normalizedAgentTurnText(error?.message || error) || "Message could not be sent.";
-      composerError.value = message;
       updateOptimisticMessage(messageId, {
         error: message,
         status: "failed"
@@ -1709,7 +1758,6 @@ function useVibe64AutopilotView(props, emit, {
     composerDraft.value = "";
     composerAttachments.value = [];
     composerAcceptedAttachments.value = false;
-    composerError.value = "";
     composerRetrySubmission.value = null;
     optimisticMessages.value = [];
     questionAnswers.value = {};
@@ -1719,6 +1767,7 @@ function useVibe64AutopilotView(props, emit, {
     savedCommitDeslop.value = "";
     savedCommitDeslopSending.value = false;
     workspaceSetupRetryError.value = "";
+    workspaceSetupFixTaskId.value = "";
     systemReturnContext.value = null;
     systemRestoreRequest.value = null;
   });
@@ -1788,7 +1837,6 @@ function useVibe64AutopilotView(props, emit, {
     composerCanSubmit,
     composerDisabled,
     composerDraft,
-    composerError,
     composerHint,
     composerPlaceholder,
     composerSending,
@@ -1812,6 +1860,7 @@ function useVibe64AutopilotView(props, emit, {
     emptyConversationWelcome,
     fixRepositoryActionError,
     fixRepositoryError,
+    handleTemporaryAiTaskFinished,
     interrupting,
     loadMoreChatTurns,
     numberedQuestionSelectItems,

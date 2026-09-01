@@ -10,6 +10,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
+- `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
 - `packages/vibe64-execution/src/host/execHelper.js`
 - `packages/vibe64-execution/src/server/engines/helperClient.js`
@@ -57,6 +58,13 @@ instead of regenerating that complete prompt. An explicit Deslop request uses
 the same visible message-delivery path with a narrow task marker so Genesis can
 compose its committed-scope cleanup instructions for that turn.
 
+If an inactive conversation still names a Codex thread that the provider
+reports as exactly missing, the next message enters the established thread
+replacement path. Vibe64 records the replacement, restores the durable visible
+conversation into the new provider thread, and then delivers that message once.
+An active turn and unrelated invalid provider requests remain failures rather
+than being reinterpreted as missing history.
+
 Separately, each agent receives Genesis's short project operating guide when a
 conversation is created and again after compaction. Codex receives it through
 the project SessionStart hook. OpenCode loads the ordinary project plugin that
@@ -67,20 +75,32 @@ Message delivery and provider work remain visibly distinct. The composer shows
 the initial send while the message is being accepted, then reports the selected
 assistant as working for the rest of the active turn. The session tab and
 assistant avatar use that same live turn state until completion or interruption.
+If message delivery fails, the exact error belongs to the failed message with
+its Resend, Cancel, and Edit actions inside the scrollable conversation. The
+composer does not repeat that raw error below its input or let it displace the
+chat layout.
 When an OpenCode provider reports successful completion without a user-facing
 response, Vibe64 makes one bounded continuation request for that response. If
 the provider again returns no response, the turn fails visibly instead of
 appearing to have completed silently.
 
 The chat cog opens a compact selector for the AI used by that session. It shows
-only currently connected providers and their available models, chooses a
-compatible conversation agent automatically, and offers the selected model's
-thinking choices when present. A provider-default thinking choice delegates
-that setting to the provider instead of substituting another listed choice.
+only currently connected providers, keeps host-restricted models visible but
+greyed and unselectable, chooses a compatible conversation agent automatically,
+and offers the selected model's thinking choices when present. When a host
+exposes configurable model access, the owner sees the same warned unlock switch
+as account settings. The cog also exposes a direct return to the host's
+recommended model; relocking first moves the current session to that model, and
+a session whose prior model was already relocked can still recover because the
+target selection is checked independently. A provider-default thinking choice
+delegates that setting to the provider instead of substituting another listed
+choice.
 The new-session AI chooser is a separate, preloaded view of Vibe64's saved AI
 connections. It presents one choice for Codex when connected and one choice for
 each saved OpenCode route, using each connection's verified default model. It
-does not start OpenCode or read OpenCode's provider and model catalogue when
+orders a host-designated preferred provider first, so that choice is selected
+when the dialog opens. It does not start OpenCode or read OpenCode's provider
+and model catalogue when
 the chooser opens or when the session is created; creation validates the
 selection against the same saved connection view. A session keeps the
 assistant engine that owns its native history: Codex cannot be changed to
@@ -184,7 +204,8 @@ an unrelated failure cannot gain an account link merely because of its wording.
   capability fields before they can enter the catalogue cache, and the
   temporary service must be proven stopped before the result is returned.
 - `openCodeConfiguredAssistantCapabilities()` projects saved connection labels,
-  access descriptions, and verified default models into the new-session choices
+  access descriptions, preferred-provider status, and verified default models
+  into the new-session choices
   without consulting the live OpenCode catalogue. The configured-only
   capability and session-creation paths both use that projection, while
   `Vibe64AssistantSessionDialog` preloads it before the dialog opens.
@@ -222,6 +243,11 @@ an unrelated failure cannot gain an account link merely because of its wording.
   Deslop request; later ordinary messages are sent without rebuilding the full
   Genesis prompt, and Codex steering continues through its existing direct
   steer path.
+- `sendCodexAppServerMessage()` recognizes only the provider's exact
+  missing-thread response for an inactive conversation and routes it through
+  `ensureCodexAppServerThreadForSession()` so its existing replacement,
+  durable-history recovery, and identity update complete before the pending
+  message starts the new ordinary turn.
 - `startAttachedTerminal()` attaches OpenCode's native TUI to the session's
   existing upstream history in a session-owned PTY. The OpenCode controller
   owns its bounded snapshot, stream, input, resize, close, and session cleanup;

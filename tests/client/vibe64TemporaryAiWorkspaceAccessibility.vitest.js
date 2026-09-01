@@ -37,6 +37,24 @@ vi.mock("vuetify/components/VBtn", () => ({
   })
 }));
 
+vi.mock("vuetify/components/VAlert", () => ({
+  VAlert: defineComponent({
+    inheritAttrs: false,
+    props: {
+      title: {
+        default: "",
+        type: String
+      }
+    },
+    setup(componentProps, { attrs, slots }) {
+      return () => h("section", attrs, [
+        h("strong", componentProps.title),
+        ...(slots.default?.() || [])
+      ]);
+    }
+  })
+}));
+
 vi.mock("@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue", () => ({
   default: defineComponent({ render: () => null })
 }));
@@ -81,6 +99,21 @@ function temporaryAiTestState(startResult) {
     closeWorkspace: vi.fn(),
     open,
     openTask: vi.fn(),
+    reportRecoveryOutcome: vi.fn((taskId, outcome = {}) => {
+      if (!tasks.value.some((task) => task.id === taskId)) {
+        return false;
+      }
+      tasks.value = tasks.value.map((task) => (
+        task.id === taskId
+          ? {
+              ...task,
+              recoveryOutcome: outcome.status,
+              recoveryOutcomeMessage: outcome.message
+            }
+          : task
+      ));
+      return true;
+    }),
     selectTask: vi.fn((taskId) => {
       activeTaskId.value = taskId;
       open.value = true;
@@ -158,6 +191,21 @@ function testRenderer() {
 
 function mountWorkspace(container, props) {
   const app = testRenderer().createApp(Vibe64TemporaryAiWorkspace, props);
+  app.component("VAlert", defineComponent({
+    inheritAttrs: false,
+    props: {
+      title: {
+        default: "",
+        type: String
+      }
+    },
+    setup(componentProps, { attrs, slots }) {
+      return () => h("section", attrs, [
+        h("strong", componentProps.title),
+        ...(slots.default?.() || [])
+      ]);
+    }
+  }));
   app.component("VBtn", defineComponent({
     inheritAttrs: false,
     setup(_props, { attrs, slots }) {
@@ -179,6 +227,13 @@ function findNode(root, predicate) {
     }
   }
   return null;
+}
+
+function nodeText(root) {
+  return [
+    root?.text || "",
+    ...(root?.children || []).map((child) => nodeText(child))
+  ].filter(Boolean).join(" ");
 }
 
 async function flushWorkspaceReveal() {
@@ -224,6 +279,82 @@ describe("Temporary AI recovery workspace accessibility", () => {
 
     startResult.resolve({ ok: true, started: true, taskId: "recovery-task" });
     await expect(started).resolves.toMatchObject({ started: true });
+    app.unmount();
+  });
+
+  it("explains the editable temporary handoff and what happens next", async () => {
+    const startResult = deferred();
+    const temporary = temporaryAiTestState(startResult);
+    temporary.tasks.value = [{
+      agentSettings: {},
+      busy: true,
+      draft: "",
+      error: "",
+      id: "recovery-task",
+      messages: [],
+      nextStepMessage: "Vibe64 will verify the repair when the AI finishes.",
+      policy: "workspace_write",
+      recoveryNotice: "Temporary AI can edit this session in a separate temporary chat.",
+      status: "inProgress",
+      title: "Fix workspace preparation"
+    }];
+    temporary.activeTaskId.value = "recovery-task";
+    temporary.open.value = true;
+    temporaryProvider.value = temporary;
+    const container = { children: [], parent: null, type: "root" };
+    const { app } = mountWorkspace(container, {
+      sessionId: "session-1",
+      sessionsApiPath: "/api/vibe64/sessions"
+    });
+    await flushWorkspaceReveal();
+
+    const recoveryNotice = findNode(container, (node) => (
+      node.props?.["data-temporary-ai-recovery"] === ""
+    ));
+    expect(recoveryNotice).toBeTruthy();
+    expect(recoveryNotice.props.role).toBe("status");
+    expect(nodeText(recoveryNotice)).toContain("AI repair in progress");
+    expect(nodeText(recoveryNotice)).toContain("separate temporary chat");
+    expect(nodeText(recoveryNotice)).toContain("Vibe64 will verify the repair");
+    app.unmount();
+  });
+
+  it("makes independent product verification the recovery headline", async () => {
+    const startResult = deferred();
+    const temporary = temporaryAiTestState(startResult);
+    temporary.tasks.value = [{
+      agentSettings: {},
+      busy: false,
+      draft: "",
+      error: "Timed out waiting for the provider response.",
+      id: "recovery-task",
+      messages: [],
+      policy: "workspace_write",
+      recoveryNotice: "Temporary AI can edit this session in a separate temporary chat.",
+      status: "failed",
+      title: "Fix workspace preparation"
+    }];
+    temporary.activeTaskId.value = "recovery-task";
+    temporary.open.value = true;
+    temporaryProvider.value = temporary;
+    const container = { children: [], parent: null, type: "root" };
+    const { app, workspace } = mountWorkspace(container, {
+      sessionId: "session-1",
+      sessionsApiPath: "/api/vibe64/sessions"
+    });
+
+    expect(workspace.reportTaskRecovery("recovery-task", {
+      message: "Workspace preparation succeeded. Vibe64 independently verified the AI repair.",
+      status: "succeeded"
+    })).toBe(true);
+    await flushWorkspaceReveal();
+
+    const recoveryNotice = findNode(container, (node) => (
+      node.props?.["data-temporary-ai-recovery"] === ""
+    ));
+    expect(nodeText(recoveryNotice)).toContain("Repair verified");
+    expect(nodeText(recoveryNotice)).toContain("Workspace preparation succeeded");
+    expect(nodeText(container)).toContain("The repair was independently verified");
     app.unmount();
   });
 

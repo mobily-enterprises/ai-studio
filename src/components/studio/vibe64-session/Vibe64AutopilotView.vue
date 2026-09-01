@@ -157,19 +157,12 @@
           @retry="retrySaveWork"
         >
           <template v-if="saveWorkError && saveWorkCanResolveWithTemporaryAi" #error-actions>
-            <v-btn
-              :aria-busy="repositoryRecoverySending ? 'true' : undefined"
-              class="studio-autopilot__recovery-action"
+            <Vibe64TemporaryAiFixAction
               :disabled="repositoryRecoverySending || !assistantDirectAllowed"
-              :prepend-icon="mdiRobotOutline"
-              size="small"
+              :pending="repositoryRecoverySending"
               :title="assistantDirectAllowed ? 'Open temporary AI to resolve this repository problem' : assistantRestrictionMessage"
-              type="button"
-              variant="tonal"
               @click="fixRepositoryActionError"
-            >
-              {{ repositoryRecoverySending ? "Opening temporary AI…" : "Fix with temporary AI" }}
-            </v-btn>
+            />
           </template>
         </Vibe64TemporaryActionTerminal>
 
@@ -227,18 +220,12 @@
           @retry="retryWorkspaceSetup"
         >
           <template v-if="workspaceSetupNeedsAttention" #error-actions>
-            <v-btn
-              :aria-busy="workspaceSetupFixSending ? 'true' : undefined"
-              class="studio-autopilot__recovery-action"
+            <Vibe64TemporaryAiFixAction
               :disabled="workspaceSetupAskDisabled"
-              size="small"
+              :pending="workspaceSetupFixSending"
               :title="assistantDirectAllowed ? 'Open temporary AI to resolve workspace preparation' : assistantRestrictionMessage"
-              type="button"
-              variant="tonal"
               @click="askCodexToFixWorkspaceSetup"
-            >
-              {{ workspaceSetupFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
-            </v-btn>
+            />
           </template>
         </Vibe64TemporaryActionTerminal>
       </div>
@@ -289,7 +276,6 @@
           :attachments-enabled="composerAttachmentsEnabled"
           :described-by="composerSupportStatusVisible ? thinkingStatusId : ''"
           :disabled="composerDisabled"
-          :error-messages="composerError"
           :hint="composerAccessHint"
           persistent-hint
           :placeholder="composerPromptHintPlaceholder"
@@ -479,6 +465,7 @@
         :session-id="sessionId"
         :sessions-api-path="props.sessionsApiPath"
         @select-main-chat="showMainChat"
+        @task-finished="finishTemporaryAiTask"
       />
     </section>
 
@@ -683,7 +670,6 @@ import {
   mdiIncognito,
   mdiPaperclip,
   mdiPencilOutline,
-  mdiRobotOutline,
   mdiSend,
   mdiSourcePull,
   mdiStopCircleOutline
@@ -694,6 +680,7 @@ import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vi
 import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import Vibe64TemporaryActionTerminal from "@/components/studio/Vibe64TemporaryActionTerminal.vue";
+import Vibe64TemporaryAiFixAction from "@/components/studio/Vibe64TemporaryAiFixAction.vue";
 import Vibe64SessionSourceEditor from "@/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue";
 import Vibe64SessionToolbar from "@/components/studio/vibe64-session/Vibe64SessionToolbar.vue";
 import Vibe64TemporaryAiWorkspace from "@/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
@@ -750,6 +737,7 @@ const composerSendButton = ref(null);
 const mainChat = ref(null);
 const sessionActionsTrigger = ref(null);
 const temporaryAiWorkspace = ref(null);
+const workspaceRecoveryTaskId = ref("");
 const thinkingStatusId = `studio-autopilot-thinking-${useId()}`;
 const composerAttachmentState = ref({
   count: 0,
@@ -872,7 +860,6 @@ const {
   composerCanSubmit,
   composerDisabled,
   composerDraft,
-  composerError,
   composerHint,
   composerPlaceholder,
   composerSending,
@@ -896,6 +883,7 @@ const {
   emptyConversationWelcome,
   fixRepositoryActionError,
   fixRepositoryError,
+  handleTemporaryAiTaskFinished,
   interrupting,
   loadMoreChatTurns,
   numberedQuestionSelectItems,
@@ -1210,6 +1198,33 @@ async function startTemporaryAiTask(options = {}) {
   return workspace.startTask(options);
 }
 
+function reportVerifiedWorkspaceRecovery() {
+  if (!workspaceRecoveryTaskId.value || workspaceSetupStatus.value !== "succeeded") {
+    return false;
+  }
+  const reported = temporaryAiWorkspace.value?.reportTaskRecovery?.(
+    workspaceRecoveryTaskId.value,
+    {
+      message: "Workspace preparation succeeded. Vibe64 independently verified the AI repair.",
+      status: "succeeded"
+    }
+  );
+  if (reported) {
+    workspaceRecoveryTaskId.value = "";
+  }
+  return Boolean(reported);
+}
+
+async function finishTemporaryAiTask(task = {}) {
+  const handled = await handleTemporaryAiTaskFinished(task);
+  if (!handled) {
+    return false;
+  }
+  workspaceRecoveryTaskId.value = String(task.id || "").trim();
+  reportVerifiedWorkspaceRecovery();
+  return true;
+}
+
 function activateRealSession() {
   temporaryAiWorkspace.value?.closeWorkspace?.();
 }
@@ -1224,6 +1239,14 @@ watch(() => props.active, (active, wasActive) => {
   if (active && !wasActive) {
     activateRealSession();
   }
+});
+
+watch(workspaceSetupStatus, () => {
+  reportVerifiedWorkspaceRecovery();
+});
+
+watch(selectedAssistantSessionId, () => {
+  workspaceRecoveryTaskId.value = "";
 });
 
 async function attachPreviewFile(file) {
@@ -1406,11 +1429,6 @@ function requestSessionRenewal(returnFocusTarget = null) {
   min-inline-size: 5.75rem;
 }
 
-.studio-autopilot__recovery-action {
-  min-block-size: 3rem;
-  min-inline-size: 11.75rem;
-}
-
 .studio-autopilot__composer {
   border-top: 1px solid rgba(var(--v-theme-outline), 0.1);
   box-sizing: border-box;
@@ -1553,10 +1571,6 @@ function requestSessionRenewal(returnFocusTarget = null) {
 
   .studio-autopilot__composer-action.studio-autopilot__send-action {
     min-width: 5.25rem;
-  }
-
-  .studio-autopilot__recovery-action {
-    min-height: 3rem;
   }
 }
 

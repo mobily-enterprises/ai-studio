@@ -169,8 +169,25 @@ function normalizedModel(value = {}) {
     description: text(input.description),
     id,
     label: text(input.label) || id,
+    lockMessage: text(input.lockMessage),
     status: text(input.status) || "available",
     variants: Object.freeze(variants)
+  });
+}
+
+function normalizedModelAccess(value = {}) {
+  const input = record(value);
+  const mode = text(input.mode);
+  return Object.freeze({
+    configurable: input.configurable === true,
+    label: text(input.label),
+    mode: mode === "recommended" ? "recommended" : "all",
+    recommendedModelId: boundedIdentifier(
+      input.recommendedModelId,
+      "modelProvider.modelAccess.recommendedModelId",
+      { allowEmpty: true }
+    ),
+    warning: text(input.warning)
   });
 }
 
@@ -187,6 +204,7 @@ function normalizedModelProvider(value = {}) {
   }
   return Object.freeze({
     apiKeyCompatible: input.apiKeyCompatible === true,
+    builtIn: input.builtIn === true,
     connected: input.connected === true,
     connectionMessage: text(input.connectionMessage),
     connectionStatus: text(input.connectionStatus) || (input.connected === true ? "connected" : "disconnected"),
@@ -197,6 +215,8 @@ function normalizedModelProvider(value = {}) {
     description: text(input.description),
     id,
     label: text(input.label) || id,
+    modelAccess: normalizedModelAccess(input.modelAccess),
+    preferred: input.preferred === true,
     models: Object.freeze(models)
   });
 }

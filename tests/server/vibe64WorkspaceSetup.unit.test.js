@@ -414,8 +414,9 @@ test("workspace preparation retry migrates a recognized legacy Genesis project b
     assert.equal(calls[0].actor, "app");
     assert.deepEqual(calls[0].allowedRoots, [sourceRoot]);
     assert.equal(calls[0].envPolicy, "project");
+    assert.deepEqual(calls[0].gitSafeDirectories, [sourceRoot]);
     assert.equal(calls[0].purpose, "source");
-    assert.deepEqual(calls[0].runtimes, ["node26"]);
+    assert.deepEqual(calls[0].runtimes, ["node26", "git"]);
     assert.equal(calls[0].shimDirs.some((directory) => (
       directory.endsWith(path.join("packages", "vibe64-genesis", "bin"))
     )), true);

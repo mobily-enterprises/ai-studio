@@ -395,7 +395,8 @@ function createService({
     codexConnectionStatus: async () => true,
     listConnections: async () => [],
     readAssistantAccess: async () => ({ ownerOnly: false }),
-    resolveConnection: async () => null
+    resolveConnection: async () => null,
+    updateModelAccess: null
   };
 
   const workspaceSetup = createWorkspaceSetupRunner({
@@ -1331,7 +1332,8 @@ function createService({
         "codexConnectionStatus",
         "listConnections",
         "readAssistantAccess",
-        "resolveConnection"
+        "resolveConnection",
+        "updateModelAccess"
       ]) {
         if (Object.hasOwn(input, name)) {
           if (typeof input[name] !== "function") {
@@ -2036,6 +2038,27 @@ function createService({
 
     listAssistantCapabilities(input = {}, options = {}) {
       return sessionAgent.listCapabilities(input, options);
+    },
+
+    updateAssistantModelAccess(input = {}, options = {}) {
+      if (input.engineId !== VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE) {
+        const error = new Error("Only OpenCode providers expose configurable model access.");
+        error.code = "vibe64_assistant_model_access_not_configurable";
+        error.statusCode = 400;
+        throw error;
+      }
+      if (typeof assistantRuntime.updateModelAccess !== "function") {
+        const error = new Error("This Vibe64 host does not support changing provider model access.");
+        error.code = "vibe64_assistant_model_access_unavailable";
+        error.statusCode = 503;
+        throw error;
+      }
+      return assistantRuntime.updateModelAccess({
+        engineId: input.engineId,
+        modelProviderId: String(input.modelProviderId || "").trim(),
+        unlocked: input.unlocked === true,
+        vibe64User: options.vibe64User || null
+      });
     },
 
     verifyAssistantConnection(input = {}, options = {}) {

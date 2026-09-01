@@ -63,6 +63,7 @@ vi.mock("@/components/studio/StudioErrorNotice.vue", () => ({
 
 import Vibe64LongRunningTerminal from "../../src/components/studio/Vibe64LongRunningTerminal.vue";
 import Vibe64TemporaryActionTerminal from "../../src/components/studio/Vibe64TemporaryActionTerminal.vue";
+import Vibe64TemporaryAiFixAction from "../../src/components/studio/Vibe64TemporaryAiFixAction.vue";
 import Vibe64TerminalSurface from "../../src/components/studio/Vibe64TerminalSurface.vue";
 
 for (const [component, componentPath, id] of [
@@ -75,6 +76,11 @@ for (const [component, componentPath, id] of [
     Vibe64TemporaryActionTerminal,
     "src/components/studio/Vibe64TemporaryActionTerminal.vue",
     "vibe64-temporary-action-terminal-lifecycle-test"
+  ],
+  [
+    Vibe64TemporaryAiFixAction,
+    "src/components/studio/Vibe64TemporaryAiFixAction.vue",
+    "vibe64-temporary-ai-fix-action-lifecycle-test"
   ],
   [
     Vibe64TerminalSurface,
@@ -243,6 +249,41 @@ describe("Vibe64 terminal lifecycle components", () => {
     state.active = false;
     await nextTick();
     expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeNull();
+    app.unmount();
+  });
+
+  it("keeps error recovery actions directly available in the collapsed summary", async () => {
+    const retry = vi.fn();
+    const fix = vi.fn();
+    const { app, container } = mount(defineComponent({
+      render: () => h(Vibe64TemporaryActionTerminal, {
+        error: "Dependency installation exited with code 1.",
+        onRetry: retry,
+        retryable: true,
+        status: "failed",
+        title: "Workspace preparation"
+      }, {
+        "error-actions": () => h(Vibe64TemporaryAiFixAction, { onClick: fix })
+      })
+    }));
+
+    const summary = findNode(container, hasClass("vibe64-temporary-action-terminal__summary"));
+    const fixButton = findNode(summary, (node) => (
+      node.type === "button" && node.props?.["aria-label"] === "Fix it with AI"
+    ));
+    const retryButton = findNode(summary, (node) => (
+      node.type === "button" && node.props?.["aria-label"] === "Retry Workspace preparation"
+    ));
+    expect(summary.props.role).toBe("alert");
+    expect(fixButton).toBeTruthy();
+    expect(nodeText(fixButton)).toBe("Fix it with AI");
+    expect(retryButton).toBeTruthy();
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeNull();
+
+    fixButton.props.onClick();
+    retryButton.props.onClick();
+    expect(fix).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledTimes(1);
     app.unmount();
   });
 

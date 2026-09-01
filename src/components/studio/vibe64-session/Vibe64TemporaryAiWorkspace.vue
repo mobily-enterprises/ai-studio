@@ -87,6 +87,21 @@
 
     <template v-if="activeTask">
       <div class="vibe64-temporary-ai__messages" aria-live="polite">
+        <v-alert
+          v-if="activeTask.recoveryNotice"
+          aria-live="polite"
+          class="vibe64-temporary-ai__recovery"
+          :color="activeTaskRecoveryVerified ? 'success' : 'primary'"
+          data-temporary-ai-recovery
+          density="compact"
+          :icon="activeTaskRecoveryVerified ? mdiCheckCircleOutline : mdiRobotOutline"
+          role="status"
+          :title="activeTaskRecoveryTitle"
+          variant="tonal"
+        >
+          <p>{{ activeTask.recoveryNotice }}</p>
+          <p v-if="activeTaskRecoveryStatus">{{ activeTaskRecoveryStatus }}</p>
+        </v-alert>
         <div
           v-if="activeTask.messages.length === 0"
           class="vibe64-temporary-ai__empty"
@@ -124,8 +139,16 @@
         v-if="activeTask.error || activeTask.busy"
         class="vibe64-temporary-ai__feedback"
       >
-        <div v-if="activeTask.error" class="vibe64-temporary-ai__error" role="alert">
-          {{ activeTask.error }}
+        <div
+          v-if="activeTask.error"
+          class="vibe64-temporary-ai__error"
+          :class="{ 'vibe64-temporary-ai__error--recovered': activeTaskRecoveryVerified }"
+          :role="activeTaskRecoveryVerified ? 'status' : 'alert'"
+        >
+          <template v-if="activeTaskRecoveryVerified">
+            Temporary AI did not report a clean finish: {{ activeTask.error }} The repair was independently verified.
+          </template>
+          <template v-else>{{ activeTask.error }}</template>
         </div>
         <div
           v-if="activeTask.busy"
@@ -210,9 +233,11 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   mdiArrowUp,
+  mdiCheckCircleOutline,
   mdiClose,
   mdiPaperclip,
   mdiPlus,
+  mdiRobotOutline,
   mdiStopCircleOutline
 } from "@mdi/js";
 
@@ -224,7 +249,7 @@ import {
 } from "@/composables/useVibe64TemporaryAi.js";
 import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 
-const emit = defineEmits(["select-main-chat"]);
+const emit = defineEmits(["select-main-chat", "task-finished"]);
 const props = defineProps({
   agentSettings: {
     default: () => ({}),
@@ -251,8 +276,15 @@ const temporaryAiFeedback = useUiFeedback({
 const temporary = useVibe64TemporaryAi({
   agentSettings: computed(() => props.agentSettings),
   onTaskFinished(task = {}) {
+    emit("task-finished", task);
     if (task.status === "completed") {
-      temporaryAiFeedback.success(`${task.title} finished. Review the result before continuing.`);
+      temporaryAiFeedback.success(
+        task.completionMessage || `${task.title} finished. Review the result before continuing.`
+      );
+      return;
+    }
+    if (task.status === "failed" && task.failureMessage) {
+      temporaryAiFeedback.error(task.failureMessage);
       return;
     }
     temporaryAiFeedback.error(task.error, `${task.title} stopped with an error.`);
@@ -261,6 +293,48 @@ const temporary = useVibe64TemporaryAi({
   sessionsApiPath: resolvedSessionsApiPath
 });
 const activeTask = temporary.activeTask;
+const activeTaskRecoveryVerified = computed(() => (
+  activeTask.value?.recoveryOutcome === "succeeded"
+));
+const activeTaskRecoveryTitle = computed(() => {
+  if (activeTaskRecoveryVerified.value) {
+    return "Repair verified";
+  }
+  const status = String(activeTask.value?.status || "").trim();
+  if (["starting", "inProgress"].includes(status)) {
+    return "AI repair in progress";
+  }
+  if (status === "completed") {
+    return "AI repair finished";
+  }
+  if (status === "failed") {
+    return "AI repair needs attention";
+  }
+  if (status === "interrupted") {
+    return "AI repair stopped";
+  }
+  return "AI repair";
+});
+const activeTaskRecoveryStatus = computed(() => {
+  const task = activeTask.value || {};
+  if (task.recoveryOutcome === "succeeded") {
+    return task.recoveryOutcomeMessage || "Vibe64 independently verified that the repair succeeded.";
+  }
+  if (task.recoveryOutcome === "failed") {
+    return task.recoveryOutcomeMessage || "Vibe64 checked the repair, but the original operation still needs attention.";
+  }
+  const status = String(task.status || "").trim();
+  if (status === "completed") {
+    return task.completionMessage || "Temporary AI finished. Review its result below.";
+  }
+  if (status === "failed") {
+    return task.failureMessage || "Temporary AI stopped before it could confirm the repair. Review the error and progress below.";
+  }
+  if (status === "interrupted") {
+    return "You stopped this repair. You can continue in this temporary chat or return to Main chat.";
+  }
+  return task.nextStepMessage || "Follow progress here and reply below if Temporary AI needs a decision.";
+});
 const activeTaskActivityLabel = computed(() => {
   const updates = activeTask.value?.messages?.at(-1)?.progressUpdates;
   return updates?.at(-1)?.text || "Temporary AI is working...";
@@ -316,6 +390,16 @@ async function startTask(options = {}) {
     taskPrompt(taskId)?.clearAttachments?.();
   }
   return result;
+}
+
+function reportTaskRecovery(taskId = "", outcome = {}) {
+  const reported = temporary.reportRecoveryOutcome(taskId, outcome);
+  if (reported && outcome.status === "succeeded") {
+    temporaryAiFeedback.success(
+      outcome.message || "Vibe64 independently verified that the repair succeeded."
+    );
+  }
+  return reported;
 }
 
 function showWorkspace() {
@@ -388,6 +472,7 @@ watch(() => temporary.activeTaskId.value, (taskId) => {
 defineExpose({
   closeWorkspace: temporary.closeWorkspace,
   openTask: temporary.openTask,
+  reportTaskRecovery,
   startTask,
   showWorkspace
 });
@@ -499,6 +584,18 @@ defineExpose({
   padding: 0.55rem;
 }
 
+.vibe64-temporary-ai__recovery {
+  flex: 0 0 auto;
+}
+
+.vibe64-temporary-ai__recovery p {
+  margin: 0;
+}
+
+.vibe64-temporary-ai__recovery p + p {
+  margin-top: 0.3rem;
+}
+
 .vibe64-temporary-ai__empty {
   color: rgba(var(--v-theme-on-surface), 0.6);
   margin: auto;
@@ -555,6 +652,10 @@ defineExpose({
 .vibe64-temporary-ai__error {
   color: rgb(var(--v-theme-error));
   padding: 0.3rem 0.55rem;
+}
+
+.vibe64-temporary-ai__error--recovered {
+  color: rgba(var(--v-theme-on-surface), 0.66);
 }
 
 .vibe64-temporary-ai__activity {

@@ -5,7 +5,7 @@
     :class="{ 'vibe64-temporary-action-terminal__summary--error': Boolean(error) }"
     rounded="lg"
     color="surface-variant"
-    role="status"
+    :role="error ? 'alert' : 'status'"
   >
     <strong class="vibe64-temporary-action-terminal__title">{{ title }}</strong>
     <v-chip
@@ -20,6 +20,18 @@
       {{ summaryText }}
     </span>
     <div class="vibe64-temporary-action-terminal__actions">
+      <slot v-if="error" name="error-actions" />
+      <v-btn
+        v-if="error && retryable"
+        :aria-busy="starting ? 'true' : undefined"
+        :aria-label="`Retry ${title}`"
+        :disabled="starting"
+        :icon="mdiRefresh"
+        size="small"
+        :title="`Retry ${title}`"
+        variant="text"
+        @click="$emit('retry')"
+      />
       <v-btn
         :aria-label="`Show ${title} details`"
         :color="error ? 'error' : undefined"
@@ -72,7 +84,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
-import { mdiAlertCircleOutline, mdiClose, mdiConsoleLine } from "@mdi/js";
+import { mdiAlertCircleOutline, mdiClose, mdiConsoleLine, mdiRefresh } from "@mdi/js";
 import Vibe64TerminalSurface from "@/components/studio/Vibe64TerminalSurface.vue";
 import { terminalLastMeaningfulLine } from "@/lib/codexOutput.js";
 
@@ -207,11 +219,26 @@ watch(() => props.active, (active, previousActive) => {
 
 @media (max-width: 600px) {
   .vibe64-temporary-action-terminal__summary {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title actions"
+      "line line";
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .vibe64-temporary-action-terminal__status {
     display: none;
+  }
+
+  .vibe64-temporary-action-terminal__title {
+    grid-area: title;
+  }
+
+  .vibe64-temporary-action-terminal__line {
+    grid-area: line;
+  }
+
+  .vibe64-temporary-action-terminal__actions {
+    grid-area: actions;
   }
 }
 </style>

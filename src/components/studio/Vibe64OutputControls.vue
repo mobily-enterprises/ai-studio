@@ -227,17 +227,12 @@
                   v-if="previewIdentityFixAvailable"
                   class="vibe64-launch-controls__identity-recovery"
                 >
-                  <v-btn
-                    :aria-busy="previewIdentityFixSending ? 'true' : undefined"
-                    class="vibe64-launch-controls__recovery-action"
+                  <Vibe64TemporaryAiFixAction
                     :disabled="previewIdentityFixSending"
-                    size="small"
-                    type="button"
-                    variant="text"
+                    :pending="previewIdentityFixSending"
+                    title="Open Temporary AI to resolve preview identity"
                     @click="requestCodexPreviewIdentityFix"
-                  >
-                    {{ previewIdentityFixSending ? "Opening temporary AI…" : "Fix with temporary AI" }}
-                  </v-btn>
+                  />
                 </div>
               </v-card>
             </v-menu>
@@ -732,6 +727,7 @@ import {
   mdiWebClock
 } from "@mdi/js";
 import Vibe64LongRunningTerminal from "@/components/studio/Vibe64LongRunningTerminal.vue";
+import Vibe64TemporaryAiFixAction from "@/components/studio/Vibe64TemporaryAiFixAction.vue";
 import {
   useVibe64OutputControlsSurface
 } from "@/composables/useVibe64OutputControlsSurface.js";
@@ -1380,10 +1376,6 @@ onBeforeUnmount(() => {
   padding: 0 0.5rem 0.5rem;
 }
 
-.vibe64-launch-controls__recovery-action {
-  min-inline-size: 11.75rem;
-}
-
 .vibe64-launch-controls__attention-button {
   color: rgb(var(--v-theme-warning));
 }
@@ -1696,12 +1688,6 @@ onBeforeUnmount(() => {
   50% {
     opacity: 1;
     transform: scale(1) translateZ(0);
-  }
-}
-
-@media (pointer: coarse) {
-  .vibe64-launch-controls__recovery-action {
-    min-height: 3rem;
   }
 }
 

@@ -321,9 +321,16 @@ describe("useVibe64AssistantAccess", () => {
     expect(assistantMenuSource).toContain('active: catalogActive');
     expect(assistantMenuSource).toContain('provider.connected === true');
     expect(assistantMenuSource).toContain('model.status === "available"');
+    expect(assistantMenuSource).toContain("model.status !== 'available'");
+    expect(assistantMenuSource).toContain(':icon="mdiLockOutline"');
+    expect(assistantMenuSource).toContain('modelAccess.label');
+    expect(assistantMenuSource).toContain('Unlock paid models');
+    expect(assistantMenuSource).toContain('restoreRecommendedModel');
+    expect(assistantMenuSource).toContain('vibe64AssistantModelAccessPath');
     expect(assistantMenuSource).toContain('aria-label="Model"');
     expect(assistantMenuSource).toContain('aria-label="Thinking"');
     expect(assistantMenuSource).toContain('watch(assistantSelection, hydrateSelection, { immediate: true });');
+    expect(assistantMenuSource).toContain('void catalog.reload().catch(() => null);');
     expect(assistantMenuSource).not.toContain('<v-select');
     expect(assistantMenuSource).not.toContain('label="Agent"');
     expect(assistantMenuSource).toContain('v-if="canConfigure"');
@@ -335,6 +342,10 @@ describe("useVibe64AssistantAccess", () => {
     expect(assistantDialog).toContain('aria-label="Connected AI"');
     expect(assistantDialog).toContain('<v-radio-group');
     expect(assistantDialog).toContain('OpenCode · ${provider.label}');
+    expect(assistantDialog).toContain('preferred: provider.preferred === true');
+    expect(assistantDialog).toContain('Number(right.preferred) - Number(left.preferred)');
+    expect(assistantDialog).toContain('available.find((choice) => choice.preferred)?.id');
+    expect(assistantDialog).toContain('selectedChoiceId.value = defaultChoiceId();');
     expect(assistantDialog).toContain('type="list-item-two-line"');
     expect(assistantDialog).toContain('No AI is connected');
     expect(assistantDialog).not.toContain('Search providers');

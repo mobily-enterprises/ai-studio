@@ -28,6 +28,7 @@ import {
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_SUGGEST_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
   ACTION_UPDATE_ASSISTANT_SELECTION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,
@@ -37,6 +38,7 @@ import {
 import {
   agentMessageInputValidator,
   agentTurnInterruptInputValidator,
+  assistantModelAccessUpdateInputValidator,
   assistantSelectionUpdateInputValidator,
   messageSuggestionDecisionInputValidator,
   sessionRenewalDraftGuardInputValidator,
@@ -126,6 +128,14 @@ function registerRoutes(http, {
       });
     },
     summary: "Read the live assistant engine, provider, model, agent, and variant catalog."
+  });
+
+  routes.actionRoute("PATCH", "/assistants/model-access", {
+    actionId: ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
+    body: assistantModelAccessUpdateInputValidator,
+    bodyLimit: 8 * 1024,
+    buildInput: (request) => withVibe64User(request, routes.requestBody(request)),
+    summary: "Change the owner-controlled model access for an assistant provider."
   });
 
   routes.actionRoute("POST", "/sessions", {

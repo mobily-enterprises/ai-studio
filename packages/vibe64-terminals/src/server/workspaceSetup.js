@@ -449,7 +449,7 @@ function createWorkspaceSetupRunner({
           migrationTranscript,
           redactionSecrets
         ));
-        const migrationRuntime = vibe64RuntimePacks(["nodejs"]);
+        const migrationRuntime = vibe64RuntimePacks(["nodejs", "git"]);
         if (!migrationRuntime.available) {
           throw new Error(migrationRuntime.disabledReason);
         }
@@ -461,6 +461,7 @@ function createWorkspaceSetupRunner({
           command: "genesis",
           cwd: sourcePath,
           envPolicy: "project",
+          gitSafeDirectories: [sourcePath],
           mode: "capture",
           project: {
             runtimeConfigEnv: projectEnv

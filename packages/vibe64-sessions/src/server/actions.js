@@ -3,6 +3,7 @@ import {
   agentTurnInterruptActionInputValidator,
   assistantAccessActionInputValidator,
   assistantCapabilitiesInputValidator,
+  assistantModelAccessUpdateActionInputValidator,
   assistantSelectionUpdateActionInputValidator,
   currentSessionInputValidator,
   messageSuggestionActionInputValidator,
@@ -33,6 +34,7 @@ import {
 
 const ACTION_LIST_SESSIONS = "vibe64.sessions.list";
 const ACTION_LIST_ASSISTANT_CAPABILITIES = "vibe64.assistants.capabilities.list";
+const ACTION_UPDATE_ASSISTANT_MODEL_ACCESS = "vibe64.assistants.model-access.update";
 const ACTION_CREATE_SESSION = "vibe64.sessions.create";
 const ACTION_UPDATE_ASSISTANT_SELECTION = "vibe64.sessions.assistant-selection.update";
 const ACTION_UPDATE_CURRENT_SESSION = "vibe64.sessions.current.update";
@@ -138,6 +140,12 @@ function createSessionActions({ sessions } = {}) {
       kind: "query",
       input: assistantCapabilitiesInputValidator,
       execute: (input) => sessions.listAssistantCapabilities(input || {})
+    }),
+    action({
+      id: ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
+      kind: "command",
+      input: assistantModelAccessUpdateActionInputValidator,
+      execute: (input) => sessions.updateAssistantModelAccess(input || {})
     }),
     action({
       id: ACTION_CREATE_SESSION,
@@ -411,6 +419,7 @@ export {
   ACTION_SEND_AGENT_MESSAGE,
   ACTION_SUGGEST_AGENT_MESSAGE,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
   ACTION_UPDATE_ASSISTANT_SELECTION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,

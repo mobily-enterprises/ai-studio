@@ -51,7 +51,7 @@ describe("Vibe64 Repository workspace", () => {
       source("src/components/studio/vibe64-session/Vibe64AutopilotView.vue")
     ]);
 
-    expect(repositoryWorkspace).toContain("Fix with temporary AI");
+    expect(repositoryWorkspace).toContain("Vibe64TemporaryAiFixAction");
     expect(repositoryWorkspace).toContain(':disabled="resolvingUpdateProblem || dashboard.assistantDirectAllowed === false"');
     expect(repositoryWorkspace).toContain("dashboard.assistantRestrictionMessage");
     expect(repositoryWorkspace).not.toMatch(/resolve conflict manually|accept incoming|accept current/iu);

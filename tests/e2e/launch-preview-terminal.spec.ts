@@ -425,7 +425,7 @@ test("@preview-identity exposes exact app errors and remains recoverable on mobi
 
   await page.locator(".vibe64-launch-controls__identity-menu")
     .getByRole("button", {
-      name: "Fix with temporary AI",
+      name: "Fix it with AI",
       exact: true
     })
     .click();

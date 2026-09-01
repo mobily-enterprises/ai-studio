@@ -307,6 +307,30 @@ const assistantCapabilitiesInputValidator = patchSchema({
   }
 });
 
+const assistantModelAccessFields = {
+  engineId: {
+    type: "string",
+    enum: ["opencode"],
+    noTrim: false,
+    required: true
+  },
+  modelProviderId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  },
+  unlocked: {
+    type: "boolean",
+    required: true
+  }
+};
+
+const assistantModelAccessUpdateInputValidator = patchSchema(assistantModelAccessFields);
+const assistantModelAccessUpdateActionInputValidator = patchSchema({
+  ...assistantModelAccessFields,
+  ...optionalUser
+});
+
 const assistantSelectionUpdateInputValidator = patchSchema({
   assistantSelection: {
     type: "object",
@@ -519,6 +543,8 @@ export {
   agentMessageActionInputValidator,
   agentMessageInputValidator,
   assistantCapabilitiesInputValidator,
+  assistantModelAccessUpdateActionInputValidator,
+  assistantModelAccessUpdateInputValidator,
   assistantSelectionUpdateActionInputValidator,
   assistantSelectionUpdateInputValidator,
   agentTurnInterruptActionInputValidator,

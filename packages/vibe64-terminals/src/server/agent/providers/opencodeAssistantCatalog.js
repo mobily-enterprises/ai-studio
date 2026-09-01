@@ -68,21 +68,27 @@ function normalizedConnections(value = null) {
       ? {
           accessLabel: "",
           billingLabel: "",
+          builtIn: false,
           connected: true,
           defaultModelId: "",
           fingerprint: "",
           id: text(connection),
           label: text(connection),
+          modelAccess: null,
+          preferred: false,
           providerRevision: ""
         }
       : {
           accessLabel: text(connection?.accessLabel),
           billingLabel: text(connection?.billingLabel),
+          builtIn: connection?.builtIn === true,
           connected: connection?.connected !== false,
           defaultModelId: text(connection?.economyModelId || connection?.defaultModelId),
           fingerprint: text(connection?.fingerprint),
           id: text(connection?.modelProviderId || connection?.providerId || connection?.id),
           label: text(connection?.productLabel || connection?.label),
+          modelAccess: record(connection?.modelAccess),
+          preferred: connection?.preferred === true,
           providerRevision: text(connection?.providerRevision)
         })
     .filter((connection) => connection.id);
@@ -91,9 +97,11 @@ function normalizedConnections(value = null) {
 function openCodeConfiguredAssistantCapabilities({ connections = [] } = {}) {
   const providers = normalizedConnections(connections)
     .filter((connection) => connection.connected && connection.defaultModelId)
-    .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id))
+    .sort((left, right) => Number(right.preferred) - Number(left.preferred) ||
+      left.label.localeCompare(right.label) || left.id.localeCompare(right.id))
     .map((connection) => ({
       apiKeyCompatible: true,
+      builtIn: connection.builtIn,
       connected: true,
       connectionMessage: "",
       connectionStatus: "connected",
@@ -102,6 +110,7 @@ function openCodeConfiguredAssistantCapabilities({ connections = [] } = {}) {
       description: [connection.billingLabel, connection.accessLabel].filter(Boolean).join(" · "),
       id: connection.id,
       label: connection.label || connection.id,
+      modelAccess: connection.modelAccess,
       models: [{
         capabilities: {},
         description: "Saved default model",
@@ -109,14 +118,18 @@ function openCodeConfiguredAssistantCapabilities({ connections = [] } = {}) {
         label: connection.defaultModelId,
         status: "available",
         variants: []
-      }]
+      }],
+      preferred: connection.preferred
     }));
   const defaultProvider = providers[0] || null;
   const revision = `sha256:${createHash("sha256").update(JSON.stringify(
     normalizedConnections(connections).map((connection) => ({
       defaultModelId: connection.defaultModelId,
+      builtIn: connection.builtIn,
       fingerprint: connection.fingerprint,
       id: connection.id,
+      modelAccess: connection.modelAccess,
+      preferred: connection.preferred,
       providerRevision: connection.providerRevision
     }))
   )).digest("hex")}`;
@@ -191,29 +204,53 @@ function normalizedModel(model = {}) {
 
 function normalizedProvider(provider = {}, connectionById = new Map(), defaultModelId = "") {
   const id = text(provider.id);
-  const models = Object.values(record(provider.models))
+  const connection = connectionById.get(id);
+  const modelAccess = record(connection?.modelAccess);
+  const recommendedModelId = text(modelAccess.recommendedModelId);
+  const accessRestricted = modelAccess.mode === "recommended" && recommendedModelId;
+  const upstreamModels = Object.values(record(provider.models))
     .map(normalizedModel)
     .filter((model) => model.id)
     .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
+  const models = upstreamModels.map((model) => (
+    accessRestricted && model.id !== recommendedModelId && model.status === "available"
+      ? {
+        ...model,
+        lockMessage: text(modelAccess.warning) || "This model needs additional provider access.",
+        status: "locked"
+      }
+      : model
+  ));
   const upstreamDefaultModelId = text(defaultModelId);
+  const configuredDefaultModelId = text(connection?.defaultModelId);
+  const requestedDefaultModelId = accessRestricted
+    ? recommendedModelId
+    : configuredDefaultModelId || upstreamDefaultModelId;
   const resolvedDefaultModelId = models.some((model) => (
+    model.id === requestedDefaultModelId && model.status === "available"
+  )) ? requestedDefaultModelId : "";
+  const definitionDefaultModelId = upstreamModels.some((model) => (
     model.id === upstreamDefaultModelId && model.status === "available"
   )) ? upstreamDefaultModelId : "";
   const definitionRevision = `sha256:${createHash("sha256").update(JSON.stringify({
     apiKeyCompatible: provider.apiKeyCompatible === true,
-    defaultModelId: resolvedDefaultModelId,
+    defaultModelId: definitionDefaultModelId,
     id,
-    models: models.map((model) => ({
+    models: upstreamModels.map((model) => ({
       capabilities: model.capabilities,
       id: model.id,
       status: model.status,
       variants: model.variants.map((variant) => variant.id)
     }))
   })).digest("hex")}`;
-  const connection = connectionById.get(id);
-  const stale = Boolean(connection && connection.providerRevision !== definitionRevision);
+  const stale = Boolean(
+    connection &&
+    connection.builtIn !== true &&
+    connection.providerRevision !== definitionRevision
+  );
   return {
     apiKeyCompatible: provider.apiKeyCompatible === true,
+    builtIn: connection?.builtIn === true,
     connected: Boolean(connection) && !stale,
     connectionMessage: stale
       ? "This provider changed since its key was confirmed. Reconfirm the connection before use."
@@ -224,7 +261,9 @@ function normalizedProvider(provider = {}, connectionById = new Map(), defaultMo
     description: "OpenCode provider",
     id,
     label: text(provider.name) || id,
-    models
+    modelAccess,
+    models,
+    preferred: connection?.preferred === true
   };
 }
 
@@ -274,7 +313,8 @@ function openCodeAssistantCapabilities({
   const kind = requestedProviderId ? "models" : "providers";
   const limit = pageLimit(input.limit);
   const offset = decodedCursor(input.cursor, kind, requestedProviderId);
-  const defaultProvider = providers.find((provider) => provider.connected) || null;
+  const defaultProvider = providers.find((provider) => provider.connected && provider.preferred) ||
+    providers.find((provider) => provider.connected) || null;
   const upstreamDefaultModelId = text(defaultProvider?.defaultModelId);
   const defaultModel = defaultProvider?.models.find((model) => (
     model.id === upstreamDefaultModelId && model.status === "available"
@@ -317,7 +357,14 @@ function openCodeAssistantCapabilities({
   const revisionSource = {
     agents,
     connections: normalizedConnectionRows
-      .map((connection) => `${connection.id}:${connection.fingerprint}:${connection.providerRevision}`)
+      .map((connection) => JSON.stringify({
+        builtIn: connection.builtIn,
+        fingerprint: connection.fingerprint,
+        id: connection.id,
+        modelAccess: connection.modelAccess,
+        preferred: connection.preferred,
+        providerRevision: connection.providerRevision
+      }))
       .sort(),
     providers: providers.map((provider) => ({
       apiKeyCompatible: provider.apiKeyCompatible,

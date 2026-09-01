@@ -520,18 +520,22 @@ test.describe("direct chat", () => {
     {
       diagnostic: "Dependency installation exited with code 1.",
       expectedPrompt: [
-        "Workspace preparation needs attention:",
-        "Dependency installation exited with code 1.",
-        "Please diagnose and fix this in the current workspace, preserving the existing work. When it is fixed, tell me to retry workspace preparation."
+        "Workspace preparation needs attention.",
+        "Diagnostic:\nDependency installation exited with code 1.",
+        "Diagnose and repair the current workspace while preserving its existing work.",
+        "When your turn finishes, Vibe64 will automatically rerun its deterministic workspace preparation. Do not merely tell the user to retry.",
+        "If the repair needs information only the user can provide, ask for it in this temporary conversation."
       ].join("\n\n"),
       status: "failed"
     },
     {
       diagnostic: "Two Stack components declare different setup recipes.",
       expectedPrompt: [
-        "Workspace preparation needs attention:",
-        "Two Stack components declare different setup recipes.",
-        "Please diagnose and fix this in the current workspace, preserving the existing work. When it is fixed, tell me to retry workspace preparation."
+        "Workspace preparation needs attention.",
+        "Diagnostic:\nTwo Stack components declare different setup recipes.",
+        "Diagnose and repair the current workspace while preserving its existing work.",
+        "When your turn finishes, Vibe64 will automatically rerun its deterministic workspace preparation. Do not merely tell the user to retry.",
+        "If the repair needs information only the user can provide, ask for it in this temporary conversation."
       ].join("\n\n"),
       status: "ambiguous"
     }
@@ -546,7 +550,7 @@ test.describe("direct chat", () => {
       });
 
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
-      await page.getByRole("button", { name: "Fix with temporary AI", exact: true }).click();
+      await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
 
       await expectTemporaryRecovery(page, captured, {
         expectedPrompt: recovery.expectedPrompt,
@@ -592,7 +596,7 @@ test.describe("direct chat", () => {
       });
 
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
-      await page.getByRole("button", { name: "Fix with temporary AI", exact: true }).click();
+      await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
 
       await expectTemporaryRecovery(page, captured, {
         expectedPrompt: [

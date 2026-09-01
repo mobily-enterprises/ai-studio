@@ -8,6 +8,7 @@ import {
 
 const VIBE64_SESSIONS_API_SUFFIX = "/vibe64/sessions";
 const VIBE64_ASSISTANTS_API_SUFFIX = "/vibe64/assistants/capabilities";
+const VIBE64_ASSISTANT_MODEL_ACCESS_API_SUFFIX = "/vibe64/assistants/model-access";
 const VIBE64_CURRENT_SESSION_API_SUFFIX = `${VIBE64_SESSIONS_API_SUFFIX}/current`;
 const VIBE64_API_SUFFIX = "/vibe64";
 const VIBE64_SESSION_CHANGED_EVENT = "vibe64.session.changed";
@@ -51,6 +52,13 @@ function encodePathSegment(value = "") {
 
 function vibe64SessionPath(sessionsApiPath = "", sessionId = "", suffix = "") {
   return `${sessionsApiPath}/${encodePathSegment(sessionId)}${suffix}`;
+}
+
+function vibe64AssistantModelAccessPath(capabilitiesApiPath = "") {
+  return String(capabilitiesApiPath || "").replace(
+    /\/assistants\/capabilities(?=\?|#|$)/u,
+    "/assistants/model-access"
+  );
 }
 
 function vibe64RepositoryApiPath(sessionsApiPath = "") {
@@ -380,6 +388,7 @@ function agentSettingsInputFromContext(context = {}) {
 
 export {
   VIBE64_ASSISTANTS_API_SUFFIX,
+  VIBE64_ASSISTANT_MODEL_ACCESS_API_SUFFIX,
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_ERROR_EVENT,
@@ -394,6 +403,7 @@ export {
   vibe64AgentAttachmentDeletePath,
   vibe64AgentAttachmentPath,
   vibe64AssistantCapabilitiesQueryKey,
+  vibe64AssistantModelAccessPath,
   vibe64AgentTerminalControlTextPath,
   vibe64AgentSessionsReconcilePath,
   vibe64AgentTerminalPath,

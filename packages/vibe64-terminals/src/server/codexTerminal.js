@@ -1131,6 +1131,24 @@ function codexAppServerMessageRequiresNewTurn(session = {}, {
   }, session);
 }
 
+function codexAppServerThreadIsMissing(error = null, threadId = "") {
+  const normalizedThreadId = normalizeText(threadId).toLowerCase();
+  if (
+    !normalizedThreadId ||
+    !codexAppServerRequestIsInvalid(error, "thread/read")
+  ) {
+    return false;
+  }
+  // Codex also uses -32600 for unrelated invalid requests, so recovery must
+  // match both the missing-thread wording and the exact durable thread id.
+  const message = normalizeText(error?.message).toLowerCase();
+  return [
+    `thread not loaded: ${normalizedThreadId}`,
+    `thread ${normalizedThreadId} not found`,
+    `no rollout found for thread id ${normalizedThreadId}`
+  ].includes(message);
+}
+
 function codexAppServerMessageDeferred(session = {}, {
   threadId = "",
   turnId = ""
@@ -12144,9 +12162,28 @@ function createCodexTerminalController({
       });
       turn = codexAppServerTurnState(currentSession);
     }
-    await reconcileCodexAppServerThreadStatus(sessionId, provider, threadId, {
-      source: "message_delivery"
-    });
+    try {
+      await reconcileCodexAppServerThreadStatus(sessionId, provider, threadId, {
+        source: "message_delivery"
+      });
+    } catch (error) {
+      if (turn.active || !codexAppServerThreadIsMissing(error, threadId)) {
+        throw error;
+      }
+      vibe64SessionDebugLog("server.codexTerminal.appServerMessage.newTurn", {
+        error: vibe64SessionDebugError(error),
+        messageId,
+        reason: "provider_thread_missing",
+        sessionId,
+        threadId,
+        turnId: normalizeText(turn.turnId)
+      });
+      return codexAppServerMessageRequiresNewTurn(currentSession, {
+        reason: "provider_thread_missing",
+        threadId,
+        turnId: normalizeText(turn.turnId)
+      });
+    }
     vibe64SessionDebugLog("server.codexTerminal.appServerMessage.reconciled", {
       durationMs: Date.now() - providerReadyAt,
       messageId,

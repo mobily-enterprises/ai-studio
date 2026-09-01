@@ -10,6 +10,8 @@ and see whether the Studio host is ready to support them.
 - `packages/vibe64-accounts/src/client/composables/useAccountAuthSessions.js`
 - `packages/vibe64-execution/src/server/engines/helperClient.js`
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
+- `packages/vibe64-sessions/src/server/registerRoutes.js`
+- `packages/vibe64-sessions/src/server/service.js`
 - `packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-terminals/src/server/opencodeServerClient.js`
@@ -48,6 +50,16 @@ definition revisions, and whether Vibe64's one-key connection flow is
 compatible, but never raw environment names, credentials, request options,
 headers, costs, or upstream connection state. Malformed and empty registries
 fail instead of becoming an authoritative empty catalogue.
+
+The host may contribute redacted connection metadata that marks a connection
+as built in, identifies the preferred new-session provider, and restricts it to
+one recommended model. The sanitized catalogue keeps other live models visible
+with a locked status and host-supplied explanation, while selection resolution
+accepts only available models. A generic owner-authenticated model-access
+operation delegates a warned unlock or relock to the host; public Vibe64 does
+not name a private provider policy or store provider credentials. Runtime
+admission remains a separate host check, so a durable selection cannot bypass a
+later relock.
 
 The short-lived credential-free catalogue snapshot is independent of
 credential-bearing assistant runtimes. Replacing or removing a connection

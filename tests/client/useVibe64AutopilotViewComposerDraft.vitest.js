@@ -732,7 +732,10 @@ describe("useVibe64AutopilotView direct chat", () => {
     ["ambiguous", "Workspace setup needs a choice", "Two Stack components declare different setup recipes."]
   ])("routes %s workspace recovery through Temporary AI", async (status, title, diagnostic) => {
     const sendAgentMessage = vi.fn(async () => true);
-    const requestTemporaryAi = vi.fn(async () => ({ ok: true }));
+    const requestTemporaryAi = vi.fn(async () => ({
+      ok: true,
+      taskId: "workspace-fix-1"
+    }));
     const view = await createView({
       sendAgentMessage,
       session: {
@@ -752,14 +755,68 @@ describe("useVibe64AutopilotView direct chat", () => {
     await expect(view.askCodexToFixWorkspaceSetup()).resolves.toBe(true);
 
     expect(requestTemporaryAi).toHaveBeenCalledWith(expect.objectContaining({
+      completionMessage: "AI repair finished. Vibe64 is verifying workspace preparation now.",
       dedupeKey: expect.stringContaining(`workspace-setup|session-1|${status}|`),
+      displayMessage: "Fix workspace preparation.",
+      failureMessage: expect.stringContaining("Vibe64 is checking whether its edits repaired"),
       message: expect.stringContaining(diagnostic),
+      nextStepMessage: expect.stringContaining("automatically retry workspace preparation"),
       policy: "workspace_write",
+      recoveryNotice: expect.stringContaining("separate temporary chat"),
       title: "Fix workspace preparation"
     }));
-    expect(requestTemporaryAi.mock.calls[0][0].message).toContain("preserving the existing work");
+    expect(requestTemporaryAi.mock.calls[0][0].message).toContain("preserving its existing work");
+    expect(requestTemporaryAi.mock.calls[0][0].message).toContain(
+      "Vibe64 will automatically rerun its deterministic workspace preparation"
+    );
     expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(view.chatTurns.value).toEqual(originalTurns);
+  });
+
+  it("reruns deterministic workspace preparation after its Temporary AI repair completes or times out", async () => {
+    const retryWorkspaceSetup = vi.fn(async () => true);
+    const requestTemporaryAi = vi.fn(async () => ({
+      ok: true,
+      taskId: "workspace-fix-1"
+    }));
+    const view = await createView({
+      retryWorkspaceSetup,
+      session: {
+        ...viewProps().session,
+        workspaceSetup: {
+          diagnostic: "The deployment command is not configured.",
+          status: "failed",
+          transcript: "[Inspect deployment] Failed."
+        }
+      }
+    }, { requestTemporaryAi });
+
+    await expect(view.askCodexToFixWorkspaceSetup()).resolves.toBe(true);
+    expect(requestTemporaryAi.mock.calls[0][0].message).toContain(
+      "Recent preparation output:\n[Inspect deployment] Failed."
+    );
+    await expect(view.handleTemporaryAiTaskFinished({
+      id: "another-task",
+      status: "completed"
+    })).resolves.toBe(false);
+    await expect(view.handleTemporaryAiTaskFinished({
+      id: "workspace-fix-1",
+      status: "failed"
+    })).resolves.toBe(true);
+    expect(retryWorkspaceSetup).toHaveBeenCalledTimes(1);
+
+    await expect(view.handleTemporaryAiTaskFinished({
+      id: "workspace-fix-1",
+      status: "completed"
+    })).resolves.toBe(false);
+    expect(retryWorkspaceSetup).toHaveBeenCalledTimes(1);
+
+    await expect(view.askCodexToFixWorkspaceSetup()).resolves.toBe(true);
+    await expect(view.handleTemporaryAiTaskFinished({
+      id: "workspace-fix-1",
+      status: "completed"
+    })).resolves.toBe(true);
+    expect(retryWorkspaceSetup).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a workspace recovery action pending and ignores a rapid duplicate activation", async () => {
@@ -1045,9 +1102,7 @@ describe("useVibe64AutopilotView direct chat", () => {
       error: "Codex app-server connection closed during thread reconciliation.",
       status: "failed"
     });
-    expect(view.composerError.value).toBe(
-      "Codex app-server connection closed during thread reconciliation."
-    );
+    expect(view).not.toHaveProperty("composerError");
   });
 
   it("raises structured execution attention when assistant ownership blocks a send", async () => {

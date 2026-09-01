@@ -132,12 +132,15 @@ const props = defineProps({
 const emit = defineEmits(["created", "update:model-value"]);
 const selectedChoiceId = ref("");
 const submitButton = ref(null);
+let catalogReloadId = 0;
 
 const catalog = useVibe64AssistantCatalog({
   active: true,
   configuredOnly: true
 });
-const loading = computed(() => catalog.overview.isInitialLoading.value === true);
+const loading = computed(() => Boolean(
+  catalog.overview.isInitialLoading.value || catalog.overview.isLoading.value
+));
 const loadError = computed(() => String(catalog.overview.loadError.value || ""));
 const submitting = computed(() => props.toolbar.createSessionRunning === true);
 
@@ -184,6 +187,7 @@ function configuredChoice(engine = {}, provider = {}) {
     engineId: engine.engineId,
     id,
     label: engine.engineId === "codex" ? "Codex" : `OpenCode · ${provider.label}`,
+    preferred: provider.preferred === true,
     selection: {
       agentId: agent.id,
       catalogRevision: engine.revision,
@@ -199,10 +203,14 @@ const choices = computed(() => catalog.engines.value.flatMap((engine) => (
   (Array.isArray(engine.modelProviders) ? engine.modelProviders : [])
     .map((provider) => configuredChoice(engine, provider))
     .filter(Boolean)
-)));
+)).sort((left, right) => Number(right.preferred) - Number(left.preferred)));
 const selectedChoice = computed(() => choices.value.find((choice) => (
   choice.id === selectedChoiceId.value
 )) || null);
+
+function defaultChoiceId(available = choices.value) {
+  return available.find((choice) => choice.preferred)?.id || available[0]?.id || "";
+}
 
 function openConnectionSettings() {
   requestVibe64AccountConnectionsDialog({ section: "ai" });
@@ -231,14 +239,25 @@ async function submit() {
 }
 
 watch(choices, (available) => {
-  if (!available.some((choice) => choice.id === selectedChoiceId.value)) {
-    selectedChoiceId.value = available[0]?.id || "";
+  if (
+    !available.some((choice) => choice.id === selectedChoiceId.value) ||
+    !props.modelValue
+  ) {
+    selectedChoiceId.value = defaultChoiceId(available);
   }
 }, { immediate: true });
 
-watch(() => props.modelValue, (open) => {
-  if (open) {
-    void catalog.overview.reload();
+watch(() => props.modelValue, async (open) => {
+  const reloadId = ++catalogReloadId;
+  if (!open) return;
+  selectedChoiceId.value = defaultChoiceId();
+  try {
+    await catalog.overview.reload();
+  } catch {
+    // The catalogue resource owns its visible retry state.
+  }
+  if (reloadId === catalogReloadId && props.modelValue) {
+    selectedChoiceId.value = defaultChoiceId();
   }
 }, { immediate: true });
 

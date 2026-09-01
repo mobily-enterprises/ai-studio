@@ -28,6 +28,7 @@ import {
   ACTION_CHECK_SESSION_UPDATES,
   ACTION_UPDATE_SESSION_WORK,
   ACTION_UPDATE_CURRENT_SESSION,
+  ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
   ACTION_UPDATE_ASSISTANT_SELECTION,
   ACTION_UPDATE_SESSION_RENEWAL_DRAFT,
   ACTION_UPDATE_SESSION_PRESENCE,
@@ -224,6 +225,7 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
     ACTION_LIST_SESSIONS,
     ACTION_LIST_ASSISTANT_CAPABILITIES,
+    ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
     ACTION_CREATE_SESSION,
     ACTION_UPDATE_CURRENT_SESSION,
     ACTION_INSPECT_SESSION,
@@ -2261,7 +2263,7 @@ test("session creation resolves a partial selection before checking access", asy
   assert.equal(harness.openSessions.length, 0);
 });
 
-test("assistant selection resolves partial UI input before checking access", async () => {
+test("assistant selection can recover from an unavailable current choice before checking target access", async () => {
   const lock = agentWriteLockHarness();
   const metadataWrites = [];
   let agentStateCalls = 0;
@@ -2311,10 +2313,8 @@ test("assistant selection resolves partial UI input before checking access", asy
         agentStateCalls += 1;
         return null;
       },
-      async requireAssistantAccess(sessionId, options) {
-        assert.equal(sessionId, "session-1");
-        assert.equal(options.vibe64User.username, "member");
-        return { ownerOnly: false };
+      async requireAssistantAccess() {
+        throw new Error("The unavailable current selection must not block recovery.");
       },
       async requireAssistantSelectionAccess(selection, options) {
         assert.deepEqual(selection, requestedSelection);
@@ -2342,6 +2342,38 @@ test("assistant selection resolves partial UI input before checking access", asy
   assert.equal(catalogResolutions, 1);
   assert.equal(agentStateCalls, 0);
   assert.deepEqual(metadataWrites, []);
+});
+
+test("assistant model-access updates delegate the authenticated owner to the host seam", async () => {
+  const calls = [];
+  const service = createService({
+    project: {},
+    terminals: {
+      async updateAssistantModelAccess(input, options) {
+        calls.push({ input, options });
+        return { connection: { id: input.modelProviderId }, ok: true };
+      }
+    }
+  });
+
+  const result = await service.updateAssistantModelAccess({
+    engineId: "opencode",
+    modelProviderId: "zai",
+    unlocked: true,
+    vibe64User: { role: "owner", username: "ada" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{
+    input: {
+      engineId: "opencode",
+      modelProviderId: "zai",
+      unlocked: true
+    },
+    options: {
+      vibe64User: { role: "owner", username: "ada" }
+    }
+  }]);
 });
 
 test("session responses enforce the ordinary three-session policy on the server", async () => {

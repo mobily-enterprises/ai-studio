@@ -63,7 +63,7 @@ async function temporaryAiWithDraft() {
   return { task, temporary };
 }
 
-async function temporaryAiWithFinishedObserver(onTaskFinished) {
+async function temporaryAiWithFinishedObserver(onTaskFinished, taskOptions = {}) {
   const { useVibe64TemporaryAi } = await import(
     "../../src/composables/useVibe64TemporaryAi.js"
   );
@@ -72,7 +72,7 @@ async function temporaryAiWithFinishedObserver(onTaskFinished) {
     sessionId: () => "session-1",
     sessionsApiPath: () => "/api/vibe64/sessions"
   });
-  const task = temporary.openTask({ title: "Resolve Update" });
+  const task = temporary.openTask({ title: "Resolve Update", ...taskOptions });
   temporary.updateDraft(task.id, "Resolve this conflict safely.");
   return { task, temporary };
 }
@@ -102,9 +102,14 @@ describe("useVibe64TemporaryAi", () => {
     temporary.closeWorkspace();
 
     const sending = temporary.startTask({
+      completionMessage: "Repair finished. Vibe64 is verifying it.",
       dedupeKey: "workspace-preparation:session-1",
-      draft: "Fix workspace preparation.",
+      displayMessage: "Fix workspace preparation.",
+      failureMessage: "The AI stopped. Vibe64 is checking its edits.",
+      message: "Inspect the full workspace diagnostic and repair the invalid contract.",
+      nextStepMessage: "Vibe64 will verify the repair when the AI finishes.",
       policy: "workspace_write",
+      recoveryNotice: "Temporary AI can edit this session in a separate temporary chat.",
       title: "Fix workspace preparation"
     });
 
@@ -112,9 +117,13 @@ describe("useVibe64TemporaryAi", () => {
     expect(temporary.tasks.value).toHaveLength(2);
     expect(temporary.activeTask.value).toMatchObject({
       busy: true,
+      completionMessage: "Repair finished. Vibe64 is verifying it.",
       dedupeKey: "workspace-preparation:session-1",
       draft: "",
+      failureMessage: "The AI stopped. Vibe64 is checking its edits.",
+      nextStepMessage: "Vibe64 will verify the repair when the AI finishes.",
       policy: "workspace_write",
+      recoveryNotice: "Temporary AI can edit this session in a separate temporary chat.",
       status: "starting",
       title: "Fix workspace preparation"
     });
@@ -134,7 +143,7 @@ describe("useVibe64TemporaryAi", () => {
     expect(turnRequests).toHaveLength(1);
     expect(turnRequests[0][1]).toMatchObject({
       body: {
-        message: "Fix workspace preparation.",
+        message: "Inspect the full workspace diagnostic and repair the invalid contract.",
         policy: "workspace_write",
         promptLabel: "Fix workspace preparation"
       },
@@ -144,6 +153,26 @@ describe("useVibe64TemporaryAi", () => {
       role: "user",
       text: "Fix workspace preparation."
     });
+  });
+
+  it("records an independent product recovery outcome without rewriting the AI result", async () => {
+    const temporary = await temporaryAi();
+    const task = temporary.openTask({
+      recoveryNotice: "Temporary AI can edit this session.",
+      title: "Fix workspace preparation"
+    });
+
+    expect(temporary.reportRecoveryOutcome(task.id, {
+      message: "Workspace preparation succeeded.",
+      status: "succeeded"
+    })).toBe(true);
+    expect(temporary.activeTask.value).toMatchObject({
+      recoveryOutcome: "succeeded",
+      recoveryOutcomeMessage: "Workspace preparation succeeded.",
+      status: "ready"
+    });
+    expect(temporary.reportRecoveryOutcome(task.id, { status: "unknown" })).toBe(false);
+    expect(temporary.reportRecoveryOutcome("missing", { status: "succeeded" })).toBe(false);
   });
 
   it("coalesces rapid recovery starts with the same dedupe key", async () => {
@@ -664,14 +693,19 @@ describe("useVibe64TemporaryAi", () => {
         status: "completed"
       }
     );
-    const { task, temporary } = await temporaryAiWithFinishedObserver(onTaskFinished);
+    const { task, temporary } = await temporaryAiWithFinishedObserver(onTaskFinished, {
+      completionMessage: "Repair complete. Retry Update.",
+      failureMessage: "Repair stopped. Review the error."
+    });
 
     await temporary.send(task.id);
     await flushPromises();
 
     expect(onTaskFinished).toHaveBeenCalledTimes(1);
     expect(onTaskFinished).toHaveBeenCalledWith({
+      completionMessage: "Repair complete. Retry Update.",
       error: "",
+      failureMessage: "Repair stopped. Review the error.",
       id: task.id,
       status: "completed",
       title: "Resolve Update"

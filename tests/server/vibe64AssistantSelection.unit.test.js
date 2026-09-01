@@ -52,6 +52,45 @@ test("assistant capabilities preserve each provider's native default model", () 
   assert.equal(defined.modelProviders[0].apiKeyCompatible, true);
 });
 
+test("assistant capabilities preserve preferred-provider and locked-model guidance", () => {
+  const value = capabilities();
+  value.modelProviders[0] = {
+    ...value.modelProviders[0],
+    builtIn: true,
+    modelAccess: {
+      configurable: true,
+      label: "Unlock all models",
+      mode: "recommended",
+      recommendedModelId: "deepseek-chat",
+      warning: "Paid credit is required."
+    },
+    preferred: true,
+    models: [
+      ...value.modelProviders[0].models,
+      {
+        id: "deepseek-paid",
+        label: "DeepSeek Paid",
+        lockMessage: "Unlock paid models first.",
+        status: "locked"
+      }
+    ]
+  };
+  const defined = defineVibe64AssistantCapabilities(value);
+
+  assert.equal(defined.modelProviders[0].builtIn, true);
+  assert.equal(defined.modelProviders[0].preferred, true);
+  assert.equal(defined.modelProviders[0].modelAccess.mode, "recommended");
+  assert.equal(defined.modelProviders[0].models[1].lockMessage, "Unlock paid models first.");
+  assert.throws(
+    () => resolveVibe64AssistantSelection(value, {
+      engineId: "opencode",
+      modelId: "deepseek-paid",
+      variantId: ""
+    }),
+    (error) => error.code === VIBE64_ASSISTANT_SELECTION_ERROR_CODES.UNAVAILABLE
+  );
+});
+
 test("assistant selection resolves omitted fields from one live catalog revision", () => {
   const resolved = resolveVibe64AssistantSelection(capabilities(), {
     engineId: "opencode"

@@ -109,22 +109,15 @@
         title="Project updates need attention"
       >
         <template #actions>
-          <v-btn
+          <Vibe64TemporaryAiFixAction
             v-if="canResolveUpdateWithTemporaryAi && typeof dashboard.requestTemporaryAi === 'function'"
-            :aria-busy="resolvingUpdateProblem ? 'true' : undefined"
-            class="vibe64-repository-workspace__recovery-action"
             :disabled="resolvingUpdateProblem || dashboard.assistantDirectAllowed === false"
-            :prepend-icon="mdiRobotOutline"
-            size="small"
+            :pending="resolvingUpdateProblem"
             :title="dashboard.assistantDirectAllowed === false
               ? dashboard.assistantRestrictionMessage
               : 'Open temporary AI to resolve this repository update'"
-            type="button"
-            variant="tonal"
             @click="resolveUpdateProblem"
-          >
-            {{ resolvingUpdateProblem ? "Opening temporary AI…" : "Fix with temporary AI" }}
-          </v-btn>
+          />
         </template>
       </StudioErrorNotice>
 
@@ -342,12 +335,12 @@ import {
   mdiClose,
   mdiCloudRefreshOutline,
   mdiContentSaveOutline,
-  mdiRobotOutline,
   mdiSourceCommit,
   mdiSourceMerge,
   mdiSourcePull
 } from "@mdi/js";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
+import Vibe64TemporaryAiFixAction from "@/components/studio/Vibe64TemporaryAiFixAction.vue";
 import Vibe64RepositoryFileBrowser from "@/components/studio/repository/Vibe64RepositoryFileBrowser.vue";
 import { useVibe64RepositoryWorkspace } from "@/composables/useVibe64RepositoryWorkspace.js";
 import { repositoryUpdateRelationship } from "@local/vibe64-core/shared";
@@ -674,10 +667,6 @@ function closeVersion() {
 .vibe64-repository-workspace__header h1 {
   font-size: clamp(1.35rem, 2vw, 1.8rem);
   font-weight: 720;
-}
-
-.vibe64-repository-workspace__recovery-action {
-  min-inline-size: 11.75rem;
 }
 
 .vibe64-repository-workspace__header p,
@@ -1030,9 +1019,4 @@ function closeVersion() {
   }
 }
 
-@media (pointer: coarse) {
-  .vibe64-repository-workspace__recovery-action {
-    min-height: 3rem;
-  }
-}
 </style>

@@ -212,9 +212,15 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       pieces: ["jskit"],
       projectRoot: sourceRoot
     });
+    const stackPath = path.join(sourceRoot, "genesis", "stack.md");
+    const stack = await readFile(stackPath, "utf8");
+    const outputsStart = stack.indexOf("## Outputs\n");
+    const outputsEnd = stack.indexOf("\n## ", outputsStart + 1);
+    assert.notEqual(outputsStart, -1);
+    assert.notEqual(outputsEnd, -1);
     await writeFile(
-      path.join(sourceRoot, "genesis", "stack.md"),
-      `${await readFile(path.join(sourceRoot, "genesis", "stack.md"), "utf8")}\n## Outputs\n\n### Target \`app\`: Run app\n\n- Default.\n- Mode: \`interactive\`\n- Runtimes: \`nodejs\`\n- Run \`Develop\`: \`npm\` \`run\` \`develop\`\n\n#### Presentation\n\n- Kind: \`web\`\n- Preferred port: \`3000\`\n- URL path: \`/\`\n- Ready when: \`GET\` \`/api/health\` returns \`200\`\n`,
+      stackPath,
+      `${stack.slice(0, outputsStart)}## Outputs\n\n### Target \`app\`: Run app\n\n- Default.\n- Mode: \`interactive\`\n- Runtimes: \`nodejs\`\n- Run \`Develop\`: \`npm\` \`run\` \`develop\`\n\n#### Presentation\n\n- Kind: \`web\`\n- Preferred port: \`3000\`\n- URL path: \`/\`\n- Ready when: \`GET\` \`/api/health\` returns \`200\`\n${stack.slice(outputsEnd)}`,
       "utf8"
     );
     const currentSetup = await inspectVibe64WorkspaceSetup({

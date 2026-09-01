@@ -1046,6 +1046,24 @@ function createService({
       }, "Vibe64 could not read the current assistant catalog.");
     },
 
+    async updateAssistantModelAccess(input = {}) {
+      return sessionResult(async () => {
+        if (typeof terminals.updateAssistantModelAccess !== "function") {
+          const error = new Error("This Vibe64 host does not support changing provider model access.");
+          error.code = "vibe64_assistant_model_access_unavailable";
+          error.statusCode = 503;
+          throw error;
+        }
+        return terminals.updateAssistantModelAccess({
+          engineId: text(input.engineId),
+          modelProviderId: text(input.modelProviderId),
+          unlocked: input.unlocked === true
+        }, {
+          vibe64User: trustedAssistantUser(input)
+        });
+      }, "Vibe64 could not change this provider's model access.");
+    },
+
     async inspectSessionWork(sessionId) {
       return sessionResult(async () => {
         const runtime = await project.createRuntime({
@@ -1781,11 +1799,6 @@ function createService({
         const runtime = await project.createRuntime({ inspectSource: false });
         const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
           const session = await runtime.getSession(sessionId, { inspectSource: false });
-          await terminals.requireAssistantAccess(sessionId, {
-            runtime,
-            session,
-            vibe64User
-          });
           const current = vibe64AssistantSelectionFromMetadata(session.metadata);
           const requested = {
             ...record(input.assistantSelection),

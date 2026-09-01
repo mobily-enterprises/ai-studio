@@ -1933,6 +1933,116 @@ test("duplicate agent messages with the same message id call the provider once",
   });
 });
 
+test("an idle message replaces a provider thread that is no longer loaded", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+
+    const provider = captures.provider;
+    const staleThreadId = prepared.codexThreadId;
+    const replacementThreadId = "22222222-2222-4222-8222-222222222222";
+    const originalReadThread = provider.readThread.bind(provider);
+    const missingThreadError = (method) => {
+      const error = new Error(`thread not loaded: ${staleThreadId}`);
+      error.code = -32600;
+      error.method = method;
+      return error;
+    };
+    provider.readThreadStatus = async (threadId = provider.threadId) => {
+      if (threadId === staleThreadId) {
+        throw missingThreadError("thread/read");
+      }
+      return {
+        status: provider.status,
+        turnId: provider.turnId
+      };
+    };
+    provider.readThread = async (threadId = provider.threadId) => {
+      if (threadId === staleThreadId) {
+        throw missingThreadError("thread/read");
+      }
+      return originalReadThread(threadId);
+    };
+    provider.resumeThread = async (threadId, settings = {}) => {
+      if (threadId === staleThreadId) {
+        throw missingThreadError("thread/resume");
+      }
+      provider.threadId = threadId;
+      provider.threadCwd = settings.cwd || provider.threadCwd;
+      return { id: threadId };
+    };
+    provider.startThread = async (settings = {}) => {
+      captures.threadStarts.push(settings);
+      provider.threadCwd = settings.cwd || provider.threadCwd;
+      provider.threadId = replacementThreadId;
+      captures.sessionThreadIds.push(replacementThreadId);
+      return { id: replacementThreadId };
+    };
+    captures.onSendTurn = ({ provider: activeProvider, turnId }) => {
+      const turn = captures.turns.find((candidate) => candidate.turnId === turnId);
+      if (turn?.input.includes("VIBE64_CONTEXT_RECOVERY:")) {
+        completeAgentMessageHarnessTurn(
+          captures,
+          activeProvider,
+          turnId,
+          "Recovered the persisted Vibe64 conversation."
+        );
+      }
+    };
+
+    const result = await controller.sendMessage(sessionId, {
+      message: "Continue after the missing provider thread.",
+      messageId: "message-after-missing-thread"
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.deliveryMode, "new_turn");
+    assert.equal(result.codexThreadId, replacementThreadId);
+    assert.equal(result.turnId, "turn-2");
+    assert.equal(captures.turns.length, 2);
+    assert.match(captures.turns[0].input, /VIBE64_CONTEXT_RECOVERY:/u);
+    assert.match(captures.turns[1].input, /Continue after the missing provider thread\./u);
+
+    const recoveredSession = await store.readSession(sessionId);
+    assert.equal(
+      recoveredSession.metadata.agent_identity_conversation_id,
+      replacementThreadId
+    );
+    assert.equal(
+      recoveredSession.metadata.codex_app_server_replaced_thread_id,
+      staleThreadId
+    );
+    assert.equal(
+      await store.conversationMessageIdExists(
+        sessionId,
+        "message-after-missing-thread"
+      ),
+      true
+    );
+  });
+});
+
+test("an idle message does not replace a thread for an unrelated invalid request", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId }) => {
+    const prepared = await controller.ensureThread(sessionId);
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    captures.provider.readThreadStatus = async () => {
+      const error = new Error("invalid thread/read configuration");
+      error.code = -32600;
+      error.method = "thread/read";
+      throw error;
+    };
+
+    const result = await controller.sendMessage(sessionId, {
+      message: "Do not duplicate this work.",
+      messageId: "message-invalid-read"
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /invalid thread\/read configuration/u);
+    assert.equal(captures.turns.length, 0);
+    assert.equal(captures.threadStarts.length, 1);
+  });
+});
+
 test("Codex renders only opening and explicit Deslop prompts through Genesis", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
     const waitForIdle = (turnId) => waitForSessionValue(
