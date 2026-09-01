@@ -1,12 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick, ref } from "vue";
+import { VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT } from "../../src/lib/vibe64SessionRequestConfig.js";
 
 const mocks = vi.hoisted(() => ({
   changes: null,
+  changesHandler: null,
+  diff: null,
   historyUpdateCheck: null,
   updateCheckHandler: null,
   updateCheck: null,
+  realtimeEvents: [],
   requestCalls: []
+}));
+
+vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
+  useRealtimeEvent(options = {}) {
+    mocks.realtimeEvents.push(options);
+  }
 }));
 
 vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
@@ -40,7 +50,19 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
             ...(mocks.updateCheck || mocks.historyUpdateCheck || {})
           };
         }
+        if (String(path).includes("/changes/diff")) {
+          return {
+            diff: "",
+            ok: true,
+            path: "",
+            ...(mocks.diff || {})
+          };
+        }
+        if (typeof mocks.changesHandler === "function" && String(path).includes("/changes")) {
+          return mocks.changesHandler(path, options);
+        }
         return {
+          canonicalCommit: "a".repeat(40),
           files: [],
           ok: true,
           totalCount: 0,
@@ -53,17 +75,20 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
 }));
 
 async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe("useVibe64RepositoryWorkspace", () => {
   beforeEach(() => {
     mocks.changes = null;
+    mocks.changesHandler = null;
+    mocks.diff = null;
     mocks.historyUpdateCheck = null;
     mocks.updateCheckHandler = null;
     mocks.updateCheck = null;
+    mocks.realtimeEvents.length = 0;
     mocks.requestCalls.length = 0;
   });
 
@@ -102,10 +127,10 @@ describe("useVibe64RepositoryWorkspace", () => {
     await flushPromises();
 
     expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
-      "/api/app/sample/vibe64/sessions/session-1/updates/check",
-      "/api/app/sample/vibe64/sessions/session-1/changes"
+      "/api/app/sample/vibe64/sessions/session-1/changes",
+      "/api/app/sample/vibe64/sessions/session-1/updates/check"
     ]);
-    expect(mocks.requestCalls[0].options).toMatchObject({
+    expect(mocks.requestCalls[1].options).toMatchObject({
       body: { force: false },
       method: "POST"
     });
@@ -125,6 +150,7 @@ describe("useVibe64RepositoryWorkspace", () => {
   it("reuses the Current Changes snapshot as the selected session work state", async () => {
     mocks.changes = {
       changedPaths: ["src/app.js"],
+      initialDiff: { diff: "+change", path: "src/app.js" },
       sessionId: "session-1",
       unsaved: true
     };
@@ -147,6 +173,7 @@ describe("useVibe64RepositoryWorkspace", () => {
       sessionId: "session-1",
       unsaved: true
     }));
+    expect(refreshSessionWork.mock.calls[0][0]).not.toHaveProperty("initialDiff");
   });
 
   it("restores the last successful update check while loading repository history", async () => {
@@ -253,8 +280,8 @@ describe("useVibe64RepositoryWorkspace", () => {
     await nextTick();
     await flushPromises();
     expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
-      "/api/app/sample/vibe64/sessions/session-1/updates/check",
-      "/api/app/sample/vibe64/sessions/session-1/changes"
+      "/api/app/sample/vibe64/sessions/session-1/changes",
+      "/api/app/sample/vibe64/sessions/session-1/updates/check"
     ]);
     const cachedUpdate = workspace.updates.payload;
 
@@ -272,8 +299,8 @@ describe("useVibe64RepositoryWorkspace", () => {
     await nextTick();
     await flushPromises();
     expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
-      "/api/app/sample/vibe64/sessions/session-1/updates/check",
-      "/api/app/sample/vibe64/sessions/session-1/changes"
+      "/api/app/sample/vibe64/sessions/session-1/changes",
+      "/api/app/sample/vibe64/sessions/session-1/updates/check"
     ]);
   });
 
@@ -293,7 +320,11 @@ describe("useVibe64RepositoryWorkspace", () => {
     }), { view: ref("changes") });
 
     await nextTick();
-    expect(mocks.requestCalls).toHaveLength(1);
+    await flushPromises();
+    expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
+      "/api/app/sample/vibe64/sessions/session-1/changes",
+      "/api/app/sample/vibe64/sessions/session-1/updates/check"
+    ]);
     sourceOperationsSuspended.value = true;
     await nextTick();
     finishFirstCheck({
@@ -312,9 +343,10 @@ describe("useVibe64RepositoryWorkspace", () => {
     await nextTick();
     await flushPromises();
     expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
+      "/api/app/sample/vibe64/sessions/session-1/changes",
       "/api/app/sample/vibe64/sessions/session-1/updates/check",
-      "/api/app/sample/vibe64/sessions/session-1/updates/check",
-      "/api/app/sample/vibe64/sessions/session-1/changes"
+      "/api/app/sample/vibe64/sessions/session-1/changes",
+      "/api/app/sample/vibe64/sessions/session-1/updates/check"
     ]);
     expect(workspace.updates.error).toBe("");
     expect(workspace.updates.payload).toMatchObject({ relationship: "current" });
@@ -353,5 +385,111 @@ describe("useVibe64RepositoryWorkspace", () => {
     expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
       "/api/app/sample/vibe64/sessions/session-1/changes"
     ]);
+  });
+
+  it("renders the cached-canonical change list and initial diff before the authority check finishes", async () => {
+    let finishUpdateCheck;
+    mocks.changes = {
+      changedPaths: ["src/app.js"],
+      files: [{ added: 1, deleted: 1, path: "src/app.js", status: "M" }],
+      initialDiff: {
+        diff: "-old\n+new",
+        ok: true,
+        path: "src/app.js"
+      },
+      sessionId: "session-1",
+      totalCount: 1,
+      unsaved: true
+    };
+    mocks.updateCheckHandler = vi.fn(() => new Promise((resolve) => {
+      finishUpdateCheck = resolve;
+    }));
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const workspace = useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("changes") });
+
+    await nextTick();
+    await flushPromises();
+
+    expect(workspace.changes.loading).toBe(false);
+    expect(workspace.changes.payload?.files).toHaveLength(1);
+    expect(workspace.selectedCurrentPath.value).toBe("src/app.js");
+    expect(workspace.currentDiff.payload).toMatchObject({
+      diff: "-old\n+new",
+      path: "src/app.js"
+    });
+    expect(mocks.requestCalls.map(({ path }) => path)).toEqual([
+      "/api/app/sample/vibe64/sessions/session-1/changes",
+      "/api/app/sample/vibe64/sessions/session-1/updates/check"
+    ]);
+    expect(mocks.requestCalls.some(({ path }) => String(path).includes("/changes/diff"))).toBe(false);
+
+    finishUpdateCheck({
+      ahead: 0,
+      behind: 0,
+      canonicalCommit: "a".repeat(40),
+      checkedAt: "2026-08-19T07:15:00.000Z",
+      ok: true,
+      relationship: "current",
+      sessionHead: "a".repeat(40),
+      updateAvailable: false,
+      updateStrategy: "none"
+    });
+    await flushPromises();
+    expect(workspace.updates.checking).toBe(false);
+    expect(mocks.requestCalls).toHaveLength(2);
+  });
+
+  it("collapses a burst of source change events into one bounded follow-up inspection", async () => {
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("changes") });
+    await nextTick();
+    await flushPromises();
+
+    const pendingChanges = [];
+    mocks.requestCalls.length = 0;
+    mocks.changesHandler = vi.fn(() => new Promise((resolve) => {
+      pendingChanges.push(resolve);
+    }));
+    const sourceChanged = mocks.realtimeEvents.find(({ event }) => (
+      event === VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT
+    ));
+    expect(sourceChanged).toBeTruthy();
+
+    sourceChanged.onEvent();
+    sourceChanged.onEvent();
+    sourceChanged.onEvent();
+    await flushPromises();
+    expect(mocks.changesHandler).toHaveBeenCalledTimes(1);
+
+    pendingChanges.shift()({
+      canonicalCommit: "a".repeat(40),
+      files: [],
+      ok: true,
+      totalCount: 0,
+      unsaved: false
+    });
+    await flushPromises();
+    expect(mocks.changesHandler).toHaveBeenCalledTimes(2);
+
+    pendingChanges.shift()({
+      canonicalCommit: "a".repeat(40),
+      files: [],
+      ok: true,
+      totalCount: 0,
+      unsaved: false
+    });
+    await flushPromises();
+    expect(mocks.changesHandler).toHaveBeenCalledTimes(2);
+    expect(mocks.requestCalls).toHaveLength(2);
   });
 });

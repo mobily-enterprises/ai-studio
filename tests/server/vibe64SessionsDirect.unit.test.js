@@ -1452,7 +1452,7 @@ test("a failed Update persists conflict recovery and supplies it to the reviewed
   assert.ok(metadata.some(([name, value]) => name === "base_commit" && value === "canonical"));
 });
 
-test("one exact update check is cached and invalidates every sibling session", async () => {
+test("one exact update check is shared, cached, and invalidates every sibling session", async () => {
   const metadata = [];
   const publications = [];
   const sessions = new Map([
@@ -1488,6 +1488,10 @@ test("one exact update check is cached and invalidates every sibling session", a
     }
   };
   let exactChecks = 0;
+  let finishExactCheck;
+  const exactCheck = new Promise((resolve) => {
+    finishExactCheck = resolve;
+  });
   const service = createService({
     project: {
       async createRuntime() {
@@ -1500,39 +1504,46 @@ test("one exact update check is cached and invalidates every sibling session", a
     terminals: {
       async checkSessionUpdates() {
         exactChecks += 1;
-        return {
-          ahead: 0,
-          behind: 2,
-          canonicalCommit: "canonical-new",
-          incomingVersions: [
-            {
-              author: "Merc",
-              committedAt: "2026-08-19T07:14:00.000Z",
-              commit: "a".repeat(40),
-              message: "Newest saved work"
-            },
-            {
-              author: "Geoff",
-              committedAt: "2026-08-19T07:13:00.000Z",
-              commit: "b".repeat(40),
-              isMerge: true,
-              message: "Earlier saved work"
-            }
-          ],
-          incomingVersionsTruncated: false,
-          reconciled: false,
-          sessionHead: "session-old",
-          updateAvailable: true
-        };
+        return exactCheck;
       }
     }
   });
 
-  const result = await service.checkSessionUpdates("session-1");
+  const firstCheck = service.checkSessionUpdates("session-1");
+  const joinedCheck = service.checkSessionUpdates("session-1", { force: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(exactChecks, 1);
+  finishExactCheck({
+    ahead: 0,
+    behind: 2,
+    canonicalCommit: "canonical-new",
+    incomingVersions: [
+      {
+        author: "Merc",
+        committedAt: "2026-08-19T07:14:00.000Z",
+        commit: "a".repeat(40),
+        message: "Newest saved work"
+      },
+      {
+        author: "Geoff",
+        committedAt: "2026-08-19T07:13:00.000Z",
+        commit: "b".repeat(40),
+        isMerge: true,
+        message: "Earlier saved work"
+      }
+    ],
+    incomingVersionsTruncated: false,
+    reconciled: false,
+    sessionHead: "session-old",
+    updateAvailable: true
+  });
+  const [result, joined] = await Promise.all([firstCheck, joinedCheck]);
   const cached = await service.checkSessionUpdates("session-1");
   assert.equal(result.updateAvailable, true);
   assert.equal(result.relationship, "behind");
   assert.equal(result.updateStrategy, "rebase");
+  assert.equal(joined.checkedAt, result.checkedAt);
+  assert.equal(joined.canonicalCommit, result.canonicalCommit);
   assert.equal(cached.cached, true);
   assert.equal(exactChecks, 1);
   assert.match(result.checkedAt, /^\d{4}-\d{2}-\d{2}T/u);

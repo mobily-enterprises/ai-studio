@@ -67,6 +67,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   const requestRevisions = Object.create(null);
   const updateChecks = new Map();
   const forcedUpdateFollowups = new Set();
+  let activeChangesRefresh = null;
   let disposed = false;
 
   const context = computed(() => dashboardContext.value || {});
@@ -169,8 +170,11 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   async function loadChanges({ append = false } = {}) {
     changes.error = "";
     if (!append) {
+      beginRequest("currentDiff");
       changes.payload = null;
       selectedCurrentPath.value = "";
+      currentDiff.error = "";
+      currentDiff.loading = false;
       currentDiff.payload = null;
     }
     if (!sessionId.value) {
@@ -193,11 +197,21 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         ? { ...result, files: [...previousFiles, ...(result.files || [])] }
         : result;
       if (!append && typeof context.value.refreshSessionWork === "function") {
-        await context.value.refreshSessionWork(result);
+        const observedWork = { ...result };
+        delete observedWork.initialDiff;
+        await context.value.refreshSessionWork(observedWork);
       }
       const first = !append ? changes.payload?.files?.[0] : null;
       if (first) {
-        await selectCurrentFile(first);
+        const initialDiff = result.initialDiff && typeof result.initialDiff === "object"
+          ? result.initialDiff
+          : null;
+        if (String(initialDiff?.path || "").trim() === String(first.path || "").trim()) {
+          selectedCurrentPath.value = first.path;
+          currentDiff.payload = initialDiff;
+        } else {
+          void selectCurrentFile(first);
+        }
       }
     } catch (error) {
       if (requestIsCurrent(request)) {
@@ -209,6 +223,36 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         changes.loadingMore = false;
       }
     }
+  }
+
+  function requestChangesRefresh() {
+    const contextKey = requestContextKey();
+    if (activeChangesRefresh?.contextKey === contextKey) {
+      activeChangesRefresh.refreshAfterActive = true;
+      return activeChangesRefresh.promise;
+    }
+    const refresh = {
+      contextKey,
+      promise: null,
+      refreshAfterActive: false
+    };
+    refresh.promise = loadChanges().finally(() => {
+      if (activeChangesRefresh !== refresh) {
+        return;
+      }
+      activeChangesRefresh = null;
+      if (
+        refresh.refreshAfterActive &&
+        !disposed &&
+        refresh.contextKey === requestContextKey() &&
+        activeView.value === "changes" &&
+        !sourceOperationsSuspended.value
+      ) {
+        void requestChangesRefresh();
+      }
+    });
+    activeChangesRefresh = refresh;
+    return refresh.promise;
   }
 
   async function selectVersion(version) {
@@ -406,7 +450,13 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         updates.payload = result;
         updates.canonicalChangePending = false;
         if (activeView.value === "changes") {
-          await loadChanges();
+          if (
+            !changes.payload ||
+            String(changes.payload.canonicalCommit || "").trim() !==
+              String(result.canonicalCommit || "").trim()
+          ) {
+            await requestChangesRefresh();
+          }
         } else if (
           !history.payload ||
           String(result.canonicalCommit || "").trim() !== previousHistorySnapshot
@@ -418,8 +468,8 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         if (updateRequestIsCurrent(request)) {
           updates.error = message(error, "Updates could not be checked.");
           updates.errorCode = String(error?.code || "").trim();
-          if (activeView.value === "changes") {
-            await loadChanges();
+          if (activeView.value === "changes" && !changes.payload) {
+            await requestChangesRefresh();
           }
         }
         return false;
@@ -469,7 +519,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
       if (activeView.value === "history") {
         await loadHistory();
       } else {
-        await loadChanges();
+        await requestChangesRefresh();
       }
       return result;
     } catch (error) {
@@ -552,6 +602,11 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
           if (disposed || initialContext !== requestContextKey()) {
             return;
           }
+        } else if (!sourceOperationsSuspended.value) {
+          await requestChangesRefresh();
+          if (disposed || initialContext !== requestContextKey()) {
+            return;
+          }
         }
         if (!sourceOperationsSuspended.value) {
           void checkForUpdates({ force: false });
@@ -561,7 +616,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     { immediate: true }
   );
 
-  watch(sourceOperationsSuspended, (suspended, wasSuspended) => {
+  watch(sourceOperationsSuspended, async (suspended, wasSuspended) => {
     if (suspended) {
       updateAccessRevision += 1;
       updates.checking = false;
@@ -572,6 +627,17 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     }
     updateAccessRevision += 1;
     if (sessionId.value) {
+      const releasedContext = requestContextKey();
+      if (activeView.value === "changes") {
+        await requestChangesRefresh();
+        if (
+          disposed ||
+          releasedContext !== requestContextKey() ||
+          sourceOperationsSuspended.value
+        ) {
+          return;
+        }
+      }
       void checkForUpdates({ force: false });
     }
   }, {
@@ -599,7 +665,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
       if (activeView.value === "history" && reason === "session-save-completed") {
         void loadHistory();
       } else if (activeView.value === "changes" && !checkCanonical) {
-        void loadChanges();
+        void requestChangesRefresh();
       }
       if (checkCanonical) {
         void checkForUpdates({ force: repositoryStatusRealtimeNeedsCanonicalCheck(payload) });
@@ -610,6 +676,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   onScopeDispose(() => {
     disposed = true;
     invalidateRequests();
+    activeChangesRefresh = null;
     updateChecks.clear();
     forcedUpdateFollowups.clear();
   });
@@ -619,7 +686,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     event: VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
     matches: ({ payload = {} } = {}) => repositoryStatusSessionId(payload) === sessionId.value,
     onEvent: () => {
-      void loadChanges();
+      void requestChangesRefresh();
     }
   });
 

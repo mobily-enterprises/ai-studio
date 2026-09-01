@@ -599,66 +599,12 @@ function safeChangePath(value = "") {
   return normalized;
 }
 
-async function inspectSessionChangesDirect({
+async function sessionChangeDiff(runCommand, context, work, requestedPath, {
   commandOptions = {},
-  derivedArtifactPaths = [],
-  limit = DEFAULT_CHANGE_FILE_LIMIT,
-  offset = 0,
-  project = {},
-  runCommand = runVibe64Command,
-  session = {}
-} = {}) {
-  const context = repositoryContext(session, project);
-  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
-    label: "Inspecting session changes"
-  });
-  const work = await inspectSessionWorkDirect({
-    commandOptions,
-    derivedArtifactPaths,
-    project,
-    runCommand,
-    session
-  });
-  const changedPathSet = new Set(work.changedPaths);
-  const files = work.unsaved
-    ? await sessionChangeFiles(runCommand, context, work.changeBaseCommit, work.worktreeTree, {
-        commandOptions,
-        project
-      }).then((items) => items.filter((item) => changedPathSet.has(item.path)))
-    : [];
-  const boundedLimit = boundedInteger(limit, DEFAULT_CHANGE_FILE_LIMIT, MAX_CHANGE_FILE_LIMIT);
-  const boundedOffset = Math.max(0, Number.parseInt(String(offset ?? ""), 10) || 0);
-  return {
-    ...work,
-    files: files.slice(boundedOffset, boundedOffset + boundedLimit),
-    limit: boundedLimit,
-    offset: boundedOffset,
-    totalCount: files.length,
-    truncated: boundedOffset + boundedLimit < files.length
-  };
-}
-
-async function inspectSessionChangeDiffDirect({
-  commandOptions = {},
-  derivedArtifactPaths = [],
   lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
-  path: requestedPath = "",
-  project = {},
-  runCommand = runVibe64Command,
-  session = {}
+  project = {}
 } = {}) {
   const filePath = safeChangePath(requestedPath);
-  const context = repositoryContext(session, project);
-  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
-    label: "Inspecting a session change"
-  });
-  const work = await inspectSessionWorkDirect({
-    commandOptions,
-    derivedArtifactPaths,
-    project,
-    runCommand,
-    session
-  });
   if (!work.changedPaths.includes(filePath)) {
     throw saveError("That file is not part of the current saved-work difference.", "vibe64_session_change_not_found");
   }
@@ -689,6 +635,81 @@ async function inspectSessionChangeDiffDirect({
     truncated: lines.length > boundedLimit,
     worktreeTree: work.worktreeTree
   };
+}
+
+async function inspectSessionChangesDirect({
+  commandOptions = {},
+  derivedArtifactPaths = [],
+  limit = DEFAULT_CHANGE_FILE_LIMIT,
+  offset = 0,
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Inspecting session changes"
+  });
+  const work = await inspectSessionWorkDirect({
+    commandOptions,
+    derivedArtifactPaths,
+    project,
+    runCommand,
+    session
+  });
+  const changedPathSet = new Set(work.changedPaths);
+  const files = work.unsaved
+    ? await sessionChangeFiles(runCommand, context, work.changeBaseCommit, work.worktreeTree, {
+        commandOptions,
+        project
+      }).then((items) => items.filter((item) => changedPathSet.has(item.path)))
+    : [];
+  const boundedLimit = boundedInteger(limit, DEFAULT_CHANGE_FILE_LIMIT, MAX_CHANGE_FILE_LIMIT);
+  const boundedOffset = Math.max(0, Number.parseInt(String(offset ?? ""), 10) || 0);
+  const pageFiles = files.slice(boundedOffset, boundedOffset + boundedLimit);
+  const initialDiff = boundedOffset === 0 && pageFiles.length > 0
+    ? await sessionChangeDiff(runCommand, context, work, pageFiles[0].path, {
+        commandOptions,
+        project
+      })
+    : null;
+  return {
+    ...work,
+    files: pageFiles,
+    initialDiff,
+    limit: boundedLimit,
+    offset: boundedOffset,
+    totalCount: files.length,
+    truncated: boundedOffset + boundedLimit < files.length
+  };
+}
+
+async function inspectSessionChangeDiffDirect({
+  commandOptions = {},
+  derivedArtifactPaths = [],
+  lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
+  path: requestedPath = "",
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const filePath = safeChangePath(requestedPath);
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Inspecting a session change"
+  });
+  const work = await inspectSessionWorkDirect({
+    commandOptions,
+    derivedArtifactPaths,
+    project,
+    runCommand,
+    session
+  });
+  return sessionChangeDiff(runCommand, context, work, filePath, {
+    commandOptions,
+    lineLimit,
+    project
+  });
 }
 
 async function inspectSessionWorkDirect({

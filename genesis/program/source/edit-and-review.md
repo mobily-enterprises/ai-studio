@@ -27,6 +27,11 @@ Current changes refreshes when an assistant turn becomes idle and when Vibe64
 observes editor, Save, or repository-status events, so work completed during a
 turn appears without a manual reload. Arbitrary filesystem writes that produce
 none of those events are not promised to appear immediately.
+Current Changes first renders from the last locally proven canonical version
+while Vibe64 checks the configured GitHub, managed-Git, or local-repository
+authority in the background. Save remains unavailable until that authority
+check succeeds. The initially selected file difference comes from the same
+immutable worktree snapshot as the file list.
 
 ## Implementation map
 
@@ -37,3 +42,9 @@ none of those events are not promised to appear immediately.
 - `refreshWorkState(observedWork)` accepts the complete work-state snapshot
   already returned by Current Changes, so the selected session's Save or Update
   control does not immediately repeat the same repository inspection.
+- Current Changes calculates its initial selected-file difference inside the
+  file-list managed job, reusing that job's exact worktree tree instead of
+  admitting and scanning the worktree a second time.
+- Concurrent update checks for one session share the same exact server
+  operation, and repeated repository refresh events collapse into one bounded
+  follow-up Current Changes inspection.

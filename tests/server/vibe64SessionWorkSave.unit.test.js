@@ -228,10 +228,14 @@ test("current changes returns a bounded canonical file list and one selected-fil
     await writeFile(path.join(session.sourcePath, "shared.txt"), "changed\n", "utf8");
     await writeFile(path.join(session.sourcePath, "new file.txt"), "new\n", "utf8");
 
+    const requests = [];
     const changes = await inspectSessionChanges({
       limit: 1,
       project: githubProject(root, fixture.remote),
-      runCommand: commandRunner,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
       session
     });
 
@@ -245,6 +249,11 @@ test("current changes returns a bounded canonical file list and one selected-fil
       path: "new file.txt",
       status: "A"
     });
+    assert.equal(changes.initialDiff.path, "new file.txt");
+    assert.match(changes.initialDiff.diff, /\+new/u);
+    assert.equal(changes.initialDiff.worktreeTree, changes.worktreeTree);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].command, "node");
 
     const fileDiff = await inspectSessionChangeDiff({
       path: "shared.txt",
@@ -263,6 +272,50 @@ test("current changes returns a bounded canonical file list and one selected-fil
       runCommand: commandRunner,
       session
     }), (error) => error.code === "vibe64_session_change_path_invalid");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("local-source current changes reuses one snapshot for its initial file diff", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
+  try {
+    const baseline = path.join(root, "baseline");
+    await git(root, ["init", "--initial-branch=main", baseline]);
+    await writeFile(path.join(baseline, "app.txt"), "initial\n", "utf8");
+    await git(baseline, ["add", "app.txt"]);
+    await git(baseline, ["commit", "-m", "initial"]);
+    const baseCommit = await git(baseline, ["rev-parse", "HEAD"]);
+    const source = path.join(root, "session-local");
+    await git(root, ["clone", "--branch", "main", baseline, source]);
+    await git(source, ["checkout", "-b", "vibe64/session-local"]);
+    await writeFile(path.join(source, "app.txt"), "changed locally\n", "utf8");
+
+    const changes = await inspectSessionChanges({
+      project: {
+        sourceRoot: baseline,
+        repository: { defaultBranch: "main", mode: "local_source" }
+      },
+      runCommand: commandRunner,
+      session: {
+        metadata: {
+          base_branch: "main",
+          base_commit: baseCommit,
+          branch: "vibe64/session-local",
+          source_path: source
+        },
+        sessionId: "session-local",
+        sourcePath: source
+      }
+    });
+
+    assert.equal(changes.repositoryMode, "local_source");
+    assert.equal(changes.canonicalCommit, baseCommit);
+    assert.deepEqual(changes.files.map(({ path: filePath }) => filePath), ["app.txt"]);
+    assert.equal(changes.initialDiff.path, "app.txt");
+    assert.match(changes.initialDiff.diff, /-initial/u);
+    assert.match(changes.initialDiff.diff, /\+changed locally/u);
+    assert.equal(changes.initialDiff.worktreeTree, changes.worktreeTree);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

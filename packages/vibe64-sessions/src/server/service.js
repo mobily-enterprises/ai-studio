@@ -265,6 +265,7 @@ function createService({
   });
   const activeSaveOperations = new Map();
   const activeUpdateOperations = new Map();
+  const activeRepositoryUpdateChecks = new Map();
   const activeSuggestionDeliveries = new Map();
   let configuredRenewalActorResolver = renewalActorResolver;
   async function resolveRenewalActor(actor = {}, context = {}) {
@@ -1253,8 +1254,13 @@ function createService({
 
     async checkSessionUpdates(sessionId, input = {}) {
       return sessionResult(async () => {
+        const normalizedSessionId = text(sessionId);
         const runtime = await project.createRuntime({ inspectSource: false });
         const session = await runtime.getSession(sessionId, { inspectSource: false });
+        const activeCheck = activeRepositoryUpdateChecks.get(normalizedSessionId);
+        if (activeCheck) {
+          return activeCheck;
+        }
         const cached = cachedRepositoryUpdateCheck(session);
         if (input.force !== true && cached && repositoryUpdateCheckIsFresh(cached)) {
           return {
@@ -1263,35 +1269,45 @@ function createService({
             ok: true
           };
         }
-        const previousCanonicalCommit = text(
-          session?.metadata?.canonical_commit || session?.metadata?.base_commit
-        );
-        const result = await terminals.checkSessionUpdates(sessionId, {
-          ...input,
-          operationId: crypto.randomUUID(),
-          runtime,
-          session
-        });
-        await runtime.store.writeMetadataValue(sessionId, "canonical_commit", result.canonicalCommit);
-        if (result.reconciled === true) {
-          await runtime.store.writeMetadataValue(sessionId, "base_commit", result.canonicalCommit);
-        }
-        const updateCheck = await persistRepositoryUpdateCheck(runtime, sessionId, result);
-        await publishSessionChanged(sessionId, {
-          operation: "updated",
-          originId: text(input.originId),
-          reason: "session-repository-checked",
-          session: await runtime.getSession(sessionId, { inspectSource: false })
-        });
-        if (previousCanonicalCommit && previousCanonicalCommit !== result.canonicalCommit) {
-          await publishCanonicalChanged(runtime, sessionId, result.canonicalCommit, {
-            originId: input.originId
+        const check = (async () => {
+          const previousCanonicalCommit = text(
+            session?.metadata?.canonical_commit || session?.metadata?.base_commit
+          );
+          const result = await terminals.checkSessionUpdates(sessionId, {
+            ...input,
+            operationId: crypto.randomUUID(),
+            runtime,
+            session
           });
+          await runtime.store.writeMetadataValue(sessionId, "canonical_commit", result.canonicalCommit);
+          if (result.reconciled === true) {
+            await runtime.store.writeMetadataValue(sessionId, "base_commit", result.canonicalCommit);
+          }
+          const updateCheck = await persistRepositoryUpdateCheck(runtime, sessionId, result);
+          await publishSessionChanged(sessionId, {
+            operation: "updated",
+            originId: text(input.originId),
+            reason: "session-repository-checked",
+            session: await runtime.getSession(sessionId, { inspectSource: false })
+          });
+          if (previousCanonicalCommit && previousCanonicalCommit !== result.canonicalCommit) {
+            await publishCanonicalChanged(runtime, sessionId, result.canonicalCommit, {
+              originId: input.originId
+            });
+          }
+          return {
+            ...result,
+            ...updateCheck
+          };
+        })();
+        activeRepositoryUpdateChecks.set(normalizedSessionId, check);
+        try {
+          return await check;
+        } finally {
+          if (activeRepositoryUpdateChecks.get(normalizedSessionId) === check) {
+            activeRepositoryUpdateChecks.delete(normalizedSessionId);
+          }
         }
-        return {
-          ...result,
-          ...updateCheck
-        };
       }, "Vibe64 could not check this session for updates.");
     },
 
