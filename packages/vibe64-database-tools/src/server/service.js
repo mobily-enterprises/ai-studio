@@ -20,6 +20,9 @@ import {
   withSessionKnex
 } from "./connection.js";
 import {
+  inspectDatabaseSchema
+} from "./databaseDialect.js";
+import {
   searchDatabaseLookup
 } from "./lookup.js";
 import {
@@ -29,9 +32,6 @@ import {
   insertDatabaseRow,
   updateDatabaseCell
 } from "./queryExecutor.js";
-import {
-  inspectDatabaseSchema
-} from "./schemaInspector.js";
 import {
   deleteSnippet as deleteStoredSnippet,
   readErdLayout,
@@ -581,6 +581,7 @@ function createService({
             model: result.model,
             operation: "assistant.ask",
             queryCount: result.queries.length,
+            schemaLookupCount: result.schemaLookups.length,
             status: "succeeded"
           });
           return result;

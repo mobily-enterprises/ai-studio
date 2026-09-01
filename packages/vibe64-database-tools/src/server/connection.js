@@ -4,6 +4,10 @@ import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 
+import {
+  databaseDialect
+} from "./databaseDialect.js";
+
 const DATABASE_POOL_MAX = 3;
 const DATABASE_POOL_ACQUIRE_TIMEOUT_MS = 8_000;
 
@@ -25,32 +29,6 @@ function urlProtocol(value = "") {
   }
 }
 
-function normalizedDatabaseClient(kind = "") {
-  const candidate = text(kind).toLowerCase();
-  if (candidate === "postgresql") {
-    return {
-      client: "pg",
-      engine: "postgresql",
-      label: "PostgreSQL"
-    };
-  }
-  if (candidate === "mysql") {
-    return {
-      client: "mysql2",
-      engine: "mysql",
-      label: "MySQL / MariaDB"
-    };
-  }
-  throw vibe64Error(
-    candidate
-      ? `The session database kind is not supported: ${candidate}.`
-      : "The session has no canonical database-tool connection.",
-    candidate
-      ? "vibe64_session_database_client_unsupported"
-      : "vibe64_session_database_unavailable"
-  );
-}
-
 function databaseNameFromUrl(connectionUrl = "") {
   if (!connectionUrl) {
     return "";
@@ -63,15 +41,13 @@ function databaseNameFromUrl(connectionUrl = "") {
 }
 
 function safeConnectionUrl(connectionUrl = "", engine = "") {
-  if (!connectionUrl || engine !== "mysql") {
+  if (!connectionUrl) {
     return connectionUrl;
   }
-  const parsed = new URL(connectionUrl);
-  parsed.searchParams.delete("multipleStatements");
-  return parsed.toString();
+  return databaseDialect(engine).sanitizeConnectionUrl(connectionUrl);
 }
 
-function structuredConnection(endpoint = {}, engine = "") {
+function structuredConnection(endpoint = {}, dialect = {}) {
   const host = text(endpoint.host);
   const database = text(endpoint.database);
   const user = text(endpoint.username);
@@ -89,26 +65,16 @@ function structuredConnection(endpoint = {}, engine = "") {
     password,
     port,
     user,
-    ...(engine === "mysql"
-      ? {
-          bigNumberStrings: true,
-          dateStrings: true,
-          multipleStatements: false,
-          supportBigNumbers: true
-        }
-      : {})
+    ...dialect.connectionOptions()
   };
 }
 
 function resolveDatabaseConnection(endpoint = {}) {
-  const dialect = normalizedDatabaseClient(endpoint.kind);
+  const dialect = databaseDialect(endpoint.kind);
   const connectionUrl = text(endpoint.url);
   if (connectionUrl) {
-    const expectedProtocols = dialect.engine === "mysql"
-      ? ["maria", "mariadb", "mysql"]
-      : ["postgres", "postgresql"];
     const protocol = urlProtocol(connectionUrl);
-    if (!expectedProtocols.includes(protocol) || Object.keys(endpoint).some((name) => !["kind", "url"].includes(name))) {
+    if (!dialect.urlProtocols.includes(protocol) || Object.keys(endpoint).some((name) => !["kind", "url"].includes(name))) {
       throw vibe64Error(
         "The canonical database-tool URL does not match its declared database kind.",
         "vibe64_session_database_url_kind_mismatch"
@@ -137,11 +103,13 @@ function resolveDatabaseConnection(endpoint = {}) {
     );
   }
   return Object.freeze({
-    ...dialect,
+    client: dialect.client,
     connection: connectionUrl
       ? safeConnectionUrl(connectionUrl, dialect.engine)
-      : structuredConnection(endpoint, dialect.engine),
-    database: name
+      : structuredConnection(endpoint, dialect),
+    database: name,
+    engine: dialect.engine,
+    label: dialect.label
   });
 }
 

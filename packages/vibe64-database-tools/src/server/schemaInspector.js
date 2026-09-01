@@ -615,20 +615,7 @@ async function inspectMysqlSchema(knex, connection = {}) {
   return finalSchema(connection, versionRows[0]?.version, tables);
 }
 
-async function inspectDatabaseSchema({
-  connection = {},
-  knex
-} = {}) {
-  if (!knex) {
-    throw new TypeError("inspectDatabaseSchema requires Knex.");
-  }
-  return connection.engine === "postgresql"
-    ? inspectPostgresSchema(knex, connection)
-    : inspectMysqlSchema(knex, connection);
-}
-
 export {
-  inspectDatabaseSchema,
   inspectMysqlSchema,
   inspectPostgresSchema,
   rawRows

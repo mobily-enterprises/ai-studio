@@ -9,6 +9,8 @@ session history.
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
 - `packages/vibe64-database-tools/src/server/assistant.js`
+- `packages/vibe64-database-tools/src/server/databaseDialect.js`
+- `packages/vibe64-database-tools/src/server/schemaAccess.js`
 - `packages/vibe64-database-tools/src/server/service.js`
 - `packages/vibe64-terminals/src/server/codexEconomyThreadLedger.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
@@ -37,9 +39,12 @@ while an account switch cannot reuse earlier helper ownership. OpenCode tasks
 use the same model-advertised response-limit policy as the main conversation,
 and any narrower task-specific limit remains authoritative.
 
-Database Copilot gives its temporary helper a compact but complete SQL schema
-view: every table or view and its semantic columns, constraints, keys, and
-indexes remain present, while database-browser identities and derived duplicate
-lists do not consume the bounded prompt. It never truncates the schema. A
-schema that still exceeds the helper limit fails visibly, and any requested
+Database Copilot begins with only bounded database identity and object counts.
+Its temporary helper can search the refreshed schema, list object names and
+kinds, and request complete SQL-relevant definitions for a bounded set of
+matches before proposing a query. Truncation is explicit and another search is
+available; credentials never enter the helper conversation. PostgreSQL and
+MySQL or MariaDB implement one server dialect contract for connection,
+inspection, SQL policy, read-only execution, and result interpretation, while
+the assistant consumes only the normalized schema contract. Any requested
 query runs only through the session's read-only database identity.

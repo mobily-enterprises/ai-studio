@@ -125,7 +125,7 @@ function registerRoutes(http, {
 
   route("POST", "/assistant", {
     bodyLimit: 2 * 1024 * 1024,
-    summary: "Ask the focused database copilot with the complete refreshed schema."
+    summary: "Ask the focused database copilot with bounded on-demand access to the refreshed schema."
   }, (request) => databaseTools.askAssistant(withUser(request, routes.requestBody(request))));
 }
 

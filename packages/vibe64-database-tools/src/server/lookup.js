@@ -2,6 +2,13 @@ import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 
+import {
+  databaseDialect
+} from "./databaseDialect.js";
+import {
+  quoteIdentifier
+} from "./sqlPolicy.js";
+
 const LOOKUP_LIMIT = 25;
 const DISPLAY_COLUMN_NAMES = Object.freeze(["name", "title", "label", "code"]);
 
@@ -65,19 +72,17 @@ function addSearch(query, columns = [], search = "", engine = "postgresql") {
     return query;
   }
   const pattern = `%${term}%`;
+  const dialect = databaseDialect(engine);
   return query.where(function searchColumns() {
     columns.forEach((column, index) => {
       const method = index === 0 ? "whereRaw" : "orWhereRaw";
-      if (engine === "postgresql") {
-        this[method]("CAST(?? AS TEXT) ILIKE ?", [column, pattern]);
-      } else {
-        this[method]("CAST(?? AS CHAR) LIKE ?", [column, pattern]);
-      }
+      dialect.lookupSearch(this, method, column, pattern);
     });
   });
 }
 
 function sqlLiteral(value, engine = "postgresql") {
+  const dialect = databaseDialect(engine);
   if (value == null) {
     return "NULL";
   }
@@ -89,19 +94,9 @@ function sqlLiteral(value, engine = "postgresql") {
   }
   if (value && typeof value === "object" && value.kind === "binary" && value.base64) {
     const hex = Buffer.from(value.base64, "base64").toString("hex");
-    return engine === "postgresql" ? `decode('${hex}', 'hex')` : `X'${hex}'`;
+    return dialect.binaryLiteral(hex);
   }
-  const string = String(value).replaceAll("'", "''");
-  return engine === "mysql"
-    ? `'${string.replaceAll("\\", "\\\\")}'`
-    : `'${string}'`;
-}
-
-function quoteIdentifier(value = "", engine = "postgresql") {
-  const name = String(value || "");
-  return engine === "mysql"
-    ? `\`${name.replaceAll("`", "``")}\``
-    : `"${name.replaceAll("\"", "\"\"")}"`;
+  return dialect.stringLiteral(value);
 }
 
 function lookupQuerySql(table = {}, keys = {}, engine = "postgresql") {

@@ -20,8 +20,6 @@ import {
   syntaxHighlighting
 } from "@codemirror/language";
 import {
-  MariaSQL,
-  PostgreSQL,
   sql
 } from "@codemirror/lang-sql";
 import {
@@ -34,6 +32,10 @@ import {
   keymap,
   lineNumbers
 } from "@codemirror/view";
+
+import {
+  databaseClientDialect
+} from "../databaseDialect.js";
 
 const props = defineProps({
   engine: {
@@ -66,7 +68,7 @@ function completionSchema(schema = {}) {
 
 function sqlLanguage() {
   return sql({
-    dialect: props.engine === "mysql" ? MariaSQL : PostgreSQL,
+    dialect: databaseClientDialect(props.engine).codeMirrorDialect,
     schema: completionSchema(props.schema),
     upperCaseKeywords: true
   });

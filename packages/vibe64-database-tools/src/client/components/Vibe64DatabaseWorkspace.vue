@@ -384,7 +384,7 @@
           </header>
           <div v-if="assistantCanRun" class="database-workspace__copilot-body">
             <div class="database-workspace__assistant-note">
-              Gets the complete refreshed schema on every turn. Schema comments are treated as untrusted data. It can only run read-only queries.
+              Looks up bounded parts of the refreshed schema as needed. Database credentials stay server-side, schema metadata is untrusted, and it can run only read-only queries.
             </div>
             <div class="database-workspace__messages">
               <article v-for="(message, index) in assistantMessages" :key="index" :class="`database-workspace__message--${message.role}`">
@@ -589,6 +589,9 @@ import {
 import {
   useVibe64DatabaseTools
 } from "../composables/useVibe64DatabaseTools.js";
+import {
+  databaseClientDialect
+} from "../databaseDialect.js";
 import DatabaseErd from "./DatabaseErd.vue";
 import DatabaseSqlEditor from "./DatabaseSqlEditor.vue";
 
@@ -826,7 +829,7 @@ function firstSqlLine(value = "") {
 }
 
 function quoteIdentifier(name = "") {
-  return schema.value.engine === "mysql" ? `\`${String(name).replaceAll("`", "``")}\`` : `"${String(name).replaceAll('"', '""')}"`;
+  return databaseClientDialect(schema.value.engine).quoteIdentifier(name);
 }
 
 function qualifiedTable(table = {}) {
@@ -899,8 +902,7 @@ function sqlLiteral(value = "", column = {}) {
   const raw = String(value ?? "");
   if (/^(?:smallint|integer|bigint|decimal|numeric|real|double|float|int|tinyint|mediumint)/iu.test(column.dataType || column.nativeType) && /^-?(?:\d+\.?\d*|\.\d+)$/u.test(raw.trim())) return raw.trim();
   if (/^(?:boolean|bool)/iu.test(column.dataType || column.nativeType) && /^(?:true|false)$/iu.test(raw.trim())) return raw.trim().toUpperCase();
-  const escaped = raw.replaceAll("'", "''");
-  return schema.value.engine === "mysql" ? `'${escaped.replaceAll("\\", "\\\\")}'` : `'${escaped}'`;
+  return databaseClientDialect(schema.value.engine).stringLiteral(raw);
 }
 
 function regenerateFilteredSql() {

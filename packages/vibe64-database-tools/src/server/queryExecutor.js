@@ -7,6 +7,9 @@ import {
 } from "@local/vibe64-core/server/core";
 
 import {
+  databaseDialect
+} from "./databaseDialect.js";
+import {
   assertSingleStatement,
   queryId as normalizeQueryId
 } from "./sqlPolicy.js";
@@ -34,29 +37,6 @@ function tableMaps(schema = {}) {
   };
 }
 
-function postgresOrigin(field = {}, maps = {}) {
-  const table = maps.byId.get(text(field.tableID));
-  if (!table || !Number(field.columnID)) {
-    return null;
-  }
-  const column = table.columns.find((candidate) => (
-    Number(candidate.databaseIdentity?.columnId) === Number(field.columnID)
-  ));
-  return column ? { column, table } : null;
-}
-
-function mysqlOrigin(field = {}, maps = {}) {
-  const schemaName = text(field.db);
-  const tableName = text(field.orgTable);
-  const columnName = text(field.orgName);
-  if (!tableName || !columnName) {
-    return null;
-  }
-  const table = maps.byKey.get(tableKey(schemaName, tableName));
-  const column = table?.columns.find((candidate) => candidate.name === columnName);
-  return table && column ? { column, table } : null;
-}
-
 function relationshipForColumn(schema = {}, table = {}, column = {}) {
   return (Array.isArray(schema?.relationships) ? schema.relationships : []).find((relationship) => (
     relationship.sourceTable === table.qualifiedName && relationship.columns.includes(column.name)
@@ -65,18 +45,15 @@ function relationshipForColumn(schema = {}, table = {}, column = {}) {
 
 function normalizedResultColumns(fields = [], schema = {}, engine = "postgresql") {
   const maps = tableMaps(schema);
+  const dialect = databaseDialect(engine);
   return (Array.isArray(fields) ? fields : []).map((field, index) => {
-    const origin = engine === "postgresql"
-      ? postgresOrigin(field, maps)
-      : mysqlOrigin(field, maps);
+    const origin = dialect.fieldOrigin(field, maps);
     const relationship = origin
       ? relationshipForColumn(schema, origin.table, origin.column)
       : null;
     return {
       databaseType: origin?.column?.nativeType || (
-        engine === "postgresql"
-          ? `oid:${Number(field.dataTypeID || 0)}`
-          : `type:${Number(field.type || 0)}`
+        dialect.databaseType(field)
       ),
       index,
       label: text(field.name) || `column_${index + 1}`,
@@ -340,68 +317,27 @@ function publicColumns(columns = []) {
   return columns.map(({ source: _source, ...column }) => column);
 }
 
-function mysqlCommandSummary(response = {}) {
-  return {
-    affectedRows: Number(response.affectedRows || 0),
-    command: text(response.constructor?.name || "COMMAND").replace(/Packet$/u, "").toUpperCase(),
-    insertId: response.insertId == null ? null : jsonSafeValue(response.insertId),
-    warnings: Number(response.warningStatus || response.warningCount || 0) > 0
-      ? [`The database reported ${Number(response.warningStatus || response.warningCount)} warning(s).`]
-      : [],
-    ...(text(response.info) ? { message: text(response.info) } : {})
-  };
-}
-
 function normalizeRawResponse(raw, schema = {}, connection = {}) {
-  if (connection.engine === "postgresql") {
-    const rows = Array.isArray(raw?.rows) ? raw.rows : [];
-    if (Array.isArray(raw?.fields) && raw.fields.length > 0) {
-      const columns = normalizedResultColumns(raw.fields, schema, connection.engine);
-      const bounded = boundedRows(rows);
-      return {
-        ...bounded,
-        cellMeta: bounded.rows.map((row) => cellEditMetadata(row, columns)),
-        columns: publicColumns(columns),
-        command: text(raw.command),
-        fullRowCount: Number(raw.rowCount ?? rows.length),
-        kind: "result-set",
-        rowMeta: bounded.rows.map((row) => rowEditMetadata(row, columns))
-      };
-    }
-    return {
-      affectedRows: Number(raw?.rowCount || 0),
-      command: text(raw?.command || "COMMAND"),
-      kind: "command",
-      warnings: []
-    };
-  }
-
-  const rowsOrCommand = Array.isArray(raw) ? raw[0] : null;
-  const fields = Array.isArray(raw) ? raw[1] : null;
-  if (Array.isArray(rowsOrCommand) && Array.isArray(fields)) {
-    const columns = normalizedResultColumns(fields, schema, connection.engine);
-    const bounded = boundedRows(rowsOrCommand);
+  const dialect = databaseDialect(connection.engine);
+  const resultSet = dialect.resultSet(raw);
+  if (resultSet) {
+    const columns = normalizedResultColumns(resultSet.fields, schema, connection.engine);
+    const bounded = boundedRows(resultSet.rows);
     return {
       ...bounded,
       cellMeta: bounded.rows.map((row) => cellEditMetadata(row, columns)),
       columns: publicColumns(columns),
-      command: "SELECT",
-      fullRowCount: rowsOrCommand.length,
+      command: resultSet.command,
+      fullRowCount: resultSet.fullRowCount,
       kind: "result-set",
       rowMeta: bounded.rows.map((row) => rowEditMetadata(row, columns))
     };
   }
-  return {
-    ...mysqlCommandSummary(rowsOrCommand || {}),
-    kind: "command"
-  };
+  return dialect.commandResult(raw, jsonSafeValue);
 }
 
 async function beginReadOnly(knex, connection, engine = "postgresql") {
-  const sql = engine === "postgresql"
-    ? "BEGIN READ ONLY"
-    : "START TRANSACTION READ ONLY";
-  await knex.raw(sql).connection(connection);
+  await knex.raw(databaseDialect(engine).readOnlyBeginSql).connection(connection);
 }
 
 async function rollbackReadOnly(knex, connection) {
@@ -441,9 +377,7 @@ async function executeDatabaseQuery({
       await beginReadOnly(knex, connection, descriptor.engine);
       readTransaction = true;
     }
-    const options = descriptor.engine === "postgresql"
-      ? { rowMode: "array" }
-      : { rowsAsArray: true };
+    const options = databaseDialect(descriptor.engine).queryOptions;
     const raw = await knex.raw(statement)
       .options(options)
       .connection(connection)

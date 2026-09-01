@@ -6,6 +6,10 @@ import {
   vibe64Error
 } from "@local/vibe64-core/server/core";
 
+import {
+  databaseDialect
+} from "./databaseDialect.js";
+
 const QUERY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const MAX_QUERY_TEXT_BYTES = 512 * 1024;
 
@@ -36,15 +40,8 @@ function escapedByBackslash(sql = "", index = 0) {
   return count % 2 === 1;
 }
 
-function postgresEscapeStringAt(sql = "", index = 0) {
-  if (index < 1 || !/[Ee]/u.test(sql[index - 1])) {
-    return false;
-  }
-  const beforePrefix = sql[index - 2] || "";
-  return !/[A-Za-z0-9_$]/u.test(beforePrefix);
-}
-
 function sqlSegments(sql = "", engine = "postgresql") {
+  const dialect = databaseDialect(engine);
   const segments = [];
   let segment = "";
   let state = "normal";
@@ -117,7 +114,7 @@ function sqlSegments(sql = "", engine = "postgresql") {
       index += 1;
       state = "block-comment";
     } else if (character === "'") {
-      singleQuoteBackslashEscapes = engine === "mysql" || postgresEscapeStringAt(sql, index);
+      singleQuoteBackslashEscapes = dialect.singleQuoteBackslashEscapes(sql, index);
       state = "single-quote";
     } else if (character === "\"") {
       state = "double-quote";
@@ -167,13 +164,7 @@ function queryId(value = "") {
 }
 
 function quoteIdentifier(value = "", engine = "postgresql") {
-  const name = String(value || "");
-  if (!name) {
-    throw vibe64Error("A database identifier is missing.", "vibe64_database_identifier_missing");
-  }
-  return engine === "mysql"
-    ? `\`${name.replaceAll("`", "``")}\``
-    : `"${name.replaceAll("\"", "\"\"")}"`;
+  return databaseDialect(engine).quoteIdentifier(value);
 }
 
 function quoteQualifiedTable(table = {}, engine = "postgresql") {
