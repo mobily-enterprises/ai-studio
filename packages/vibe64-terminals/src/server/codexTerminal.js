@@ -8910,6 +8910,10 @@ function createCodexTerminalController({
       await retireCodexAppServerEconomyThread(existing);
       return { record: null, retiredThreadId: existing.threadId };
     }
+    if (!await directoryExists(record.identity.runtime.runtimeDir)) {
+      await ledger.remove(record);
+      return { record: null, retiredThreadId: record.threadId };
+    }
     const executionRoot = terminalSessionSourceRoot(session);
     const toolHome = await codexToolHomeResult();
     if (toolHome.ok === false) {
@@ -8926,13 +8930,50 @@ function createCodexTerminalController({
     });
     const providerKey = codexAppServerProviderKey(record.sessionId, providerOptions);
     if (codexAppServerProviderKeyFingerprint(providerKey) !== record.identity.providerKeyFingerprint) {
-      throw codexAppServerEconomyOwnershipError(
-        "The current Codex provider/account does not match persisted economy ownership.",
-        {
-          sessionId: record.sessionId,
-          threadId: record.threadId
+      const staleProvider = codexAppServerProviderFactory({
+        ...providerOptions,
+        runtimeDir: record.identity.runtime.runtimeDir
+      });
+      try {
+        if (typeof staleProvider.currentRuntimeInfo !== "function") {
+          throw codexAppServerEconomyOwnershipError(
+            "The Codex provider cannot verify the account for stale economy ownership.",
+            {
+              sessionId: record.sessionId,
+              threadId: record.threadId
+            }
+          );
         }
-      );
+        const currentRuntime = await staleProvider.currentRuntimeInfo();
+        if (
+          record.identity.runtime.accountIdentitySignature !==
+          normalizeText(currentRuntime.accountIdentitySignature)
+        ) {
+          throw codexAppServerEconomyOwnershipError(
+            "The current Codex account does not match persisted economy ownership.",
+            {
+              sessionId: record.sessionId,
+              threadId: record.threadId
+            }
+          );
+        }
+        const stopped = typeof staleProvider.stopRuntime === "function"
+          ? await staleProvider.stopRuntime()
+          : null;
+        if (!codexAppServerRuntimeStopWasVerified(stopped)) {
+          throw codexAppServerEconomyOwnershipError(
+            "The earlier Codex economy runtime could not be retired after its provider context changed.",
+            {
+              sessionId: record.sessionId,
+              threadId: record.threadId
+            }
+          );
+        }
+        await ledger.remove(record);
+        return { record: null, retiredThreadId: record.threadId };
+      } finally {
+        staleProvider.close?.();
+      }
     }
     let provider = codexAppServerProviders.get(providerKey);
     if (!provider) {

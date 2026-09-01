@@ -132,6 +132,7 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
       if (captures.ensureAvailableWait) {
         await captures.ensureAvailableWait;
       }
+      await mkdir(captures.runtimeInfo.runtimeDir, { recursive: true });
     },
     async ensureRuntime() {
       calls.push(["ensureRuntime"]);
@@ -6178,6 +6179,120 @@ test("a completed economy thread survives a controller crash and resumes only af
       failures: [],
       records: []
     });
+  });
+});
+
+test("a missing economy runtime retires stale ownership before provider identity comparison", async () => {
+  await withConversationController(async ({
+    captures,
+    controller,
+    projectRuntimeRoot,
+    projectService,
+    simulateControllerCrash,
+    subscribers
+  }) => {
+    const executionProfile = sourceExplanationEconomyProfile();
+    const firstPending = controller.runDetachedChatTurn("session-1", {
+      executionProfile,
+      outputSchema: sourceExplanationOutputSchema(),
+      prompt: "Persist this thread before its runtime disappears."
+    });
+    await waitForCapturedTurns(captures, 1);
+    completeDetachedTurn(subscribers, {
+      text: JSON.stringify({ answer: "Persisted before runtime loss." })
+    });
+    const first = await firstPending;
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(
+      (await createCodexEconomyThreadLedger({ projectRuntimeRoot }).readAll())
+        .records.length,
+      1
+    );
+    simulateControllerCrash();
+
+    await rm(captures.runtimeInfo.runtimeDir, { force: true, recursive: true });
+    captures.environmentVersion = "two";
+    const restartedSubscribers = new Set();
+    const restarted = restartedCaptures(captures);
+    const restartedController = createRestartedController({
+      captures: restarted,
+      projectService,
+      subscribers: restartedSubscribers
+    });
+    const freshPending = restartedController.runDetachedChatTurn("session-1", {
+      executionProfile,
+      outputSchema: sourceExplanationOutputSchema(),
+      prompt: "Start fresh after the stale runtime disappeared."
+    });
+    await waitForCapturedTurns(restarted, 1);
+    completeDetachedTurn(restartedSubscribers, {
+      text: JSON.stringify({ answer: "Fresh provider ownership." })
+    });
+    const fresh = await freshPending;
+    assert.equal(fresh.ok, true, JSON.stringify(fresh));
+    assert.equal(restarted.resumes.length, 0);
+    assert.equal(restarted.stopRuntimes, 0);
+    assert.equal(restarted.threads.length, 1);
+    assert.equal(
+      (await createCodexEconomyThreadLedger({ projectRuntimeRoot }).readAll())
+        .records.length,
+      1
+    );
+    await restartedController.closeAllForSession("session-1");
+  });
+});
+
+test("provider context drift retires a verified stale economy runtime", async () => {
+  await withConversationController(async ({
+    captures,
+    controller,
+    projectRuntimeRoot,
+    projectService,
+    simulateControllerCrash,
+    subscribers
+  }) => {
+    const executionProfile = sourceExplanationEconomyProfile();
+    const firstPending = controller.runDetachedChatTurn("session-1", {
+      executionProfile,
+      outputSchema: sourceExplanationOutputSchema(),
+      prompt: "Persist this thread before the provider context changes."
+    });
+    await waitForCapturedTurns(captures, 1);
+    completeDetachedTurn(subscribers, {
+      text: JSON.stringify({ answer: "Persisted before context drift." })
+    });
+    const first = await firstPending;
+    assert.equal(first.ok, true, JSON.stringify(first));
+    simulateControllerCrash();
+
+    captures.environmentVersion = "two";
+    const restartedSubscribers = new Set();
+    const restarted = restartedCaptures(captures);
+    const restartedController = createRestartedController({
+      captures: restarted,
+      projectService,
+      subscribers: restartedSubscribers
+    });
+    const freshPending = restartedController.runDetachedChatTurn("session-1", {
+      executionProfile,
+      outputSchema: sourceExplanationOutputSchema(),
+      prompt: "Start fresh after verified stale-runtime retirement."
+    });
+    await waitForCapturedTurns(restarted, 1);
+    completeDetachedTurn(restartedSubscribers, {
+      text: JSON.stringify({ answer: "Fresh provider context." })
+    });
+    const fresh = await freshPending;
+    assert.equal(fresh.ok, true, JSON.stringify(fresh));
+    assert.equal(restarted.resumes.length, 0);
+    assert.equal(restarted.stopRuntimes, 1);
+    assert.equal(restarted.threads.length, 1);
+    assert.equal(
+      (await createCodexEconomyThreadLedger({ projectRuntimeRoot }).readAll())
+        .records.length,
+      1
+    );
+    await restartedController.closeAllForSession("session-1");
   });
 });
 

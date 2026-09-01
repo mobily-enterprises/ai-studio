@@ -39,6 +39,13 @@ while an account switch cannot reuse earlier helper ownership. OpenCode tasks
 use the same model-advertised response-limit policy as the main conversation,
 and any narrower task-specific limit remains authoritative.
 
+Codex restores durable helper ownership only while its exact managed runtime
+and provider context remain current. If the runtime has disappeared, Vibe64
+atomically retires the stale ownership. If the provider context changed under
+the same account, it first verifies retirement of the earlier runtime and then
+retires the ownership, allowing a fresh bounded helper instead of reporting a
+false account conflict. A real account change remains blocked.
+
 Database Copilot begins with only bounded database identity and object counts.
 Its temporary helper can search the refreshed schema, list object names and
 kinds, and request complete SQL-relevant definitions for a bounded set of
