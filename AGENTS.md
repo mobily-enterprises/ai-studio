@@ -39,6 +39,23 @@ Important boundaries:
 
 Keep those scopes separate even though they share the word "deploy."
 
+## Test Execution Safety
+
+Do not start tests unless they are relevant to the current work, and never
+overlap a test run already active for this checkout.
+
+- During development, run exactly one relevant test file with
+  `npm test -- tests/server/<name>.test.js`. The root test command refuses to
+  run without exactly one explicit test file. Write optional Node test runner
+  arguments in `--option=value` form.
+- Do not pass a glob, directory, or multiple test files to `npm test`, and do
+  not bypass this guard with a direct broad `node --test` command.
+- Every repository-owned Node test command fixes test-file concurrency at one.
+  Do not raise or bypass this limit.
+- `npm run test:full` and `npm run verify` are broad verification commands.
+  Run them only after the human has confirmed that the feature works and has
+  explicitly approved full verification.
+
 ## Known Session Defects To Fix
 
 These defects were reproduced on the hosted `sas/dogandgroom` session
