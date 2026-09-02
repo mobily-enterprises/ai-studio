@@ -232,6 +232,7 @@ const GLOBAL_CODEX_TERMINAL_SCOPE = "global";
 const CODEX_APP_SERVER_ACTIVE_RECONCILE_MS = 2000;
 const CODEX_APP_SERVER_DAEMON_WELLBEING_MS = 15000;
 const CODEX_APP_SERVER_FINALIZING_GRACE_MS = 10000;
+const CODEX_APP_SERVER_PROMPT_CLAIM_GRACE_MS = 15000;
 const CODEX_APP_SERVER_LIVE_PROGRESS_MAX_LENGTH = 320;
 const CODEX_APP_SERVER_GOAL_STATUSES = new Set([
   "active",
@@ -892,22 +893,31 @@ function codexAppServerTaskFinishedAfterRun(session = {}, run = {}) {
   ));
 }
 
-function abandonedCodexAppServerPromptClaim(session = {}) {
+function abandonedCodexAppServerPromptClaim(session = {}, {
+  nowMs = Date.now(),
+  promptDeliveryActive = false
+} = {}) {
   const run = codexAppServerAgentRun(session);
   if (!run) {
     return null;
   }
+  const runUpdatedMs = dateValueMs(run.updatedAt || run.startedAt || run.at);
+  const claimExpired = Boolean(
+    runUpdatedMs &&
+    nowMs - runUpdatedMs >= CODEX_APP_SERVER_PROMPT_CLAIM_GRACE_MS
+  );
   return (
     (run.active === true || vibe64AgentRunStateIsActive(run.state)) &&
     normalizeText(run.state) === VIBE64_AGENT_RUN_STATE.STARTING &&
     !normalizeText(run.providerThreadId) &&
     !normalizeText(run.providerTurnId) &&
-    codexAppServerTaskFinishedAfterRun(session, run)
+    promptDeliveryActive !== true &&
+    (codexAppServerTaskFinishedAfterRun(session, run) || claimExpired)
   ) ? run : null;
 }
 
-async function recoverAbandonedCodexAppServerPromptClaim(runtime, session = {}) {
-  const run = abandonedCodexAppServerPromptClaim(session);
+async function recoverAbandonedCodexAppServerPromptClaim(runtime, session = {}, options = {}) {
+  const run = abandonedCodexAppServerPromptClaim(session, options);
   if (!run || !session?.sessionId || typeof runtime?.store?.writeAgentRunEvent !== "function") {
     return {
       recovered: false,
@@ -6360,7 +6370,12 @@ function createCodexTerminalController({
       const storedSession = await runtime.getSession(normalizedSessionId);
       const abandonedClaim = await recoverAbandonedCodexAppServerPromptClaim(
         runtime,
-        storedSession
+        storedSession,
+        {
+          promptDeliveryActive: codexAppServerPromptDeliveries.has(
+            codexTerminalNamespace(normalizedSessionId)
+          )
+        }
       );
       const session = abandonedClaim.session;
       if (abandonedClaim.recovered) {
@@ -12110,6 +12125,19 @@ function createCodexTerminalController({
     });
     let currentSession = session;
     let turn = codexAppServerTurnState(currentSession);
+    if (
+      turn.state === "starting" &&
+      !turn.turnId &&
+      !codexAppServerPromptDeliveries.has(codexTerminalNamespace(sessionId))
+    ) {
+      const abandonedClaim = await recoverAbandonedCodexAppServerPromptClaim(
+        runtime,
+        currentSession,
+        { promptDeliveryActive: false }
+      );
+      currentSession = abandonedClaim.session;
+      turn = codexAppServerTurnState(currentSession);
+    }
     const threadId = normalizeText(turn.threadId) || codexThreadIdForWorkdir(currentSession, workdir);
     if (!threadId) {
       vibe64SessionDebugLog("server.codexTerminal.appServerMessage.newTurn", {
@@ -12152,18 +12180,6 @@ function createCodexTerminalController({
       messageId,
       sessionId
     });
-    if (
-      turn.state === "starting" &&
-      !turn.turnId &&
-      !codexAppServerPromptDeliveries.has(codexTerminalNamespace(sessionId))
-    ) {
-      currentSession = await recoverCodexAppServerActiveTurn(sessionId, {
-        provider,
-        retryOnError: false,
-        runtime
-      });
-      turn = codexAppServerTurnState(currentSession);
-    }
     try {
       await reconcileCodexAppServerThreadStatus(sessionId, provider, threadId, {
         source: "message_delivery"

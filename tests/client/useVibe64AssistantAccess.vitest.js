@@ -343,7 +343,8 @@ describe("useVibe64AssistantAccess", () => {
     expect(assistantDialog).toContain('active: true');
     expect(assistantDialog).toContain('aria-label="Connected AI"');
     expect(assistantDialog).toContain('<v-radio-group');
-    expect(assistantDialog).toContain('OpenCode · ${provider.label}');
+    expect(assistantDialog).toContain('label: engine.engineId === "codex" ? "Codex" : model.label');
+    expect(assistantDialog).toContain('Recommended');
     expect(assistantDialog).toContain('preferred: provider.preferred === true');
     expect(assistantDialog).toContain('Number(right.preferred) - Number(left.preferred)');
     expect(assistantDialog).toContain('available.find((choice) => choice.preferred)?.id');

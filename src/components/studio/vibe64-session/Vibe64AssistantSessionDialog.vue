@@ -6,7 +6,10 @@
   >
     <v-card class="vibe64-assistant-dialog" rounded="xl">
       <v-card-title class="vibe64-assistant-dialog__title">
-        <span>Start an AI session</span>
+        <span class="vibe64-assistant-dialog__title-copy">
+          <strong class="text-title-large">Start an AI session</strong>
+          <small class="text-body-small">Your preferred AI is selected automatically.</small>
+        </span>
         <v-btn
           aria-label="Close AI session dialog"
           :disabled="submitting"
@@ -77,7 +80,12 @@
               />
             </span>
             <span class="vibe64-assistant-dialog__choice-copy">
-              <strong>{{ choice.label }}</strong>
+              <span class="vibe64-assistant-dialog__choice-heading">
+                <strong>{{ choice.label }}</strong>
+                <v-chip v-if="choice.preferred" color="success" size="x-small" variant="tonal">
+                  Recommended
+                </v-chip>
+              </span>
               <small>{{ choice.description }}</small>
             </span>
             <v-radio
@@ -182,11 +190,11 @@ function configuredChoice(engine = {}, provider = {}) {
   return {
     description: engine.engineId === "codex"
       ? `OpenAI account · ${model.label}`
-      : [model.label, provider.description].filter(Boolean).join(" · "),
+      : [provider.label, provider.description].filter(Boolean).join(" · "),
     domId: id.replace(/[^a-z0-9_-]+/giu, "-"),
     engineId: engine.engineId,
     id,
-    label: engine.engineId === "codex" ? "Codex" : `OpenCode · ${provider.label}`,
+    label: engine.engineId === "codex" ? "Codex" : model.label,
     preferred: provider.preferred === true,
     selection: {
       agentId: agent.id,
@@ -285,6 +293,15 @@ watch(submitting, async (running, wasRunning) => {
   padding: 1rem 1.25rem 0.75rem;
 }
 
+.vibe64-assistant-dialog__title-copy {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.vibe64-assistant-dialog__title-copy small {
+  color: rgba(var(--v-theme-on-surface), 0.66);
+}
+
 .vibe64-assistant-dialog__body {
   padding: 0.25rem 1.25rem 1rem !important;
 }
@@ -335,6 +352,13 @@ watch(submitting, async (running, wasRunning) => {
   display: grid;
   gap: 0.18rem;
   min-width: 0;
+}
+
+.vibe64-assistant-dialog__choice-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .vibe64-assistant-dialog__choice-copy small,

@@ -36,12 +36,17 @@ immutable worktree snapshot as the file list.
 ## Implementation map
 
 - `runSessionWorkOperation()` admits each Current Changes, file-diff, work-state,
-  or update-check request as one managed job. `sessionWorkOperationCommand.js`
-  performs that request's exact Git queries inside the admitted child instead
-  of paying managed-host admission cost for every individual Git command.
+  or update-check request as one managed job. Canonical Save uses four bounded
+  managed stages—checkpoint, prepare, publish, and finalize—under one project
+  source lock. The parent persists recovery milestones between stages, while
+  `sessionWorkOperationCommand.js` performs each stage's exact Git work inside
+  its admitted child instead of paying managed-host admission cost for every
+  individual Git command.
 - `refreshWorkState(observedWork)` accepts the complete work-state snapshot
-  already returned by Current Changes, so the selected session's Save or Update
-  control does not immediately repeat the same repository inspection.
+  already returned by Current Changes. The runtime host also projects Save and
+  Update task events directly from the mounted realtime session, so visible
+  progress does not wait for repository inspection behind an active source
+  lock.
 - Current Changes calculates its initial selected-file difference inside the
   file-list managed job, reusing that job's exact worktree tree instead of
   admitting and scanning the worktree a second time.

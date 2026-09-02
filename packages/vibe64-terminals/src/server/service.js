@@ -1655,26 +1655,18 @@ function createService({
           onProgress: input.onProgress,
           operationId: input.operationId,
           project,
-          refreshDerivedArtifacts: refreshGenesisCities,
           runCommand: execution.runCommand,
           runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-          siblingWork: async () => {
+          listSiblingSessions: async () => {
             const sessions = typeof runtime.listSessions === "function"
               ? await runtime.listSessions({ statusGroup: "open" })
               : await runtime.listSessionSummaries({ statusGroup: "open" });
-            const project = await projectService.readCurrentProject();
-            const siblings = [];
-            for (const sibling of sessions) {
+            return sessions.filter((sibling) => {
               const siblingId = sessionRecordId(sibling);
-              if (!siblingId || siblingId === normalizedSessionId || !terminalWorktreePath(sibling)) {
-                continue;
-              }
-              siblings.push(await inspectManagedSessionWork({
-                project,
-                session: sibling
-              }));
-            }
-            return siblings;
+              return siblingId &&
+                siblingId !== normalizedSessionId &&
+                terminalWorktreePath(sibling);
+            });
           },
           session
         });

@@ -11,7 +11,8 @@ import {
   proxySessionDialogs,
   runtimeHostAgentWorking,
   runtimeHostToolbarSessions,
-  runtimeHostWorkTaskRevision
+  runtimeHostWorkTaskRevision,
+  runtimeHostWorkTaskState
 } from "../../src/composables/useVibe64SessionRuntimeHost.js";
 
 describe("Vibe64 direct session runtime host", () => {
@@ -142,6 +143,38 @@ describe("Vibe64 direct session runtime host", () => {
     });
 
     expect(ready).not.toBe(running);
+  });
+
+  it("projects realtime Save progress without waiting for repository inspection", () => {
+    const runningSave = {
+      events: [{ at: "2026-09-01T14:27:04.127Z", kind: "canonical", status: "running" }],
+      id: "save-work",
+      operationId: "save-operation",
+      status: "running",
+      updatedAt: "2026-09-01T14:27:04.127Z"
+    };
+
+    expect(runtimeHostWorkTaskState({ backgroundTasks: [runningSave] })).toEqual({
+      activeOperation: { kind: "save", operationId: "save-operation" },
+      operation: runningSave,
+      updateOperation: null
+    });
+    expect(runtimeHostWorkTaskState({
+      backgroundTasks: [{
+        ...runningSave,
+        events: [...runningSave.events, {
+          at: "2026-09-01T14:28:40.503Z",
+          kind: "saved",
+          status: "ready"
+        }],
+        status: "ready",
+        updatedAt: "2026-09-01T14:28:40.503Z"
+      }]
+    })).toMatchObject({
+      activeOperation: null,
+      operation: { status: "ready" },
+      updateOperation: null
+    });
   });
 
   it("projects only the supplied direct-session dialogs", () => {

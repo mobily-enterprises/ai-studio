@@ -157,6 +157,25 @@ function runtimeHostWorkTaskRevision(session = {}) {
     .join("|");
 }
 
+function runtimeHostWorkTaskState(session = {}) {
+  const tasks = Array.isArray(session?.backgroundTasks) ? session.backgroundTasks : [];
+  const operation = tasks.find((task) => String(task?.id || "") === "save-work") || null;
+  const updateOperation = tasks.find((task) => String(task?.id || "") === "update-session") || null;
+  const activeOperation = [operation, updateOperation].find((task) => (
+    ["queued", "running", "starting"].includes(String(task?.status || "").trim().toLowerCase())
+  ));
+  return {
+    activeOperation: activeOperation
+      ? {
+          kind: activeOperation === operation ? "save" : "update",
+          operationId: String(activeOperation.operationId || "").trim()
+        }
+      : null,
+    operation,
+    updateOperation
+  };
+}
+
 function useVibe64SessionRuntimeHost(props, emit) {
   const selectedSessionId = computed(() => String(props.sessionId || "").trim());
   const selectedListSession = computed(() => {
@@ -584,7 +603,6 @@ function useVibe64SessionRuntimeHost(props, emit) {
       error: pageError.value,
       sessionId: selectedSessionId.value
     });
-    void refreshWorkState();
   });
 
   watch([activeAgentWorking, () => guardedPage.value.busy], emitBusy, { flush: "post" });
@@ -624,8 +642,18 @@ function useVibe64SessionRuntimeHost(props, emit) {
   watch(() => {
     return `${selectedSessionId.value}:${selectedSessionClosed.value}:${runtimeHostWorkTaskRevision(selectedSession.value)}`;
   }, () => {
+    const taskState = runtimeHostWorkTaskState(selectedSession.value);
+    if (taskState.operation || taskState.updateOperation) {
+      workState.value = {
+        ...workState.value,
+        ...taskState,
+        checkedAt: new Date().toISOString(),
+        error: "",
+        loading: false
+      };
+    }
     void refreshWorkState();
-  }, { flush: "post" });
+  }, { flush: "post", immediate: true });
 
   onBeforeUnmount(() => {
     workStateActive = false;
@@ -674,5 +702,6 @@ export {
   runtimeHostAgentWorking,
   runtimeHostToolbarSessions,
   runtimeHostWorkTaskRevision,
+  runtimeHostWorkTaskState,
   useVibe64SessionRuntimeHost
 };

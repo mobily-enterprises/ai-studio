@@ -85,7 +85,9 @@ assistant avatar use that same live turn state until completion or interruption.
 If message delivery fails, the exact error belongs to the failed message with
 its Resend, Cancel, and Edit actions inside the scrollable conversation. The
 composer does not repeat that raw error below its input or let it displace the
-chat layout.
+chat layout. If the server disappears after claiming a prompt but before the
+provider creates a turn, Vibe64 fails the expired unowned claim automatically
+so the next message can start normally.
 When an OpenCode provider reports successful completion without a user-facing
 response, Vibe64 makes one bounded continuation request for that response. If
 the provider again returns no response, the turn fails visibly instead of

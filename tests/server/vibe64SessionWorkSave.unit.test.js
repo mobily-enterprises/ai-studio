@@ -14,7 +14,8 @@ import {
   inspectSessionWork,
   recoverSessionWorkUpdate,
   recoverSessionWorkSave,
-  saveSessionWork as saveSessionWorkImplementation,
+  saveSessionWork as saveManagedSessionWorkImplementation,
+  saveSessionWorkDirect as saveSessionWorkImplementation,
   updateSessionWork
 } from "../../packages/vibe64-terminals/src/server/sessionWorkSave.js";
 import {
@@ -159,6 +160,60 @@ function managedGitProject(root, canonicalRepositoryPath) {
     repositoryMode: "managed_git"
   };
 }
+
+test("Save admits four durable managed stages instead of one job per Git command", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-stages-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    const requests = [];
+    const progressStages = [];
+    await writeFile(path.join(session.sourcePath, "saved.txt"), "saved\n", "utf8");
+
+    const result = await saveManagedSessionWorkImplementation({
+      derivedArtifactPaths: [],
+      identity: {
+        email: "vibe64@example.test",
+        name: "Vibe64 Test"
+      },
+      listSiblingSessions: async () => [],
+      message: "Save through bounded managed stages",
+      onProgress: async ({ stage }) => {
+        progressStages.push(stage);
+      },
+      operationId: "save-managed-stages",
+      project,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
+      session
+    });
+
+    const payloads = requests.map((request) => JSON.parse(String(request.input || "{}")));
+    assert.equal(result.status, "saved");
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
+    assert.equal(requests.length, 4);
+    assert.ok(requests.every((request) => request.command === "node"));
+    assert.deepEqual(payloads.map((payload) => payload.operation), [
+      "save-stage",
+      "save-stage",
+      "save-stage",
+      "save-stage"
+    ]);
+    assert.deepEqual(payloads.map((payload) => payload.input.stage), [
+      "checkpoint",
+      "prepare",
+      "publish",
+      "finalize"
+    ]);
+    assert.ok(progressStages.indexOf("prepared") < progressStages.indexOf("publishing"));
+    assert.ok(progressStages.indexOf("published") < progressStages.indexOf("reconciling"));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
 
 test("work inspection compares the complete session tree with its verified canonical base", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
