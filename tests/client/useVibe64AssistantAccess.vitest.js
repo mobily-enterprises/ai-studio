@@ -315,8 +315,10 @@ describe("useVibe64AssistantAccess", () => {
     expect(autopilot).toContain(':access-label="assistantAccessLabel"');
     expect(autopilot).toContain(':access-loading="assistantAccessLoading"');
     expect(autopilot).toContain(':can-configure="assistantSuggestionsCanManage"');
-    expect(autopilot).toContain(':disabled="composerSending || agentActive"');
+    expect(autopilot).toContain(':changes-disabled="composerSending || agentActive"');
     expect(assistantMenuSource).toContain('aria-label="AI session selector"');
+    expect(assistantMenuSource).toContain('AI choices are view-only while the assistant is working.');
+    expect(assistantMenuSource).not.toMatch(/aria-label="Choose AI"[\s\S]{0,180}:disabled=/u);
     expect(assistantMenuSource).toContain('providerConnectedOnly: true');
     expect(assistantMenuSource).toContain('active: catalogActive');
     expect(assistantMenuSource).toContain('provider.connected === true');

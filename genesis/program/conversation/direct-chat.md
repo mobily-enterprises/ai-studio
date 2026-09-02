@@ -104,10 +104,11 @@ and model catalogue when
 the chooser opens or when the session is created; creation validates the
 selection against the same saved connection view. A session keeps the
 assistant engine that owns its native history: Codex cannot be changed to
-OpenCode or vice versa. Between turns, the explicitly opened chat selector may
-load and apply a complete, compatible model choice within that fixed engine;
-merely opening or creating a session does not load that catalogue, and an
-active turn cannot change the selection. Distinct OpenCode provider ids remain
+OpenCode or vice versa. The explicitly opened chat selector may load a complete,
+compatible model choice within that fixed engine. It remains available for
+inspection during an active turn, but can apply a choice only between turns.
+Merely opening or creating a session does not load that catalogue. Distinct
+OpenCode provider ids remain
 distinct choices, so separate routes or plans from one provider can coexist and
 be selected independently without becoming Codex. People can choose among
 already connected AIs even when they cannot manage account connections; only

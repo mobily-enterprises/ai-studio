@@ -2104,11 +2104,20 @@ test("session panel shows loading feedback instead of empty create state while s
   await expect(page.getByText("Create a session to start preview.")).toHaveCount(0);
 });
 
-test("the chat cog stays a compact selector for the session's available AI", async ({ page }) => {
+test("the chat cog stays available and delivery actions stay aligned during an active turn", async ({ page }) => {
   await page.setViewportSize({ height: 600, width: 900 });
   await mockLaunchTerminalSocket(page);
+  const baseSession = sessionPayload();
   const selectedSession = {
-    ...sessionPayload(),
+    ...baseSession,
+    agentSession: {
+      ...baseSession.agentSession,
+      turn: {
+        active: true,
+        id: "turn-active-chat-controls",
+        state: "active"
+      }
+    },
     assistantSelection: {
       agentId: "codex",
       catalogRevision: TEST_ASSISTANT_CATALOG_REVISION,
@@ -2125,25 +2134,38 @@ test("the chat cog stays a compact selector for the session's available AI", asy
   });
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-  await page.locator("button[aria-label='Choose AI']:visible").click();
+  const assistantMenuButton = page.locator("button[aria-label='Choose AI']:visible");
+  await expect(assistantMenuButton).toBeEnabled();
+  await assistantMenuButton.click();
 
   const selector = page.getByLabel("AI session selector");
   await expect(selector).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(selector.getByLabel("Provider")).toHaveValue("OpenAI");
-  await expect(selector.getByLabel("Model")).toHaveValue("GPT-5.6 Sol");
+  await expect(selector.getByRole("button", { name: "GPT-5.6 Sol" })).toBeDisabled();
+  await expect(selector.getByRole("button", { name: "Extra high" })).toBeDisabled();
+  await expect(selector.getByText(
+    "AI choices are view-only while the assistant is working.",
+    { exact: true }
+  )).toBeVisible();
   await expect(selector.getByText("OpenCode", { exact: true })).toHaveCount(0);
   await expect(selector.getByRole("button", { name: "Apply" })).toBeDisabled();
-  const desktopBox = await selector.boundingBox();
-  expect(desktopBox?.width).toBeLessThanOrEqual(360);
-  expect(desktopBox?.height).toBeLessThanOrEqual(400);
 
+  await page.keyboard.press("Escape");
+  await expect(selector).not.toBeVisible();
   await page.setViewportSize({ height: 700, width: 390 });
-  await expect.poll(() => selector.evaluate((element) => (
-    element.scrollWidth <= element.clientWidth
+  const steerButton = page.getByRole("button", { name: "Steer assistant" });
+  await expect(steerButton).toBeVisible();
+  const [assistantMenuBox, steerBox] = await Promise.all([
+    assistantMenuButton.boundingBox(),
+    steerButton.boundingBox()
+  ]);
+  expect(Math.abs(
+    (assistantMenuBox?.y || 0) + (assistantMenuBox?.height || 0) / 2 -
+    ((steerBox?.y || 0) + (steerBox?.height || 0) / 2)
+  )).toBeLessThanOrEqual(1);
+  expect(await page.evaluate(() => (
+    document.documentElement.scrollWidth <= window.innerWidth
   ))).toBe(true);
-  const mobileBox = await selector.boundingBox();
-  expect(mobileBox?.width).toBeLessThanOrEqual(358);
 });
 
 test("chat source links open the editor and editor autosaves file changes", async ({ page }) => {

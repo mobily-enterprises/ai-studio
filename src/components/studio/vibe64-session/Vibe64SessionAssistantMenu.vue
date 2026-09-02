@@ -11,27 +11,41 @@
         aria-label="Choose AI"
         class="vibe64-session-assistant-menu__button"
         density="comfortable"
-        :disabled="disabled"
         :icon="mdiCogOutline"
+        rounded="lg"
         size="small"
         :title="buttonTitle"
         type="button"
-        variant="flat"
+        variant="tonal"
       />
     </template>
 
     <v-sheet
       aria-label="AI session selector"
+      border
       class="vibe64-session-assistant-menu"
-      rounded="lg"
+      :elevation="3"
+      rounded="xl"
     >
       <header class="vibe64-session-assistant-menu__header">
-        <v-icon :icon="mdiBrain" size="20" />
+        <v-avatar color="primary" size="36" variant="tonal">
+          <v-icon :icon="mdiBrain" size="20" />
+        </v-avatar>
         <div>
-          <strong>AI Controls</strong>
-          <span>{{ selectionSummary }}</span>
+          <strong class="text-title-small">AI controls</strong>
+          <span class="text-body-small">{{ selectionSummary }}</span>
         </div>
       </header>
+
+      <v-sheet
+        v-if="changesDisabled"
+        class="vibe64-session-assistant-menu__view-only"
+        rounded="lg"
+        role="status"
+      >
+        <v-icon :icon="mdiClockOutline" size="18" />
+        <span>AI choices are view-only while the assistant is working.</span>
+      </v-sheet>
 
       <div
         v-if="catalogLoading"
@@ -66,36 +80,46 @@
         >
           <div class="vibe64-session-assistant-menu__label">Provider</div>
           <div class="vibe64-session-assistant-menu__options">
-            <button
+            <v-btn
               v-for="provider in providerRows"
               :key="provider.id"
+              :active="modelProviderId === provider.id"
               :aria-pressed="modelProviderId === provider.id"
               class="vibe64-session-assistant-menu__option"
-              :class="{ 'vibe64-session-assistant-menu__option--active': modelProviderId === provider.id }"
+              :color="modelProviderId === provider.id ? 'primary' : undefined"
+              :disabled="changesDisabled"
+              rounded="lg"
+              size="small"
               type="button"
+              :variant="modelProviderId === provider.id ? 'tonal' : 'outlined'"
               @click="selectProvider(provider.id)"
             >
               <span>{{ provider.label }}</span>
               <v-icon v-if="modelProviderId === provider.id" :icon="mdiCheck" size="15" />
-            </button>
+            </v-btn>
           </div>
         </section>
 
         <section aria-label="Model" class="vibe64-session-assistant-menu__section">
           <div class="vibe64-session-assistant-menu__label">Model</div>
           <div v-if="modelRows.length" class="vibe64-session-assistant-menu__options">
-            <button
+            <v-btn
               v-for="model in modelRows"
               :key="model.id"
+              :active="modelId === model.id && model.status === 'available'"
+              :aria-label="model.status === 'available'
+                ? model.label
+                : `${model.label}. Locked. ${model.lockMessage || 'This model is not available.'}`"
               :aria-pressed="modelId === model.id"
               class="vibe64-session-assistant-menu__option"
-              :class="{
-                'vibe64-session-assistant-menu__option--active': modelId === model.id,
-                'vibe64-session-assistant-menu__option--locked': model.status !== 'available'
-              }"
-              :disabled="model.status !== 'available'"
-              :title="model.status === 'available' ? model.label : model.lockMessage || 'This model is not available.'"
+              :class="{ 'vibe64-session-assistant-menu__option--locked': model.status !== 'available' }"
+              :color="modelId === model.id && model.status === 'available' ? 'primary' : undefined"
+              :disabled="changesDisabled || model.status !== 'available'"
+              rounded="lg"
+              size="small"
+              :title="changesDisabled ? 'Wait for the active turn to finish before changing models.' : (model.status === 'available' ? model.label : model.lockMessage || 'This model is not available.')"
               type="button"
+              :variant="modelId === model.id && model.status === 'available' ? 'tonal' : 'outlined'"
               @click="selectModel(model.id)"
             >
               <span>{{ model.label }}</span>
@@ -105,46 +129,64 @@
                 size="15"
               />
               <v-icon v-else-if="modelId === model.id" :icon="mdiCheck" size="15" />
-            </button>
+            </v-btn>
           </div>
           <span v-else class="vibe64-session-assistant-menu__empty">No available models.</span>
+          <small
+            v-if="modelAccess.configurable && !modelAccessUnlocked"
+            class="vibe64-session-assistant-menu__locked-note"
+          >
+            <v-icon :icon="mdiLockOutline" size="14" />
+            Paid models stay visible but locked in free-only mode.
+          </small>
         </section>
-
-        <v-btn
-          v-if="canRestoreRecommendedModel"
-          block
-          color="primary"
-          :disabled="saving || modelAccessUpdating"
-          size="small"
-          type="button"
-          variant="tonal"
-          @click="restoreRecommendedModel"
-        >
-          {{ saving ? `Switching to ${recommendedModel.label}…` : `Use ${recommendedModel.label}` }}
-        </v-btn>
 
         <section
           v-if="modelAccess.configurable"
           aria-label="Provider model access"
           class="vibe64-session-assistant-menu__section"
         >
-          <div class="vibe64-session-assistant-menu__label">Model access</div>
-          <div class="vibe64-session-assistant-menu__access">
+          <div class="vibe64-session-assistant-menu__label">Z.AI access</div>
+          <v-sheet
+            class="vibe64-session-assistant-menu__access"
+            :class="{ 'vibe64-session-assistant-menu__access--paid': modelAccessUnlocked }"
+            rounded="lg"
+          >
+            <div class="vibe64-session-assistant-menu__access-summary">
+              <v-avatar :color="modelAccessUnlocked ? 'warning' : 'success'" size="36" variant="tonal">
+                <v-icon :icon="modelAccessUnlocked ? mdiCreditCardOutline : mdiShieldCheckOutline" size="19" />
+              </v-avatar>
+              <span>
+                <strong>{{ modelAccessUnlocked ? "Paid models unlocked" : "Free-only mode" }}</strong>
+                <small>
+                  {{ modelAccessUnlocked
+                    ? "Other Z.AI models can consume API credit."
+                    : `${recommendedModel?.label || "The recommended model"} stays available without paid credit.` }}
+                </small>
+              </span>
+            </div>
             <v-switch
               color="primary"
-              density="compact"
-              :disabled="!canConfigure || modelAccessUpdating || saving"
+              :disabled="changesDisabled || !canConfigure || modelAccessUpdating || saving"
               hide-details
+              inset
               :label="modelAccessUpdating ? modelAccessPendingLabel : modelAccess.label"
               :model-value="modelAccessUnlocked"
-              @update:model-value="requestModelAccessChange"
+              @click.prevent="requestModelAccessChange(!modelAccessUnlocked)"
             />
-            <small>
-              {{ modelAccessUnlocked
-                ? "Paid Z.AI models are selectable and can consume API credit."
-                : `${recommendedModel?.label || "The recommended model"} stays available without paid-model access.` }}
-            </small>
-          </div>
+            <v-btn
+              v-if="canRestoreRecommendedModel"
+              block
+              color="primary"
+              :disabled="changesDisabled || saving || modelAccessUpdating"
+              size="small"
+              type="button"
+              variant="tonal"
+              @click="restoreRecommendedModel"
+            >
+              {{ saving ? `Switching to ${recommendedModel.label}…` : `Use ${recommendedModel.label}` }}
+            </v-btn>
+          </v-sheet>
         </section>
 
         <section
@@ -154,18 +196,23 @@
         >
           <div class="vibe64-session-assistant-menu__label">Thinking</div>
           <div class="vibe64-session-assistant-menu__options">
-            <button
+            <v-btn
               v-for="variant in variantRows"
               :key="variant.id || 'automatic'"
+              :active="variantId === variant.id"
               :aria-pressed="variantId === variant.id"
               class="vibe64-session-assistant-menu__option"
-              :class="{ 'vibe64-session-assistant-menu__option--active': variantId === variant.id }"
+              :color="variantId === variant.id ? 'primary' : undefined"
+              :disabled="changesDisabled"
+              rounded="lg"
+              size="small"
               type="button"
+              :variant="variantId === variant.id ? 'tonal' : 'outlined'"
               @click="selectVariant(variant.id)"
             >
               <span>{{ variant.label }}</span>
               <v-icon v-if="variantId === variant.id" :icon="mdiCheck" size="15" />
-            </button>
+            </v-btn>
           </div>
         </section>
       </div>
@@ -173,6 +220,7 @@
       <footer class="vibe64-session-assistant-menu__actions">
         <v-btn
           v-if="canConfigure"
+          :disabled="changesDisabled"
           size="small"
           variant="text"
           @click="openConnectionSettings"
@@ -194,12 +242,21 @@
 
     <v-dialog v-model="unlockConfirmOpen" max-width="31rem" persistent>
       <v-card rounded="xl">
-        <v-card-title>{{ modelAccess.label || "Unlock provider models" }}?</v-card-title>
-        <v-card-text>
+        <v-card-item class="vibe64-session-assistant-menu__confirm-header">
+          <template #prepend>
+            <v-avatar color="warning" size="44" variant="tonal">
+              <v-icon :icon="mdiCreditCardOutline" size="23" />
+            </v-avatar>
+          </template>
+          <v-card-title>{{ modelAccess.label || "Unlock provider models" }}?</v-card-title>
+          <v-card-subtitle class="vibe64-session-assistant-menu__confirm-subtitle">
+            GLM-4.7 Flash stays available either way.
+          </v-card-subtitle>
+        </v-card-item>
+        <v-card-text class="text-body-medium">
           {{ modelAccess.warning || "These models may consume paid provider credit." }}
         </v-card-text>
-        <v-card-actions>
-          <v-spacer />
+        <v-card-actions class="vibe64-session-assistant-menu__confirm-actions">
           <v-btn :disabled="modelAccessUpdating" type="button" variant="text" @click="unlockConfirmOpen = false">
             Keep free only
           </v-btn>
@@ -220,7 +277,15 @@
 
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
-import { mdiBrain, mdiCheck, mdiCogOutline, mdiLockOutline } from "@mdi/js";
+import {
+  mdiBrain,
+  mdiCheck,
+  mdiClockOutline,
+  mdiCogOutline,
+  mdiCreditCardOutline,
+  mdiLockOutline,
+  mdiShieldCheckOutline
+} from "@mdi/js";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 
@@ -249,7 +314,7 @@ const props = defineProps({
     default: false,
     type: Boolean
   },
-  disabled: {
+  changesDisabled: {
     default: false,
     type: Boolean
   },
@@ -369,6 +434,7 @@ const selectionChanged = computed(() => {
   ));
 });
 const canSave = computed(() => Boolean(
+  !props.changesDisabled &&
   selectionChanged.value &&
   selectedProvider.value &&
   selectedModel.value &&
@@ -392,7 +458,7 @@ const selectionSummary = computed(() => {
 const buttonTitle = computed(() => (
   `Choose AI${selectionSummary.value ? `: ${selectionSummary.value}` : ""}${
     !props.accessLoading && accessLabel.value ? ` · ${accessLabel.value}` : ""
-  }`
+  }${props.changesDisabled ? " · Changes available after the current turn" : ""}`
 ));
 const updateCommand = useCommand({
   access: "never",
@@ -446,6 +512,7 @@ function hydrateSelection() {
 }
 
 function selectProvider(value = "") {
+  if (props.changesDisabled) return;
   modelProviderId.value = String(value || "");
   modelId.value = "";
   agentId.value = "";
@@ -453,12 +520,14 @@ function selectProvider(value = "") {
 }
 
 function selectModel(value = "") {
+  if (props.changesDisabled) return;
   modelId.value = String(value || "");
   agentId.value = "";
   variantId.value = "";
 }
 
 function selectVariant(value = "") {
+  if (props.changesDisabled) return;
   variantId.value = String(value || "");
 }
 
@@ -492,6 +561,7 @@ function selectionForModel(model = null) {
 }
 
 function openConnectionSettings() {
+  if (props.changesDisabled) return;
   menuOpen.value = false;
   requestVibe64AccountConnectionsDialog({ section: "ai" });
 }
@@ -499,7 +569,7 @@ function openConnectionSettings() {
 async function applySelection(selection, { closeMenu = true } = {}) {
   const sessionId = String(props.session?.sessionId || "").trim();
   const sessionsPath = String(readRefOrGetterValue(props.sessionsApiPath) || "").trim();
-  if (!selection || !sessionId || !sessionsPath || saving.value) {
+  if (props.changesDisabled || !selection || !sessionId || !sessionsPath || saving.value) {
     return null;
   }
   saving.value = true;
@@ -531,7 +601,7 @@ async function restoreRecommendedModel({ closeMenu = true } = {}) {
 }
 
 function requestModelAccessChange(unlocked) {
-  if (!props.canConfigure || modelAccessUpdating.value || saving.value) return;
+  if (props.changesDisabled || !props.canConfigure || modelAccessUpdating.value || saving.value) return;
   if (unlocked === true) {
     unlockConfirmOpen.value = true;
     return;
@@ -549,6 +619,7 @@ async function updateModelAccess(unlocked) {
   const path = vibe64AssistantModelAccessPath(catalog.apiPath.value);
   if (
     !props.canConfigure ||
+    props.changesDisabled ||
     !providerId ||
     !path ||
     !modelAccess.value.configurable ||
@@ -633,11 +704,6 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
 
 <style scoped>
 .vibe64-session-assistant-menu__button {
-  background: var(--studio-control-bg, #fff) !important;
-  border: 1px solid var(--studio-control-border, rgba(17, 24, 39, 0.12));
-  border-radius: 7px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08) !important;
-  color: var(--studio-control-text, #202124) !important;
   flex: 0 0 2rem;
   height: 2rem;
   min-height: 2rem;
@@ -646,21 +712,22 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
 }
 
 .vibe64-session-assistant-menu {
-  border: 1px solid rgba(var(--v-theme-outline), 0.18);
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
   display: grid;
-  gap: 0.65rem;
+  gap: 0.75rem;
+  max-height: calc(100vh - 2rem);
   max-width: calc(100vw - 2rem);
-  min-width: min(22rem, calc(100vw - 2rem));
-  padding: 0.7rem;
+  min-width: min(24rem, calc(100vw - 2rem));
+  overflow-y: auto;
+  padding: 0.75rem;
+  width: min(24rem, calc(100vw - 2rem));
 }
 
 .vibe64-session-assistant-menu__header {
   align-items: center;
   border-bottom: 1px solid rgba(var(--v-theme-outline), 0.12);
   display: flex;
-  gap: 0.55rem;
-  padding: 0.1rem 0.1rem 0.6rem;
+  gap: 0.65rem;
+  padding: 0.1rem 0.1rem 0.7rem;
 }
 
 .vibe64-session-assistant-menu__header > div {
@@ -668,17 +735,22 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
   min-width: 0;
 }
 
-.vibe64-session-assistant-menu__header strong {
-  font-size: 0.9rem;
-  line-height: 1.25;
-}
-
 .vibe64-session-assistant-menu__header span {
   color: rgba(var(--v-theme-on-surface), 0.65);
-  font-size: 0.78rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vibe64-session-assistant-menu__view-only {
+  align-items: center;
+  background: rgba(var(--v-theme-primary), 0.08);
+  color: rgba(var(--v-theme-on-surface), 0.78);
+  display: flex;
+  font-size: 0.78rem;
+  gap: 0.5rem;
+  line-height: 1.35;
+  padding: 0.6rem 0.7rem;
 }
 
 .vibe64-session-assistant-menu__choices,
@@ -708,63 +780,57 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
 }
 
 .vibe64-session-assistant-menu__option {
-  align-items: center;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-outline), 0.16);
-  border-radius: 7px;
-  color: rgb(var(--v-theme-on-surface));
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-size: 0.82rem;
-  gap: 0.34rem;
   letter-spacing: 0;
-  line-height: 1.2;
-  min-height: 2rem;
-  padding: 0.34rem 0.52rem;
-  text-align: left;
+  min-height: 2.5rem;
+  text-transform: none;
 }
 
-.vibe64-session-assistant-menu__option:hover {
-  background: rgba(var(--v-theme-primary), 0.06);
+.vibe64-session-assistant-menu__option--locked {
+  opacity: 0.62;
 }
 
-.vibe64-session-assistant-menu__option--locked,
-.vibe64-session-assistant-menu__option:disabled {
-  background: rgba(var(--v-theme-on-surface), 0.035);
-  color: rgba(var(--v-theme-on-surface), 0.46);
-  cursor: not-allowed;
-}
-
-.vibe64-session-assistant-menu__option:focus-visible {
-  outline: 2px solid rgb(var(--v-theme-primary));
-  outline-offset: 2px;
-}
-
-.vibe64-session-assistant-menu__option--active {
-  background: rgba(var(--v-theme-primary), 0.09);
-  border-color: rgba(var(--v-theme-primary), 0.36);
-  color: rgb(var(--v-theme-primary));
-  font-weight: 650;
-}
-
-.vibe64-session-assistant-menu__empty {
+.vibe64-session-assistant-menu__empty,
+.vibe64-session-assistant-menu__locked-note {
   color: rgba(var(--v-theme-on-surface), 0.62);
   font-size: 0.82rem;
   padding: 0.35rem 0.12rem;
 }
 
-.vibe64-session-assistant-menu__access {
-  background: rgba(var(--v-theme-primary), 0.045);
-  border: 1px solid rgba(var(--v-theme-outline), 0.14);
-  border-radius: 8px;
-  display: grid;
-  gap: 0.15rem;
-  padding: 0.35rem 0.55rem 0.5rem;
+.vibe64-session-assistant-menu__locked-note {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  padding-block: 0.1rem;
 }
 
-.vibe64-session-assistant-menu__access small {
-  color: rgba(var(--v-theme-on-surface), 0.65);
+.vibe64-session-assistant-menu__access {
+  background: rgba(var(--v-theme-primary), 0.08);
+  border: 1px solid rgba(var(--v-theme-primary), 0.14);
+  color: rgb(var(--v-theme-on-surface));
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.7rem;
+}
+
+.vibe64-session-assistant-menu__access--paid {
+  background: rgba(var(--v-theme-warning), 0.1);
+  border-color: rgba(var(--v-theme-warning), 0.2);
+}
+
+.vibe64-session-assistant-menu__access-summary {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+}
+
+.vibe64-session-assistant-menu__access-summary > span:last-child {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.vibe64-session-assistant-menu__access-summary small {
+  color: rgba(var(--v-theme-on-surface), 0.72);
   line-height: 1.35;
 }
 
@@ -781,10 +847,28 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
 
 .vibe64-session-assistant-menu__actions {
   align-items: center;
+  border-top: 1px solid rgba(var(--v-theme-outline), 0.12);
   display: grid;
   gap: 0.4rem;
   grid-template-columns: auto 1fr auto;
   min-height: 2.5rem;
+  padding-top: 0.4rem;
+}
+
+.vibe64-session-assistant-menu__confirm-header {
+  padding: 1.25rem 1.25rem 0.5rem;
+}
+
+.vibe64-session-assistant-menu__confirm-actions {
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 0.75rem 1.25rem 1.25rem;
+}
+
+.vibe64-session-assistant-menu__confirm-subtitle {
+  overflow: visible;
+  text-overflow: initial;
+  white-space: normal;
 }
 
 @media (pointer: coarse) {
@@ -798,6 +882,17 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
 
   .vibe64-session-assistant-menu__option {
     min-height: 3rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .vibe64-session-assistant-menu__confirm-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .vibe64-session-assistant-menu__confirm-actions .v-btn {
+    width: 100%;
   }
 }
 </style>
