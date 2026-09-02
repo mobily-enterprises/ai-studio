@@ -9,7 +9,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
-  agentPreviewBrowserWorkerSource
+  agentPreviewBrowserWorkerSource,
+  agentPreviewWrapperSource
 } from "../../packages/vibe64-execution/src/server/index.js";
 import {
   PREVIEW_IDENTITY_CONTROL_PATH
@@ -40,6 +41,23 @@ test("managed screenshot helpers inject dependencies across the serialized worke
   assert.doesNotMatch(metricsSource, /\binflateSync\b/u);
   assert.doesNotMatch(workerSource, /const pngPaethPredictor =/u);
   assert.match(workerSource, /pngVisualMetrics\(bytes, inflateSync\)/u);
+});
+
+test("managed preview control leaves operation deadlines to the operation owner", () => {
+  const wrapperSource = agentPreviewWrapperSource({
+    managedNodePath: "/runtime/node",
+    workerScriptPath: "/runtime/preview-browser-worker"
+  });
+
+  assert.doesNotMatch(wrapperSource, /timeoutMs: 5000/u);
+  assert.match(
+    wrapperSource,
+    /vibe64_agent_control_timeout: Managed preview control timed out\. Retry the command\./u
+  );
+  assert.doesNotMatch(
+    wrapperSource,
+    /\["ECONNREFUSED", "ENOENT", "ENOTSOCK", "ETIMEDOUT"\]/u
+  );
 });
 
 function wait(ms) {
@@ -294,6 +312,7 @@ exports.chromium = {
 }
 
 function createReadyPreviewCommandService({
+  onEnsurePreview = null,
   selectPreviewIdentity = null,
   previewUrl,
   runManagedCommand,
@@ -303,6 +322,7 @@ function createReadyPreviewCommandService({
   return createAgentPreviewCommandService({
     launchTarget: {
       async ensurePreview() {
+        onEnsurePreview?.();
         return {
           id: terminalId(),
           ok: true
@@ -361,6 +381,65 @@ test("agent preview help distinguishes duplicate previews from explicit referenc
   assert.match(result.stdout, /vibe64-playwright \[--identity <default\|guest\|configured-name>\] test/u);
   assert.doesNotMatch(result.stdout, /only preview server the agent may use/u);
   assert.doesNotMatch(result.stdout, /any other development server/u);
+});
+
+test("managed preview browser eval validates stdin before starting browser control", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-browser-eval-input-"));
+  const sessionId = "browser-eval-input-session";
+  let ensureCalls = 0;
+  const commandService = createReadyPreviewCommandService({
+    onEnsurePreview: () => {
+      ensureCalls += 1;
+    },
+    previewUrl: "https://preview.example.test/"
+  });
+  try {
+    const prepared = await prepareAgentPreviewCommand({
+      commandService,
+      sessionId,
+      wrapperHostDir: root
+    });
+    const commandEnv = {
+      ...process.env,
+      ...prepared.env
+    };
+    const help = await execWithInput(prepared.hostWrapperPath, [
+      "browser",
+      "eval",
+      "--help"
+    ], {
+      env: commandEnv
+    });
+
+    assert.equal(help.stdout, "Usage: vibe64-preview browser eval < playwright-code.js\n");
+    await assert.rejects(
+      execWithInput(prepared.hostWrapperPath, [
+        "browser",
+        "eval",
+        "return page.url();"
+      ], {
+        env: commandEnv
+      }),
+      /Playwright code must be provided on stdin, not as a positional argument/u
+    );
+    await assert.rejects(
+      execWithInput(prepared.hostWrapperPath, ["browser", "eval"], {
+        env: commandEnv,
+        input: " \n"
+      }),
+      /Playwright code is required on stdin/u
+    );
+    assert.equal(ensureCalls, 0);
+    await assert.rejects(stat(prepared.hostBrowserSocketPath), {
+      code: "ENOENT"
+    });
+  } finally {
+    await commandService.closeAllForSession(sessionId);
+    await rm(root, {
+      force: true,
+      recursive: true
+    });
+  }
 });
 
 test("agent preview identity authorization uses configured names without Vibe64 viewer data", async () => {

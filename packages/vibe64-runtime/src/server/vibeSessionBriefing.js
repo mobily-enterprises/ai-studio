@@ -7,7 +7,7 @@ function text(value = "") {
 function vibeManagedPreviewPolicyInstruction() {
   return [
     "- The Vibe64-managed preview is the canonical server for the primary application. Do not start a duplicate server on another port.",
-    "- Use `vibe64-preview status`, `vibe64-preview screenshot`, `vibe64-preview logs`, and `vibe64-preview browser eval` for browser inspection, interaction, responsive checks, and rendered proof. These commands do not depend on the project's Playwright configuration.",
+    "- Use `vibe64-preview status`, `vibe64-preview screenshot`, `vibe64-preview logs`, and `vibe64-preview browser eval` for browser inspection, interaction, responsive checks, and rendered proof. `vibe64-preview browser eval` accepts Playwright code only on stdin (`vibe64-preview browser eval < playwright-code.js`), never as a positional argument. These commands do not depend on the project's Playwright configuration.",
     "- The Vibe64-managed preview browser owns all interactive browsing, including external and reference sites; do not launch or install another browser CLI.",
     "- Use `vibe64-playwright` only when running an existing, already-configured project Playwright suite. If that suite has a missing or stale JavaScript dependency or config, report the project-test blocker once; do not install or change JSKIT, Playwright, Chrome, Chromium, browser payloads, or alternate test configurations merely to obtain browser evidence.",
     "- When a project generator accepts a Playwright version, pass the exact version from `VIBE64_PLAYWRIGHT_VERSION`. If it is unavailable, report the platform blocker; never choose or download another browser version.",

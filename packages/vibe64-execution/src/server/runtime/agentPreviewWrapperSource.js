@@ -19,6 +19,7 @@ const controlSocketPath = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_SOCKET
 const controlToken = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_TOKEN || "").trim();
 const controlGeneration = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_GENERATION || "").trim();
 const sessionId = String(process.env.VIBE64_AGENT_PREVIEW_COMMAND_SESSION_ID || "").trim();
+const browserEvalUsage = "Usage: vibe64-preview browser eval < playwright-code.js";
 const workerToken = crypto.createHash("sha256")
   .update(["vibe64-preview-browser", sessionId, controlGeneration, controlToken].join("\\n"))
   .digest("hex");
@@ -114,11 +115,16 @@ async function controlRequest(requestPath, input = {}) {
         token: controlToken
       },
       requestPath,
-      socketPath: controlSocketPath,
-      timeoutMs: 5000
+      socketPath: controlSocketPath
     });
   } catch (error) {
-    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK", "ETIMEDOUT"].includes(String(error?.code || ""))) {
+    const errorCode = String(error?.code || "");
+    if (errorCode === "ETIMEDOUT") {
+      const timedOut = new Error("vibe64_agent_control_timeout: Managed preview control timed out. Retry the command.");
+      timedOut.code = "vibe64_agent_control_timeout";
+      throw timedOut;
+    }
+    if (["ECONNREFUSED", "ENOENT", "ENOTSOCK"].includes(errorCode)) {
       const unavailable = new Error("vibe64_agent_control_unavailable: Managed preview control is unavailable. Reconnect the assistant.");
       unavailable.code = "vibe64_agent_control_unavailable";
       throw unavailable;
@@ -458,8 +464,19 @@ try {
       process.exit(0);
     }
     if (browserCommand === "eval") {
+      if (browserArgs.length === 1 && ["--help", "-h"].includes(browserArgs[0])) {
+        process.stdout.write(browserEvalUsage + "\\n");
+        process.exit(0);
+      }
+      if (browserArgs.length > 0) {
+        fail("Playwright code must be provided on stdin, not as a positional argument.\\n" + browserEvalUsage, 64);
+      }
+      const code = await readStdin();
+      if (!code.trim()) {
+        fail("Playwright code is required on stdin.\\n" + browserEvalUsage, 64);
+      }
       printJson(await interactiveCommand("eval", {
-        code: await readStdin()
+        code
       }));
       process.exit(0);
     }
