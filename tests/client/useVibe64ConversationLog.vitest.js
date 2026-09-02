@@ -144,6 +144,12 @@ describe("useVibe64ConversationLog", () => {
           turnId: "000001",
           user: {
             at: "2026-05-25T01:02:00.000Z",
+            attachments: [
+              {
+                fileName: "report.md",
+                size: 15379
+              }
+            ],
             role: "user",
             text: "Please check this."
           }
@@ -175,6 +181,12 @@ describe("useVibe64ConversationLog", () => {
         messages: [
           {
             at: "2026-05-25T01:02:00.000Z",
+            attachments: [
+              {
+                fileName: "report.md",
+                size: 15379
+              }
+            ],
             role: "user",
             text: "Please check this."
           },
@@ -205,6 +217,12 @@ describe("useVibe64ConversationLog", () => {
         turnId: "000001",
         user: {
           at: "2026-05-25T01:02:00.000Z",
+          attachments: [
+            {
+              fileName: "report.md",
+              size: 15379
+            }
+          ],
           role: "user",
           text: "Please check this."
         }

@@ -8,6 +8,8 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-sessions/src/server/inputSchemas.js`
 - `packages/vibe64-sessions/src/server/registerRoutes.js`
 - `packages/vibe64-sessions/src/server/service.js`
+- `packages/vibe64-runtime/src/server/sessionStore.js`
+- `packages/vibe64-runtime/src/shared/conversationAttachments.js`
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
@@ -36,9 +38,11 @@ including follow-up guidance while a turn is active.
 - `src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationLog.vue`
+- `src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue`
 - `src/components/studio/vibe64-session/Vibe64PromptHints.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue`
+- `src/lib/vibe64ChatMessage.js`
 - `vite.config.mjs`
 
 ## Public contract
@@ -51,6 +55,9 @@ be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
+Sent attachments remain distinct from the person's message as compact,
+read-only file details. Their safe file names and sizes remain durable with the
+conversation, while temporary provider paths stay out of visible history.
 
 Vibe64 expands the session's opening project request with Genesis guidance once.
 Ordinary follow-ups and active-turn steering remain ordinary conversation

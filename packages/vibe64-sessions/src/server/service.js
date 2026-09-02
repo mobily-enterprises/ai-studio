@@ -717,6 +717,9 @@ function createService({
       try {
         result = await terminals.sendAgentMessage(sessionId, {
           attachmentIds: pending.attachmentIds,
+          ...(pending.displayAttachments?.length
+            ? { displayAttachments: pending.displayAttachments }
+            : {}),
           displayMessage: [
             `Suggested by ${pending.author.displayName} (${pending.author.username}); approved by ${pending.decidedBy.displayName} (${pending.decidedBy.username}).`,
             pending.displayMessage || pending.message
@@ -1601,6 +1604,7 @@ function createService({
           const suggestion = newSessionMessageSuggestion({
             attachmentIds: input.attachmentIds,
             author: vibe64User,
+            displayAttachments: input.displayAttachments,
             displayMessage: input.displayMessage,
             id: crypto.randomUUID(),
             message: request

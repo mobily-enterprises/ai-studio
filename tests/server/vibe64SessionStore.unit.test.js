@@ -1607,7 +1607,12 @@ test("plain session store persists paged conversation messages", async () => {
       runtimeKind: "genesis",
       sessionId: "conversation"
     });
+    const attachments = [{
+      fileName: "screenshot.png",
+      size: 2048
+    }];
     await store.writeConversationUserMessage("conversation", {
+      attachments,
       text: "Add search."
     });
     await store.writeConversationAssistantMessage("conversation", {
@@ -1619,8 +1624,12 @@ test("plain session store persists paged conversation messages", async () => {
     });
     assert.equal(page.conversationLog.length, 1);
     assert.equal(page.conversationLog[0].user.text, "Add search.");
+    assert.deepEqual(page.conversationLog[0].user.attachments, attachments);
     assert.equal(page.conversationLog[0].assistant.text, "I’ll add it.");
     assert.equal(page.pagination.hasMoreBefore, false);
+
+    const reloadedConversation = await createStore(targetRoot).readConversationLog("conversation");
+    assert.deepEqual(reloadedConversation[0].user.attachments, attachments);
   });
 });
 

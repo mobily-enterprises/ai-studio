@@ -16,6 +16,9 @@ import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
 import {
+  normalizeVibe64ConversationAttachments
+} from "../shared/conversationAttachments.js";
+import {
   clearVibe64CurrentSessionAliasIfMatches,
   readVibe64CurrentSessionAlias,
   resolveVibe64CurrentSessionAliasPath,
@@ -123,6 +126,7 @@ const CONVERSATION_MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const CONVERSATION_MESSAGE_FILE_PATTERN =
   /^(user|assistant|commentary|system|thinking)\.(\d{8}T\d{9}Z)(?:\.([A-Za-z0-9][A-Za-z0-9_-]{0,127}))?\.md$/u;
 const CONVERSATION_TURN_ID_PATTERN = /^\d{6}$/u;
+const CONVERSATION_TURN_ATTACHMENTS_FILE = "attachments.json";
 const CONVERSATION_TURN_METADATA_FILE = "metadata.json";
 const SESSION_SOURCE_DESCRIPTOR_METADATA_NAMES = Object.freeze([
   "base_commit",
@@ -2182,14 +2186,20 @@ function createVibe64SessionStore({
     const messages = (await Promise.all(
       fileNames.map((fileName) => readConversationMessage(sessionPaths, turnId, fileName))
     )).filter((message) => message && message.text);
-    const user = messages.find((message) => message.role === "user") || null;
+    const storedUser = messages.find((message) => message.role === "user") || null;
     const assistant = messages.find((message) => message.role === "assistant") || null;
     const commentary = messages.filter((message) => message.role === "commentary");
     const system = messages.find((message) => message.role === "system") || null;
     const thinking = messages.filter((message) => message.role === "thinking");
     const activity = [...thinking, ...commentary]
       .sort((left, right) => left.at.localeCompare(right.at));
-    const metadata = await readConversationTurnMetadata(sessionPaths, turnId);
+    const [attachments, metadata] = await Promise.all([
+      readConversationTurnAttachments(sessionPaths, turnId),
+      readConversationTurnMetadata(sessionPaths, turnId)
+    ]);
+    const user = storedUser && attachments.length
+      ? { ...storedUser, attachments }
+      : storedUser;
     return {
       assistant,
       commentary,
@@ -2200,6 +2210,29 @@ function createVibe64SessionStore({
       turnId,
       user
     };
+  }
+
+  async function readConversationTurnAttachments(sessionPaths, turnId) {
+    const source = await readTextIfExists(path.join(
+      conversationTurnRoot(sessionPaths, turnId),
+      CONVERSATION_TURN_ATTACHMENTS_FILE
+    ));
+    if (!source) {
+      return [];
+    }
+    try {
+      const value = JSON.parse(source);
+      const attachments = normalizeVibe64ConversationAttachments(value);
+      if (!Array.isArray(value) || attachments.length !== value.length) {
+        throw new TypeError("Conversation attachments must be a valid attachment list.");
+      }
+      return attachments;
+    } catch (error) {
+      throw vibe64Error(
+        `Conversation turn ${turnId} attachments are invalid: ${normalizeText(error?.message) || "unknown error"}`,
+        "vibe64_invalid_conversation_turn_attachments"
+      );
+    }
   }
 
   async function readConversationTurnMetadata(sessionPaths, turnId) {
@@ -2380,6 +2413,7 @@ function createVibe64SessionStore({
   }
 
   async function writeConversationUserMessage(sessionId, {
+    attachments = [],
     messageId = "",
     text = "",
     turnMetadata = null
@@ -2398,6 +2432,13 @@ function createVibe64SessionStore({
       }
       const turnId = nextConversationTurnId(await conversationTurnIds(sessionPaths));
       const createdAt = now();
+      const displayAttachments = normalizeVibe64ConversationAttachments(attachments);
+      if (displayAttachments.length) {
+        await writeJsonFile(
+          path.join(conversationTurnRoot(sessionPaths, turnId), CONVERSATION_TURN_ATTACHMENTS_FILE),
+          displayAttachments
+        );
+      }
       if (turnMetadata) {
         await writeJsonFile(
           path.join(conversationTurnRoot(sessionPaths, turnId), CONVERSATION_TURN_METADATA_FILE),

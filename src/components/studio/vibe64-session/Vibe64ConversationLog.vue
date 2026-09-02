@@ -146,6 +146,7 @@
             >
               {{ userMessageExpanded(turn) ? "Show less" : "Read more" }}
             </button>
+            <Vibe64ConversationAttachments :items="turn.user.attachments" />
             <div
               v-if="turn.user.displayAt"
               class="studio-conversation-log__message-footer studio-conversation-log__message-footer--user"
@@ -293,6 +294,7 @@ import {
 } from "@mdi/js";
 import { useScrollToBottom } from "@/composables/useScrollToBottom.js";
 import LongTextPreviewBlocks from "@/components/studio/LongTextPreviewBlocks.vue";
+import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
 import { parseNumberedQuestionPrompt } from "@/lib/vibe64NumberedQuestionSugar.js";
 import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
 import { sourceEditorLinkTarget } from "@/lib/vibe64SourceEditorLinks.js";
@@ -443,6 +445,7 @@ function displayMessage(message = null, {
   if (
     cached &&
     cached.allowNumberedQuestions === allowNumberedQuestions &&
+    cached.attachments === message.attachments &&
     cached.at === message.at &&
     cached.messageId === message.messageId &&
     cached.preserveParagraphLineBreaks === preserveParagraphLineBreaks &&
@@ -484,6 +487,7 @@ function displayMessage(message = null, {
     }
     displayMessageCache.set(normalizedCacheKey, {
       allowNumberedQuestions,
+      attachments: message.attachments,
       at: message.at,
       messageId: message.messageId,
       preserveParagraphLineBreaks,

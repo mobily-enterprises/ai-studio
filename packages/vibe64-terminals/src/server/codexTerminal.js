@@ -11986,7 +11986,8 @@ function createCodexTerminalController({
     sessionId = "",
     text = "",
     messageId = "",
-    turnMetadata = null
+    turnMetadata = null,
+    attachments = []
   ) {
     const normalizedSessionId = normalizeText(sessionId);
     const message = normalizeText(text);
@@ -11998,6 +11999,7 @@ function createCodexTerminalController({
       return null;
     }
     const written = await runtime.store.writeConversationUserMessage(normalizedSessionId, {
+      attachments,
       messageId: normalizeText(messageId),
       text: message,
       turnMetadata
@@ -12367,7 +12369,8 @@ function createCodexTerminalController({
       sessionId,
       displayMessage || message,
       messageId,
-      aiTurnMetadata(aiContext)
+      aiTurnMetadata(aiContext),
+      input?.displayAttachments
     );
     splitCodexAppServerReasoningTurn(threadId, turnId);
     currentSession = await runtime.getSession(sessionId);
@@ -12857,7 +12860,8 @@ function createCodexTerminalController({
           sessionId,
           displayMessage || message,
           messageId,
-          started.turnMetadata || null
+          started.turnMetadata || null,
+          input?.displayAttachments
         );
         return {
           ...started,

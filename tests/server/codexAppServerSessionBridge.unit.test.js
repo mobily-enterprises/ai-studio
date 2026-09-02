@@ -1323,6 +1323,11 @@ test("codex app-server bridge replaces unreadable session threads after an inval
           }
         ],
         user: {
+          attachments: [{
+            fileName: "archive-map.png",
+            path: "/tmp/vibe64-attachments/session/archive-map.png",
+            size: 2048
+          }],
           at: "2026-06-15T01:02:03.000Z",
           role: "user",
           text: "Can we talk about archive scope?"
@@ -1402,6 +1407,8 @@ test("codex app-server bridge replaces unreadable session threads after an inval
   assert.match(providerCalls[3].input, /Previous provider thread:\nthread-stale/u);
   assert.match(providerCalls[3].input, /Fresh provider thread:\nthread-replacement/u);
   assert.match(providerCalls[3].input, /Can we talk about archive scope\?/u);
+  assert.match(providerCalls[3].input, /Attached files:\n- archive-map\.png/u);
+  assert.doesNotMatch(providerCalls[3].input, /\/tmp\/vibe64-attachments/u);
   assert.match(providerCalls[3].input, /Checked the issue draft/u);
   assert.match(providerCalls[3].input, /Assistant Commentary 1/u);
   assert.match(providerCalls[3].input, /I found the archive branch and I’m checking its scope/u);

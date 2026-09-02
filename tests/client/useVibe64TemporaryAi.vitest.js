@@ -603,9 +603,23 @@ describe("useVibe64TemporaryAi", () => {
       }
     );
     const { task, temporary } = await temporaryAiWithDraft();
+    temporary.updateAttachments(task.id, [{
+      attachmentId: "attachment-1",
+      fileName: "conflict.png",
+      path: "/tmp/vibe64-attachments/session/conflict.png",
+      size: 2048
+    }]);
 
     await temporary.send(task.id);
     await flushPromises();
+    expect(temporary.activeTask.value.messages[0]).toMatchObject({
+      attachments: [{
+        fileName: "conflict.png",
+        size: 2048
+      }],
+      role: "user",
+      text: "Explain this conflict."
+    });
     expect(temporary.activeTask.value.messages.at(-1)).toMatchObject({
       progressUpdates: [{ id: "progress:1", text: "Inspecting the conflict." }],
       status: "inProgress"

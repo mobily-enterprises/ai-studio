@@ -126,14 +126,20 @@ test("message suggestions survive restart, retain attachments, and deliver idemp
     const harness = queueHarness(runtime);
     const member = { displayName: "Grace", role: "user", username: "grace" };
     const owner = { displayName: "Ada", role: "owner", username: "ada" };
+    const displayAttachments = [{
+      fileName: "context.png",
+      size: 2048
+    }];
     const created = await harness.service.suggestAgentMessage("session-1", {
       attachmentIds: ["11111111-1111-4111-8111-111111111111"],
+      displayAttachments,
       message: "Please update the tests.",
       originId: "member-tab",
       vibe64User: member
     });
     assert.equal(created.ok, true);
     assert.equal(created.suggestion.author.username, "grace");
+    assert.deepEqual(created.suggestion.displayAttachments, displayAttachments);
     assert.equal(harness.pins.length, 1);
 
     const memberQueue = await harness.service.listMessageSuggestions("session-1", {
@@ -158,6 +164,7 @@ test("message suggestions survive restart, retain attachments, and deliver idemp
     assert.equal(approved.ok, true);
     assert.equal(approved.suggestion.status, "delivered");
     assert.equal(harness.deliveries.length, 1);
+    assert.deepEqual(harness.deliveries[0].displayAttachments, displayAttachments);
     assert.equal(harness.deliveries[0].message, "Please update the tests.");
     assert.equal(
       harness.deliveries[0].messageId,

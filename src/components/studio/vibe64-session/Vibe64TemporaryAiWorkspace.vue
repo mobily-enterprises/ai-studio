@@ -132,6 +132,7 @@
           <span v-else-if="['starting', 'inProgress'].includes(message.status)">Working…</span>
           <span v-else-if="message.status === 'interrupted'">Stopped.</span>
           <span v-else-if="message.status === 'failed'">Temporary AI stopped with an error.</span>
+          <Vibe64ConversationAttachments :items="message.attachments" />
         </article>
       </div>
 
@@ -243,6 +244,7 @@ import {
 
 import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
+import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
 import {
   TEMPORARY_AI_WORKSPACE_WRITE_POLICY,
   useVibe64TemporaryAi

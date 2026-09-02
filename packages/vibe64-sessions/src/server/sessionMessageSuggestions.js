@@ -1,3 +1,7 @@
+import {
+  normalizeVibe64ConversationAttachments
+} from "@local/vibe64-runtime/shared";
+
 const SESSION_MESSAGE_SUGGESTIONS_ARTIFACT = "assistant/message-suggestions.v1.json";
 const SESSION_MESSAGE_SUGGESTIONS_SCHEMA = "vibe64.session-message-suggestions.v1";
 const SESSION_MESSAGE_SUGGESTION_MAX_ATTACHMENTS = 10;
@@ -101,14 +105,19 @@ function strictSuggestion(value = null) {
     );
   }
   const decidedBy = input.decidedBy ? actor(input.decidedBy, "decision actor") : null;
+  const storedAttachmentIds = attachmentIds(input.attachmentIds);
+  const displayAttachments = normalizeVibe64ConversationAttachments(input.displayAttachments)
+    .slice(0, storedAttachmentIds.length)
+    .map(Object.freeze);
   return Object.freeze({
-    attachmentIds: attachmentIds(input.attachmentIds),
+    attachmentIds: storedAttachmentIds,
     author: actor(input.author, "author"),
     createdAt: timestamp(input.createdAt, "creation time"),
     decidedAt: optionalTimestamp(input.decidedAt, "decision time"),
     decidedBy,
     deliveredAt: optionalTimestamp(input.deliveredAt, "delivery time"),
     deliveryAttempts: Math.max(0, Number.parseInt(input.deliveryAttempts, 10) || 0),
+    ...(displayAttachments.length ? { displayAttachments: Object.freeze(displayAttachments) } : {}),
     displayMessage: text(input.displayMessage),
     id,
     lastDeliveryError: text(input.lastDeliveryError).slice(0, 2_000),
@@ -208,6 +217,7 @@ async function writeSessionMessageSuggestionState(store, sessionId = "", state =
 function newSessionMessageSuggestion({
   attachmentIds: attachments = [],
   author: suggestionAuthor,
+  displayAttachments = [],
   displayMessage = "",
   id = "",
   message = "",
@@ -221,6 +231,7 @@ function newSessionMessageSuggestion({
     decidedBy: null,
     deliveredAt: "",
     deliveryAttempts: 0,
+    displayAttachments,
     displayMessage: text(displayMessage),
     id,
     lastDeliveryError: "",

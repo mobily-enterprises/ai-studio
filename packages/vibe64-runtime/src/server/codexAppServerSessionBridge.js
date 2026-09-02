@@ -24,6 +24,9 @@ import {
   Vibe64AgentExecutionProfileError,
   defineVibe64AgentExecutionProfileResolution
 } from "../shared/agentExecutionProfiles.js";
+import {
+  normalizeVibe64ConversationAttachments
+} from "../shared/conversationAttachments.js";
 
 const CODEX_SESSION_AGENT_PROVIDER = "codex";
 const CODEX_SESSION_MODEL = VIBE64_CODEX_DEFAULT_MODEL;
@@ -1180,9 +1183,16 @@ function conversationMessageLines(label = "", message = null) {
     return [];
   }
   const at = normalizeAgentText(message?.at);
+  const attachments = normalizeVibe64ConversationAttachments(message?.attachments);
   return [
     `### ${label}${at ? ` (${at})` : ""}`,
-    text
+    text,
+    ...(attachments.length
+      ? [[
+          "Attached files:",
+          ...attachments.map(({ fileName }) => `- ${fileName}`)
+        ].join("\n")]
+      : [])
   ];
 }
 

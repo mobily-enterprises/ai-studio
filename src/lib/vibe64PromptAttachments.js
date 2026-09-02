@@ -38,12 +38,6 @@ function promptAttachmentReferences(attachments = []) {
     .filter(Boolean);
 }
 
-function promptAttachmentFileNames(attachments = []) {
-  return attachments
-    .map(attachmentFileName)
-    .filter(Boolean);
-}
-
 function escapeRegExp(value = "") {
   return String(value || "").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
@@ -69,18 +63,6 @@ function appendPromptAttachmentReferences(promptText = "", attachments = []) {
   ].filter(Boolean).join("\n\n");
 }
 
-function appendPromptAttachmentFileNames(promptText = "", attachments = []) {
-  const fileNames = promptAttachmentFileNames(attachments);
-  if (fileNames.length < 1) {
-    return String(promptText || "");
-  }
-
-  return [
-    String(promptText || "").trimEnd(),
-    fileNames.join("\n")
-  ].filter(Boolean).join("\n\n");
-}
-
 function removePromptAttachmentReferences(promptText = "", attachments = []) {
   const references = new Set(promptAttachmentReferences(attachments));
   if (references.size < 1) {
@@ -100,10 +82,8 @@ function removePromptAttachmentReferences(promptText = "", attachments = []) {
 
 export {
   ATTACHMENT_SECTION_HEADING,
-  appendPromptAttachmentFileNames,
   appendPromptAttachmentReferences,
   attachmentSizeLabel,
-  promptAttachmentFileNames,
   promptAttachmentReference,
   promptAttachmentReferences,
   removePromptAttachmentReferences

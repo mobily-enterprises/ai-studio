@@ -20,6 +20,7 @@ session history.
 - `src/composables/useVibe64AutopilotView.js`
 - `src/components/studio/Vibe64TemporaryAiFixAction.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
+- `src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue`
 - `src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue`
 
 ## Public contract
@@ -31,6 +32,8 @@ distinct from the durable project conversation. Closing a task stops its live
 turn, deletes its provider conversation and exact uploaded attachments, and
 removes its browser-local state. Tasks are not restored after reload and never
 appear in session History.
+Sent task attachments remain separate from the message as compact, read-only
+file details showing the safe file name and size.
 
 Every product-owned repair entry uses the shared Fix it with AI control. It
 opens, selects, and focuses a separate Temporary AI task immediately. That task

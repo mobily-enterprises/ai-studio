@@ -605,7 +605,7 @@ test("OpenCode capability discovery does not start an app server", async (t) => 
   assert.equal(harness.processStarts.length, 0);
 });
 
-test("OpenCode persists a user message only after upstream admission", async (t) => {
+test("OpenCode persists a user message and its display attachments only after upstream admission", async (t) => {
   const harness = await controllerHarness();
   t.after(async () => {
     await harness.controller.closeAllForProject();
@@ -631,6 +631,10 @@ test("OpenCode persists a user message only after upstream admission", async (t)
   );
 
   const delivered = await harness.controller.sendMessage("session-1", {
+    displayAttachments: [{
+      fileName: "report.md",
+      size: 15360
+    }],
     message: "Second attempt",
     messageId: "client-message-2"
   }, {
@@ -641,6 +645,10 @@ test("OpenCode persists a user message only after upstream admission", async (t)
   assert.equal(delivered.ok, true);
   assert.equal(harness.userMessages.length, 1);
   assert.equal(harness.userMessages[0].messageId, "client-message-2");
+  assert.deepEqual(harness.userMessages[0].attachments, [{
+    fileName: "report.md",
+    size: 15360
+  }]);
   assert.equal(harness.userMessages[0].turnMetadata.engineId, "opencode");
   assert.match(harness.userMessages[0].turnMetadata.upstreamMessageId, /^msg_vibe64_/u);
   assert.equal(harness.processStarts.filter((entry) => (

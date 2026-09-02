@@ -884,6 +884,9 @@ function useVibe64AutopilotView(props, emit, {
   function optimisticMessage(payload = {}, messageId = "") {
     const now = new Date();
     return {
+      attachments: Array.isArray(payload?.displayAttachments)
+        ? payload.displayAttachments
+        : [],
       createdAt: now.toISOString(),
       createdAtMs: now.getTime(),
       error: "",
@@ -1474,6 +1477,7 @@ function useVibe64AutopilotView(props, emit, {
         },
         turnId: message.id,
         user: {
+          attachments: message.attachments,
           at: message.createdAt,
           role: "user",
           text: message.text

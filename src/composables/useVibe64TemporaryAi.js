@@ -406,6 +406,7 @@ function useVibe64TemporaryAi({
       const messages = [
         ...task.messages,
         {
+          attachments: payload.displayAttachments || [],
           id: messageId,
           role: "user",
           status: "completed",

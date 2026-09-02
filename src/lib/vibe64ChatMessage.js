@@ -2,7 +2,9 @@ import {
   vibe64BrowserTabOriginId
 } from "@/lib/vibe64BrowserTabOrigin.js";
 import {
-  appendPromptAttachmentFileNames,
+  normalizeVibe64ConversationAttachments
+} from "@local/vibe64-runtime/shared";
+import {
   appendPromptAttachmentReferences
 } from "@/lib/vibe64PromptAttachments.js";
 
@@ -34,11 +36,13 @@ function chatMessagePayload(message = "", attachments = []) {
   const attachmentIds = files
     .map((attachment) => chatText(attachment?.attachmentId))
     .filter(Boolean);
+  const displayAttachments = normalizeVibe64ConversationAttachments(
+    files.filter((attachment) => chatText(attachment?.attachmentId))
+  );
   return {
     ...(attachmentIds.length ? { attachmentIds } : {}),
-    displayMessage: files.length
-      ? appendPromptAttachmentFileNames(text, files)
-      : text,
+    ...(displayAttachments.length ? { displayAttachments } : {}),
+    displayMessage: text,
     message: files.length
       ? appendPromptAttachmentReferences(text, files)
       : text

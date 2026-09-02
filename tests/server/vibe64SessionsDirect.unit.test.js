@@ -321,19 +321,25 @@ test("typing presence trusts the authenticated request user and never accepts a 
   }]);
 });
 
-test("assistant message action accepts attachment lease ids", () => {
+test("assistant message action accepts attachment lease ids and display details", () => {
   const action = createSessionActions({ sessions: {} })
     .find((candidate) => candidate.id === ACTION_SEND_AGENT_MESSAGE);
   const attachmentId = "33333333-3333-4333-8333-333333333333";
+  const displayAttachments = [{
+    fileName: "screenshot.png",
+    size: 2048
+  }];
 
   assert.deepEqual(action.input.schema.patch({
     attachmentIds: [attachmentId],
+    displayAttachments,
     message: "Inspect this file.",
     sessionId: "session-1"
   }), {
     errors: {},
     validatedObject: {
       attachmentIds: [attachmentId],
+      displayAttachments,
       message: "Inspect this file.",
       sessionId: "session-1"
     }
@@ -466,6 +472,10 @@ test("assistant messages use the plain message contract", async () => {
 
   const result = await service.sendAgentMessage("session-1", {
     attachmentIds: ["33333333-3333-4333-8333-333333333333"],
+    displayAttachments: [{
+      fileName: "screenshot.png",
+      size: 2048
+    }],
     displayMessage: "Inspect screenshot.png",
     message: "Inspect /tmp/screenshot.png",
     messageId: "message:test",
@@ -475,6 +485,10 @@ test("assistant messages use the plain message contract", async () => {
   assert.deepEqual(calls[0][0], "session-1");
   assert.deepEqual(calls[0][1], {
     attachmentIds: ["33333333-3333-4333-8333-333333333333"],
+    displayAttachments: [{
+      fileName: "screenshot.png",
+      size: 2048
+    }],
     displayMessage: "Inspect screenshot.png",
     message: "Inspect /tmp/screenshot.png",
     messageId: "message:test",

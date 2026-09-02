@@ -1696,6 +1696,7 @@ function createOpenCodeTerminalController({
     const conversationTurn = await context.runtime.store.writeConversationUserMessage(
       context.sessionId,
       {
+        attachments: input.displayAttachments,
         messageId,
         text: text(input.displayMessage) || message,
         turnMetadata: {

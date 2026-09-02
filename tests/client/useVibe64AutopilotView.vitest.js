@@ -23,7 +23,11 @@ describe("direct chat messages", () => {
       size: 2048
     }]);
 
-    expect(payload.displayMessage).toBe("Please inspect this.\n\nscreenshot.png");
+    expect(payload.displayMessage).toBe("Please inspect this.");
+    expect(payload.displayAttachments).toEqual([{
+      fileName: "screenshot.png",
+      size: 2048
+    }]);
     expect(payload.attachmentIds).toEqual(["attachment-1"]);
     expect(payload.message).toContain(
       "- screenshot.png (2.0 KB): /tmp/vibe64-attachments/session/screenshot.png"

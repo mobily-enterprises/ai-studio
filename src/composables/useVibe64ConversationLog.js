@@ -28,6 +28,9 @@ import {
 import {
   normalizeThinkingMessageText
 } from "@/lib/vibe64ConversationThinkingText.js";
+import {
+  normalizeVibe64ConversationAttachments
+} from "@local/vibe64-runtime/shared";
 
 const CONVERSATION_LOG_REALTIME_REASONS = new Set([
   "assistant-response-bundle",
@@ -68,8 +71,10 @@ function normalizeConversationMessage(message = {}) {
   if (!role || !text) {
     return null;
   }
+  const attachments = normalizeVibe64ConversationAttachments(message.attachments);
   return {
     at: String(message.at || "").trim(),
+    ...(attachments.length ? { attachments } : {}),
     ...(String(message.messageId || "").trim()
       ? { messageId: String(message.messageId).trim() }
       : {}),

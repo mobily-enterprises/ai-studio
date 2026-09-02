@@ -97,6 +97,14 @@ const agentMessageFields = {
     noTrim: false,
     required: false
   },
+  displayAttachments: {
+    type: "array",
+    items: {
+      type: "object",
+      additionalProperties: true
+    },
+    required: false
+  },
   genesisTask: {
     type: "string",
     enum: ["deslop"],

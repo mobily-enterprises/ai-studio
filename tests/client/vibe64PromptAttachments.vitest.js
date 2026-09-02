@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  appendPromptAttachmentFileNames,
   appendPromptAttachmentReferences,
   promptAttachmentReference,
   removePromptAttachmentReferences
@@ -29,20 +28,6 @@ describe("vibe64PromptAttachments", () => {
       "",
       "Attached files for Codex:",
       "- a.png (2.0 KB): /tmp/vibe64-attachments/session/a.png"
-    ].join("\n"));
-  });
-
-  it("appends only file names for conversation display", () => {
-    expect(appendPromptAttachmentFileNames("Please inspect this.", [
-      {
-        path: "/tmp/vibe64-attachments/session/a.png",
-        fileName: "a.png",
-        size: 2048
-      }
-    ])).toBe([
-      "Please inspect this.",
-      "",
-      "a.png"
     ].join("\n"));
   });
 

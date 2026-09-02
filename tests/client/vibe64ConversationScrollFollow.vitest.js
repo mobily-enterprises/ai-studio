@@ -40,23 +40,33 @@ vi.mock("vuetify/components/VSkeletonLoader", () => ({
 }));
 
 import Vibe64ConversationLog from "../../src/components/studio/vibe64-session/Vibe64ConversationLog.vue";
+import Vibe64ConversationAttachments from "../../src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
 
-const componentPath = path.resolve(
-  "src/components/studio/vibe64-session/Vibe64ConversationLog.vue"
+function attachClientRender(component, sourcePath, id) {
+  const componentPath = path.resolve(sourcePath);
+  const componentSource = fs.readFileSync(componentPath, "utf8");
+  const { descriptor } = parse(componentSource, {
+    filename: componentPath
+  });
+  const componentScript = compileScript(descriptor, { id });
+  const componentTemplate = compile(descriptor.template.content, {
+    bindingMetadata: componentScript.bindings,
+    mode: "function",
+    prefixIdentifiers: true
+  });
+  component.render = new Function("Vue", componentTemplate.code)(VueRuntime);
+}
+
+attachClientRender(
+  Vibe64ConversationLog,
+  "src/components/studio/vibe64-session/Vibe64ConversationLog.vue",
+  "vibe64-conversation-scroll-follow-test"
 );
-const componentSource = fs.readFileSync(componentPath, "utf8");
-const { descriptor } = parse(componentSource, {
-  filename: componentPath
-});
-const componentScript = compileScript(descriptor, {
-  id: "vibe64-conversation-scroll-follow-test"
-});
-const componentTemplate = compile(descriptor.template.content, {
-  bindingMetadata: componentScript.bindings,
-  mode: "function",
-  prefixIdentifiers: true
-});
-Vibe64ConversationLog.render = new Function("Vue", componentTemplate.code)(VueRuntime);
+attachClientRender(
+  Vibe64ConversationAttachments,
+  "src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue",
+  "vibe64-conversation-attachments-test"
+);
 
 function passthroughComponent(element = "div") {
   return defineComponent({
@@ -146,10 +156,11 @@ function nodeText(node) {
   return [node.text || "", ...(node.children || []).map(nodeText)].join("");
 }
 
-function userTurn(id, text = `User ${id}`) {
+function userTurn(id, text = `User ${id}`, attachments = []) {
   return {
     turnId: id,
     user: {
+      ...(attachments.length ? { attachments } : {}),
       at: "2026-08-24T10:00:00.000Z",
       messageId: `${id}-user`,
       role: "user",
@@ -289,6 +300,26 @@ describe("Vibe64 conversation scroll following", () => {
     vi.runAllTimers();
     await nextTick();
   }
+
+  it("renders sent attachments as distinct file details", async () => {
+    const { app, container } = mountConversation({
+      turns: [userTurn("attachment", "Please inspect this.", [{
+        fileName: "screenshot.png",
+        size: 2048
+      }])]
+    });
+    await flushScrollWork();
+
+    const attachments = findNode(
+      container,
+      (node) => node.props?.["aria-label"] === "Attached files"
+    );
+    expect(nodeText(attachments)).toContain("screenshot.png");
+    expect(nodeText(attachments)).toContain("2.0 KB");
+    expect(JSON.stringify(renderedUserPromptBlocks(container))).not.toContain("screenshot.png");
+
+    app.unmount();
+  });
 
   it("collapses only long user prompts and expands them in place", async () => {
     const longPrompt = [
