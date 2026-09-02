@@ -19,6 +19,10 @@ test("Vibe64 briefing keeps browser versions and browser installation under plat
   assert.match(briefing, /exact version from `VIBE64_PLAYWRIGHT_VERSION`/u);
   assert.match(briefing, /never choose or download another browser version/u);
   assert.match(briefing, /Do not start a duplicate server/u);
+  assert.match(
+    briefing,
+    /managed preview browser owns all interactive browsing, including external and reference sites; do not launch or install another browser CLI/u
+  );
 });
 
 test("Vibe64 briefing directs agents to manage scoped Env and report successful mutations", () => {

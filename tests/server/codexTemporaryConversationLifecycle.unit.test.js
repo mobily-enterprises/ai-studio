@@ -3301,14 +3301,6 @@ test("an active chat keeps its provider across environment changes until the nex
       providers[0].startedThreads[0].developerInstructions,
       /Project owner preference: Use examples from the apiary\./u
     );
-    assert.match(
-      providers[0].startedThreads[0].developerInstructions,
-      /github\.com\/openai\/codex\/issues\/23411/u
-    );
-    assert.match(
-      providers[0].startedThreads[0].developerInstructions,
-      /invoke agent-browser and Chrome-family executables by command name through PATH/u
-    );
     assert.match(providers[0].startedThreads[0].developerInstructions, /Assume the user is an expert/u);
     assert.match(providers[0].sentTurns[0].input, /Current actor id: "ada-owner"/u);
     assert.match(providers[0].sentTurns[0].input, /Current actor display name: "Ada"/u);

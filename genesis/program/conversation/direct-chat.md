@@ -149,15 +149,10 @@ Conversation identity, working directory, command environment,
 model settings, and provider history remain session-specific even though the
 resident provider process is shared. Capability discovery without an open
 session may run a bounded command but does not leave another provider service
-running. OpenCode shell commands and any descendants they leave running are
-attributed to the originating project session, and closing that session drains
-those descendants. On a managed host, supported browser commands run through
-Codex's optimized shared command executor are temporarily routed through the
-originating session boundary, so their browser descendants are attributed to
-that session and drain when it closes. Other optimized Codex command
-descendants remain inside the workspace's managed Codex scope because the
-executor does not expose their per-command boundary; they are reported with
-the workspace Codex service and drain when its final session closes.
+running. OpenCode and Codex shell commands and any descendants they leave
+running are attributed to the originating project session through their
+ordinary provider command boundaries, and closing that session drains those
+descendants.
 
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
@@ -236,16 +231,10 @@ an unrelated failure cannot gain an account link merely because of its wording.
   explicit failure if that bounded recovery also returns no text.
 - `prepareAgentSessionCommand()` publishes the authenticated session command
   broker. OpenCode's session environment plugin routes commands through that
-  boundary before execution. Codex can route commands exposed through its
-  pre-tool hook, but optimized Code Mode currently does not emit those command
-  events because of OpenAI Codex issue #23411. While that issue remains,
-  `codexAppServerDeveloperInstructions()` tells Codex to keep supported browser
-  commands PATH-resolved so a managed host's temporary browser-only policy can
-  send them through the broker. That guidance and host policy must be removed
-  when #23411 is fixed; other optimized descendants retain workspace-level
-  ownership. The broker environment applies the same desktop message-bus
-  exclusion so a session-owned descendant remains inside its managed execution
-  scope.
+  boundary before execution, and Codex's `PreToolUse` hook routes Bash commands
+  through the same broker. The broker environment applies the same desktop
+  message-bus exclusion so a session-owned descendant remains inside its
+  managed execution scope.
 - `Vibe64SessionRuntimeHost` selects exactly one interactive terminal from the
   session's immutable engine id and has no cross-engine fallback.
 - `Vibe64SessionRuntime.renderPrompt()` owns Genesis prompt composition.
