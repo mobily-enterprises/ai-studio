@@ -23,20 +23,29 @@ import {
   parseVibe64WorkspaceSetupLines,
   vibe64WorkspaceSetupInspection
 } from "./workspaceSetup.js";
+import {
+  vibe64Driver
+} from "./promptContext.js";
 
 const require = createRequire(import.meta.url);
 
 const {
   GENESIS_CONTRACTS,
+  HOST_CONTEXT_RESOLVER_DATA_ENV,
+  HOST_CONTEXT_RESOLVER_ENV,
+  SESSION_CONTEXT_INSTALLED_ENV,
   addStack,
   check,
   generatePrompt,
   indexCodebase,
   initialize,
+  inspectCollaboration,
   inspectDerivedArtifacts,
   inspectEngineering,
   inspectEnvironment,
   inspectStackSection,
+  projectSessionContext,
+  setCollaboration,
   setEngineeringProfile
 } = genesisCompiler;
 
@@ -108,6 +117,10 @@ function genesisPackageBinDirectory() {
 function genesisCommandShimDirectory() {
   const serverEntrypoint = require.resolve("@local/vibe64-genesis/server");
   return path.resolve(path.dirname(serverEntrypoint), "../../bin");
+}
+
+function vibe64HostContextResolverPath() {
+  return path.resolve(genesisCommandShimDirectory(), "vibe64-genesis-host-context");
 }
 
 function withGenesisCommandShim(shimDirectories = []) {
@@ -206,6 +219,10 @@ function inspectGenesisEngineering(options = {}) {
   return exactGenesisInspection(inspectEngineering, GENESIS_CONTRACTS.engineering, options);
 }
 
+function inspectGenesisCollaboration(options = {}) {
+  return exactGenesisInspection(inspectCollaboration, GENESIS_CONTRACTS.collaboration, options);
+}
+
 async function inspectGenesisProjectFormat(options = {}) {
   const projectRoot = normalizeText(options.projectRoot);
   if (!projectRoot || !path.isAbsolute(projectRoot)) {
@@ -220,6 +237,30 @@ async function inspectGenesisProjectFormat(options = {}) {
 
 function setGenesisEngineeringProfile(options = {}) {
   return exactGenesisInspection(setEngineeringProfile, GENESIS_CONTRACTS.engineering, options);
+}
+
+function setGenesisCollaboration(options = {}) {
+  return exactGenesisInspection(setCollaboration, GENESIS_CONTRACTS.collaboration, options);
+}
+
+function composeVibe64SessionContext({
+  conversationKind,
+  projectRoot,
+  session
+} = {}) {
+  return exactGenesisInspection(
+    (options) => projectSessionContext({
+      ...options,
+      hostDriver: vibe64Driver,
+      hostDriverInput: {
+        conversationKind,
+        scope: "session",
+        session
+      }
+    }),
+    GENESIS_CONTRACTS.sessionContext,
+    { projectRoot }
+  );
 }
 
 async function inspectVibe64Outputs(options = {}) {
@@ -238,18 +279,6 @@ async function inspectVibe64WorkspaceSetup(options = {}) {
   });
 }
 
-function withVibe64ConversationContract(prompt = "") {
-  return [
-    normalizeText(prompt),
-    "",
-    "VIBE64 CONVERSATION",
-    "",
-    "If you need user input, ask no more than three concise, high-impact questions at once.",
-    "When asking multiple questions, put each on its own line as `[1] Question`, `[2] Question`, and so on.",
-    "When a question has a small fixed set of useful answers, finish with `Possible answers:` and a short bullet list. The user can always type a different answer."
-  ].join("\n");
-}
-
 async function renderGenesisPrompt({
   action = {},
   environment = process.env,
@@ -262,18 +291,36 @@ async function renderGenesisPrompt({
   let result;
   try {
     result = await generatePrompt(
-      withVibe64StackCatalog({ environment, projectRoot, request, task }, { prompt: true })
+      withVibe64StackCatalog({
+        environment,
+        projectRoot,
+        request,
+        sessionContextInstalled: true,
+        task
+      }, { prompt: true })
     );
   } catch (error) {
     if (error?.code === "BLUEPRINT_INVALID" && requestedTask !== "blueprint") {
       task = "blueprint";
       result = await generatePrompt(
-        withVibe64StackCatalog({ environment, projectRoot, request, task }, { prompt: true })
+        withVibe64StackCatalog({
+          environment,
+          projectRoot,
+          request,
+          sessionContextInstalled: true,
+          task
+        }, { prompt: true })
       );
     } else if (error?.code === "BLUEPRINT_REQUIRED" && requestedTask !== "start") {
       task = "start";
       result = await generatePrompt(
-        withVibe64StackCatalog({ environment, projectRoot, request, task }, { prompt: true })
+        withVibe64StackCatalog({
+          environment,
+          projectRoot,
+          request,
+          sessionContextInstalled: true,
+          task
+        }, { prompt: true })
       );
     } else {
       throw error;
@@ -289,7 +336,7 @@ async function renderGenesisPrompt({
       warnings: result.warnings
     },
     originalPrompt: request,
-    prompt: withVibe64ConversationContract(result.prompt),
+    prompt: result.prompt,
     promptId: normalizeText(action.promptId || action.id) || effectiveTask
   };
 }
@@ -299,6 +346,9 @@ export {
   GENESIS_DERIVED_ARTIFACT_PATHS,
   GENESIS_MACHINE_CITY_PATH,
   GENESIS_PROGRAM_CITY_PATH,
+  HOST_CONTEXT_RESOLVER_DATA_ENV,
+  HOST_CONTEXT_RESOLVER_ENV,
+  SESSION_CONTEXT_INSTALLED_ENV,
   VIBE64_APPLICATION_DEPLOYMENT_CONTRACT,
   VIBE64_APPLICATION_DEPLOYMENT_SECTION,
   VIBE64_OUTPUTS_CONTRACT,
@@ -308,11 +358,13 @@ export {
   VIBE64_WORKSPACE_SETUP_SECTION,
   addGenesisStack,
   assertGenesisPromptTask,
+  composeVibe64SessionContext,
   genesisPackageBinDirectory,
   genesisCommandShimDirectory,
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisCollaboration,
   inspectGenesisDerivedArtifacts,
   inspectGenesisEngineering,
   inspectGenesisProjectFormat,
@@ -326,7 +378,9 @@ export {
   parseVibe64WorkspaceSetupLines,
   refreshGenesisCities,
   renderGenesisPrompt,
+  setGenesisCollaboration,
   setGenesisEngineeringProfile,
-  withVibe64ConversationContract,
+  vibe64Driver,
+  vibe64HostContextResolverPath,
   withGenesisCommandShim
 };

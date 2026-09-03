@@ -5,12 +5,18 @@ import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 
-async function renderProjectContext(projectRoot) {
+const HOST_CONTEXT_INPUT_ENV = "GENESIS_HOST_CONTEXT_INPUT";
+
+async function renderContext(projectRoot, sessionId, scope) {
   const { stdout } = await execute(
     "genesis",
-    ["hook", "session", "--project-root", projectRoot],
+    ["hook", scope, "--project-root", projectRoot],
     {
       cwd: projectRoot,
+      env: {
+        ...process.env,
+        [HOST_CONTEXT_INPUT_ENV]: JSON.stringify({ sessionId })
+      },
       maxBuffer: 256 * 1024,
       timeout: 5_000
     }
@@ -31,7 +37,7 @@ export const GenesisProjectGuidance = async ({ directory, worktree } = {}) => {
   function contextForSession(sessionId) {
     let context = contexts.get(sessionId);
     if (!context) {
-      context = renderProjectContext(projectRoot);
+      context = renderContext(projectRoot, sessionId, "session");
       contexts.set(sessionId, context);
       context.catch(() => {
         if (contexts.get(sessionId) === context) contexts.delete(sessionId);
@@ -50,7 +56,37 @@ export const GenesisProjectGuidance = async ({ directory, worktree } = {}) => {
       const sessionId = String(input.sessionID || input.sessionId || "").trim();
       if (!sessionId) return;
       const context = await contextForSession(sessionId);
-      if (!output.system.includes(context)) output.system.push(context);
+      if (context && !output.system.includes(context)) output.system.push(context);
+    },
+    "experimental.chat.messages.transform": async (...hookArguments) => {
+      const output = hookArguments[1] || {};
+      const messages = Array.isArray(output.messages) ? output.messages : [];
+      const messageIndex = messages.findLastIndex((message) => message?.info?.role === "user");
+      if (messageIndex < 0) return;
+      const message = messages[messageIndex];
+      const sessionId = String(message.info?.sessionID || "").trim();
+      const messageId = String(message.info?.id || "").trim();
+      if (!sessionId || !messageId || !Array.isArray(message.parts)) return;
+      const context = await renderContext(projectRoot, sessionId, "turn");
+      if (!context || message.parts.some((part) => part?.synthetic === true && part?.text === context)) {
+        return;
+      }
+      output.messages = messages.map((candidate, index) => index === messageIndex
+        ? {
+            ...candidate,
+            parts: [
+              ...candidate.parts,
+              {
+                id: `${messageId}_genesis_turn_context`,
+                messageID: messageId,
+                sessionID: sessionId,
+                synthetic: true,
+                text: context,
+                type: "text"
+              }
+            ]
+          }
+        : candidate);
     }
   };
 };

@@ -5,10 +5,11 @@ import {
   ACTION_READ_ENGINEERING_SETTINGS,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
+  ACTION_SAVE_COLLABORATION_SETTINGS,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_ENV_USER_VALUES,
   ACTION_SAVE_ENGINEERING_PROFILE,
-  ACTION_SAVE_PROJECT_AI_POLICY,
+  ACTION_SAVE_PROJECT_PROMPT_HINTS,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES
 } from "../../packages/vibe64-project/src/server/actions.js";
 import { registerRoutes } from "../../packages/vibe64-project/src/server/registerRoutes.js";
@@ -173,7 +174,7 @@ test("engineering settings routes carry the profile and session source identity"
   });
 });
 
-test("project AI policy route validates the policy and preserves owner authorization", async () => {
+test("collaboration and prompt-hint settings use separate routes and actions", async () => {
   await withLocalRequestBypass(async () => {
     await withRouteProject(async ({ apiRouteBase, projectContext }) => {
       const app = testRouteApp();
@@ -182,78 +183,102 @@ test("project AI policy route validates the policy and preserves owner authoriza
         routeRelativePath: "vibe64",
         routeSurface: "app"
       });
-      const route = findRegisteredRoute(app, {
+      const collaborationRoute = findRegisteredRoute(app, {
         method: "PUT",
-        path: `${apiRouteBase}/vibe64/settings/ai-policy`
+        path: `${apiRouteBase}/vibe64/settings/collaboration`
       });
-      assert.ok(route);
-      const policy = {
-        customNote: "Keep answers practical.",
-        expertise: "comfortable",
-        promptHints: true,
-        rationale: "concise",
+      const promptHintsRoute = findRegisteredRoute(app, {
+        method: "PUT",
+        path: `${apiRouteBase}/vibe64/settings/prompt-hints`
+      });
+      assert.ok(collaborationRoute);
+      assert.ok(promptHintsRoute);
+      const collaboration = {
+        experience: "comfortable",
+        explanationStyle: "concise",
+        requirements: "Keep answers practical.",
         responseLength: "concise",
         tone: "encouraging"
       };
-      assert.deepEqual(route.options.body.schema.patch(policy), {
+      assert.deepEqual(collaborationRoute.options.body.schema.patch(collaboration), {
         errors: {},
-        validatedObject: policy
+        validatedObject: collaboration
       });
       for (const length of [500, 501]) {
-        const customNote = "🌱".repeat(length);
-        assert.deepEqual(route.options.body.schema.patch({
-          ...policy,
-          customNote
+        const requirements = "🌱".repeat(length);
+        assert.deepEqual(collaborationRoute.options.body.schema.patch({
+          ...collaboration,
+          requirements
         }), {
           errors: {},
           validatedObject: {
-            ...policy,
-            customNote
+            ...collaboration,
+            requirements
           }
         });
       }
-      assert.notDeepEqual(route.options.body.schema.patch({
-        ...policy,
+      assert.deepEqual(collaborationRoute.options.body.schema.patch({
+        ...collaboration,
         tone: "sarcastic"
-      }).errors, {});
-
+      }), {
+        errors: {},
+        validatedObject: {
+          ...collaboration,
+          tone: "sarcastic"
+        }
+      });
       const vibe64User = {
         role: "owner",
         username: "ada"
       };
       let executedAction = null;
       const reply = testReply();
-      await route.handler({
-        body: policy,
-        input: { body: policy },
+      await collaborationRoute.handler({
+        body: collaboration,
+        input: { body: collaboration },
         params: routeProjectParams(),
         vibe64User,
         async executeAction(action) {
           executedAction = action;
           return {
-            aiPolicy: {
-              ...policy,
-              revision: 1,
-              version: 1
-            },
+            collaboration,
             ok: true
           };
         }
       }, reply);
 
       assert.deepEqual(executedAction, {
-        actionId: ACTION_SAVE_PROJECT_AI_POLICY,
+        actionId: ACTION_SAVE_COLLABORATION_SETTINGS,
         input: {
-          ...policy,
+          ...collaboration,
           vibe64User
         }
       });
       assert.equal(reply.statusCode, 200);
 
+      executedAction = null;
+      await promptHintsRoute.handler({
+        body: { promptHints: false },
+        input: { body: { promptHints: false } },
+        params: routeProjectParams(),
+        vibe64User,
+        async executeAction(action) {
+          executedAction = action;
+          return { ok: true, promptHints: { canEdit: true, enabled: false } };
+        }
+      }, testReply());
+      assert.deepEqual(executedAction, {
+        actionId: ACTION_SAVE_PROJECT_PROMPT_HINTS,
+        input: {
+          promptHints: false,
+          vibe64User
+        }
+      });
+
       const deniedReply = testReply();
-      await route.handler({
-        body: policy,
-        input: { body: policy },
+      await collaborationRoute.handler({
+        body: collaboration,
+        input: { body: collaboration },
         params: routeProjectParams(),
         vibe64User: {
           role: "member",

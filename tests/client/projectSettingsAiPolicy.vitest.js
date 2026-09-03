@@ -109,7 +109,7 @@ const { descriptor } = parse(componentSource, {
   filename: componentPath
 });
 const componentScript = compileScript(descriptor, {
-  id: "project-settings-ai-policy-test"
+  id: "project-settings-collaboration-test"
 });
 const componentTemplate = compile(descriptor.template.content, {
   bindingMetadata: componentScript.bindings,
@@ -156,22 +156,36 @@ function createDeferred() {
 }
 
 function createResource({
+  available = true,
   canEdit = true,
   developmentDatabase = {},
-  policy = {}
+  collaboration: collaborationOverrides = {},
+  promptHints = false
 } = {}) {
   const databaseOptions = developmentDatabase.options || {};
   const data = ref({
-    aiPolicy: {
-      customNote: "Use Australian English.",
-      expertise: "expert",
-      promptHints: false,
-      rationale: "teaching",
+    collaboration: {
+      available,
+      canEdit,
+      choices: {
+        experience: ["beginner", "comfortable", "expert"].map((id) => ({ id })),
+        explanationStyle: ["conclusions", "concise", "teaching"].map((id) => ({ id })),
+        responseLength: ["very_short", "concise", "balanced", "detailed"].map((id) => ({ id })),
+        tone: ["encouraging", "playful", "direct", "military"].map((id) => ({ id }))
+      },
+      experience: "expert",
+      explanationStyle: "teaching",
+      requirements: "Use Australian English.",
       responseLength: "detailed",
+      source: {
+        rootKind: "session-source",
+        sessionId: "session-a"
+      },
+      status: "configured",
       tone: "military",
-      ...policy
+      unavailableReason: "",
+      ...collaborationOverrides
     },
-    aiPolicyCanEdit: canEdit,
     developmentDatabase: {
       canChange: true,
       managed: true,
@@ -188,6 +202,10 @@ function createResource({
           ...databaseOptions.session
         }
       }
+    },
+    promptHints: {
+      canEdit,
+      enabled: promptHints
     }
   });
   return {
@@ -349,7 +367,12 @@ function nodeText(node) {
 describe("ProjectSettingsPanel AI behaviour", () => {
   beforeEach(() => {
     projectSettingsMocks.commandOptions.length = 0;
-    projectSettingsMocks.commands = [createCommand(), createCommand(), createCommand()];
+    projectSettingsMocks.commands = [
+      createCommand(),
+      createCommand(),
+      createCommand(),
+      createCommand()
+    ];
     projectSettingsMocks.dialog.mockReset();
     projectSettingsMocks.endpointOptions.length = 0;
     projectSettingsMocks.engineeringResource = createEngineeringResource();
@@ -378,14 +401,15 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(findField(container, "Experience level").props.density).toBe("comfortable");
     expect(findField(container, "Explanation style").props.modelValue).toBe("teaching");
     expect(findField(container, "Explanation style").props.density).toBe("comfortable");
-    expect(findField(container, "Anything else (optional)").props.modelValue)
+    expect(findField(container, "Project requirements (optional)").props.modelValue)
       .toBe("Use Australian English.");
     expect(findField(container, "Suggest useful next prompts").props.modelValue).toBe(false);
     expect(findField(container, "Engineering profile").props.modelValue).toBe("focused.v1");
     expect(findField(container, "Engineering profile").props.hint)
       .toContain("Small, direct changes");
     expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
-    expect(findButton(container, "Save AI behaviour").props.disabled).toBe(true);
+    expect(findButton(container, "Save collaboration").props.disabled).toBe(true);
+    expect(findButton(container, "Save prompt suggestions").props.disabled).toBe(true);
 
     app.unmount();
   });
@@ -518,21 +542,26 @@ describe("ProjectSettingsPanel AI behaviour", () => {
 
     ownerTone.props["onUpdate:modelValue"]("playful");
     await nextTick();
-    expect(findButton(mounted.container, "Save AI behaviour").props.disabled).toBe(false);
+    expect(findButton(mounted.container, "Save collaboration").props.disabled).toBe(false);
     mounted.app.unmount();
 
     projectSettingsMocks.commandOptions.length = 0;
-    projectSettingsMocks.commands = [createCommand(), createCommand(), createCommand()];
+    projectSettingsMocks.commands = [
+      createCommand(),
+      createCommand(),
+      createCommand(),
+      createCommand()
+    ];
     projectSettingsMocks.realtimeOptions.length = 0;
     projectSettingsMocks.resource = createResource({ canEdit: false });
     mounted = mountPanel();
 
     const memberTone = findField(mounted.container, "Tone");
     expect(memberTone.props.disabled).toBe(true);
-    expect(findField(mounted.container, "Anything else (optional)").props.disabled).toBe(true);
+    expect(findField(mounted.container, "Project requirements (optional)").props.disabled).toBe(true);
     memberTone.props["onUpdate:modelValue"]("playful");
     await nextTick();
-    const save = findButton(mounted.container, "Save AI behaviour");
+    const save = findButton(mounted.container, "Save collaboration");
     expect(save.props.disabled).toBe(true);
     await save.props.onClick();
     expect(projectSettingsMocks.commands[1].run).not.toHaveBeenCalled();
@@ -540,15 +569,48 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     mounted.app.unmount();
   });
 
+  it("keeps the Vibe64 prompt-suggestion toggle usable when collaboration source is unavailable", async () => {
+    projectSettingsMocks.resource = createResource({
+      available: false,
+      collaboration: {
+        canEdit: false,
+        unavailableReason: "This session has no project source."
+      }
+    });
+    const { app, container } = mountPanel();
+
+    expect(findField(container, "Tone").props.disabled).toBe(true);
+    const promptHints = findField(container, "Suggest useful next prompts");
+    expect(promptHints.props.disabled).toBe(false);
+    promptHints.props["onUpdate:modelValue"](true);
+    await nextTick();
+    const save = findButton(container, "Save prompt suggestions");
+    expect(save.props.disabled).toBe(false);
+    await save.props.onClick();
+    expect(projectSettingsMocks.commands[2].run).toHaveBeenCalledWith({
+      promptHints: true
+    });
+    expect(projectSettingsMocks.commandOptions[2].buildRawPayload(null, {
+      context: { promptHints: true }
+    })).toEqual({ promptHints: true });
+
+    app.unmount();
+  });
+
   it("uses a stable pending label and blocks a duplicate owner submission", async () => {
     const pending = createDeferred();
     const aiCommand = createCommand({ pending });
-    projectSettingsMocks.commands = [createCommand(), aiCommand, createCommand()];
+    projectSettingsMocks.commands = [
+      createCommand(),
+      aiCommand,
+      createCommand(),
+      createCommand()
+    ];
     const { app, container } = mountPanel();
 
     findField(container, "Tone").props["onUpdate:modelValue"]("encouraging");
     await nextTick();
-    let save = findButton(container, "Save AI behaviour");
+    let save = findButton(container, "Save collaboration");
     const firstSubmission = save.props.onClick();
     const duplicateSubmission = save.props.onClick();
     await nextTick();
@@ -559,11 +621,11 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(projectSettingsMocks.commandOptions[1].buildRawPayload(null, {
       context: aiCommand.run.mock.calls[0][0]
     })).toMatchObject({
-      customNote: "Use Australian English.",
-      expertise: "expert",
-      promptHints: false,
-      rationale: "teaching",
+      experience: "expert",
+      explanationStyle: "teaching",
+      requirements: "Use Australian English.",
       responseLength: "detailed",
+      sessionId: "session-a",
       tone: "encouraging"
     });
 
@@ -571,27 +633,20 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     await Promise.all([firstSubmission, duplicateSubmission]);
     await nextTick();
     expect(projectSettingsMocks.resource.reload).toHaveBeenCalledOnce();
-    expect(findButton(container, "Save AI behaviour")).toBeTruthy();
+    expect(findButton(container, "Save collaboration")).toBeTruthy();
 
     app.unmount();
   });
 
-  it("counts custom-note characters by Unicode code point at the shared 500-character boundary", async () => {
+  it("leaves project-requirements validation to Genesis", async () => {
     const { app, container } = mountPanel();
-    const note = findField(container, "Anything else (optional)");
-
-    note.props["onUpdate:modelValue"]("🌱".repeat(500));
-    await nextTick();
-    expect(findField(container, "Anything else (optional)").props.errorMessages).toBeFalsy();
-    expect(findField(container, "Anything else (optional)").props.hint)
-      .toBe("500 of 500 characters");
-    expect(findButton(container, "Save AI behaviour").props.disabled).toBe(false);
+    const note = findField(container, "Project requirements (optional)");
 
     note.props["onUpdate:modelValue"]("🌱".repeat(501));
     await nextTick();
-    expect(findField(container, "Anything else (optional)").props.hint)
-      .toBe("501 of 500 characters");
-    expect(findButton(container, "Save AI behaviour").props.disabled).toBe(true);
+    expect(findField(container, "Project requirements (optional)").props.errorMessages)
+      .toBeUndefined();
+    expect(findButton(container, "Save collaboration").props.disabled).toBe(false);
 
     app.unmount();
   });
@@ -599,7 +654,12 @@ describe("ProjectSettingsPanel AI behaviour", () => {
   it("saves a source-owned engineering profile with stable pending feedback", async () => {
     const pending = createDeferred();
     const engineeringCommand = createCommand({ pending });
-    projectSettingsMocks.commands = [createCommand(), createCommand(), engineeringCommand];
+    projectSettingsMocks.commands = [
+      createCommand(),
+      createCommand(),
+      createCommand(),
+      engineeringCommand
+    ];
     const { app, container } = mountPanel();
 
     findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
@@ -612,7 +672,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
 
     expect(findButton(container, "Saving…").props.disabled).toBe(true);
     expect(engineeringCommand.run).toHaveBeenCalledOnce();
-    expect(projectSettingsMocks.commandOptions[2].buildRawPayload(null, {
+    expect(projectSettingsMocks.commandOptions[3].buildRawPayload(null, {
       context: engineeringCommand.run.mock.calls[0][0]
     })).toEqual({
       profile: "durable.v1",
@@ -651,7 +711,12 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     mounted.app.unmount();
 
     projectSettingsMocks.commandOptions.length = 0;
-    projectSettingsMocks.commands = [createCommand(), createCommand(), createCommand()];
+    projectSettingsMocks.commands = [
+      createCommand(),
+      createCommand(),
+      createCommand(),
+      createCommand()
+    ];
     projectSettingsMocks.endpointOptions.length = 0;
     projectSettingsMocks.engineeringResource = createEngineeringResource({
       profile: "high-assurance.v1",
@@ -697,7 +762,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
   it("opens the personal profile section from the project-owned settings screen", async () => {
     const { app, container } = mountPanel();
 
-    await findButton(container, "Set what the assistant calls you").props.onClick();
+    await findButton(container, "Set your Vibe64 name").props.onClick();
     expect(projectSettingsMocks.dialog).toHaveBeenCalledWith({
       refresh: false,
       section: "profile"

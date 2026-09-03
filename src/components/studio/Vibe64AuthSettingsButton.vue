@@ -24,7 +24,7 @@
         <v-card-title class="vibe64-auth-settings__dialog-title">
           <div>
             <h2>Account settings</h2>
-            <p>Choose how the assistant addresses you and connect its coding tools.</p>
+            <p>Choose how Vibe64 identifies you and connect its coding tools.</p>
           </div>
           <v-btn
             density="comfortable"
@@ -76,12 +76,12 @@
               density="comfortable"
               :error-messages="preferredNameValidation.error ? [preferredNameValidation.error] : []"
               hide-details="auto"
-              label="What should the assistant call you?"
+              label="What should Vibe64 call you?"
               variant="outlined"
               @keydown.enter.prevent="savePreferredName"
             />
             <p class="vibe64-personal-profile__supporting-text">
-              This name is used for future messages across this Vibe64 installation. Leave it blank to use your computer account name.
+              This name is used in Vibe64 welcomes and collaboration cues across this installation. Leave it blank to use your computer account name.
             </p>
             <div class="vibe64-personal-profile__actions">
               <v-btn

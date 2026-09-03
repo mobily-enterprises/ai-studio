@@ -33,22 +33,24 @@ describe("Env panel", () => {
     expect(settingsSource).not.toContain("NO_WORKTREE_DB");
   });
 
-  it("keeps personal identity and owner-managed project AI behaviour in their correct scopes", () => {
+  it("keeps personal identity, source collaboration, and prompt suggestions in their correct scopes", () => {
     const source = componentSource("src/components/studio/ProjectSettingsPanel.vue");
 
-    expect(source).toContain("This project — owner managed");
-    expect(source).toContain("Set what the assistant calls you");
+    expect(source).toContain("genesis/collaboration.md");
+    expect(source).toContain("Set your Vibe64 name");
     expect(source).toContain('section: "profile"');
     expect(source).toContain('label="Tone"');
     expect(source).toContain('label="Response length"');
     expect(source).toContain('label="Experience level"');
     expect(source).toContain('label="Explanation style"');
     expect(source).toContain('label="Suggest useful next prompts"');
-    expect(source).toContain("Only its owner can change them");
-    expect(source).toContain("Existing conversation history stays unchanged");
-    expect(source).toMatch(/watch\(aiPolicy,[\s\S]*?immediate:\s*true/u);
-    expect(source).toContain('{{ aiPolicySaving ? "Saving…" : "Save AI behaviour" }}');
-    expect(source).not.toContain(':loading="aiPolicySaving"');
+    expect(source).toContain("Anyone who can");
+    expect(source).toContain("live Codex instructions do not change");
+    expect(source).toContain("this choice never changes coding-agent");
+    expect(source).toMatch(/watch\(collaboration,[\s\S]*?immediate:\s*true/u);
+    expect(source).toContain('{{ collaborationSaving ? "Saving…" : "Save collaboration" }}');
+    expect(source).toContain('{{ promptHintsSaving ? "Saving…" : "Save prompt suggestions" }}');
+    expect(source).not.toContain(':loading="collaborationSaving"');
   });
 
   it("uses a compact table without redundant source and status columns", () => {

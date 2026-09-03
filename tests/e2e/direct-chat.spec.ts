@@ -72,13 +72,11 @@ test.describe("direct chat", () => {
     await mockDirectChat(page, { includeWorktreePaths: true });
     await routeApiEndpoint(page, "/vibe64/settings", async (route) => {
       await fulfillJson(route, {
-        aiPolicy: {
-          promptHints: true,
-          revision: 1,
-          version: 1
-        },
-        aiPolicyCanEdit: true,
-        ok: true
+        ok: true,
+        promptHints: {
+          canEdit: true,
+          enabled: true
+        }
       });
     });
     await routeApiEndpoint(

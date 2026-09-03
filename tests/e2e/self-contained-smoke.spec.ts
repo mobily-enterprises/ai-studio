@@ -154,22 +154,28 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
     [
       "/api/vibe64/settings",
       {
-        aiPolicy: {
-          customNote: "",
-          expertise: "comfortable",
-          promptHints: true,
-          rationale: "concise",
+        collaboration: {
+          available: true,
+          canEdit: true,
+          choices: {},
+          experience: "comfortable",
+          explanationStyle: "concise",
+          requirements: "",
           responseLength: "concise",
-          revision: 0,
+          source: { rootKind: "standalone-source", sessionId: "" },
+          status: "configured",
           tone: "encouraging",
-          version: 1
+          unavailableReason: ""
         },
-        aiPolicyCanEdit: true,
         developmentDatabase: {
           managed: false,
           scope: "external"
         },
-        ok: true
+        ok: true,
+        promptHints: {
+          canEdit: true,
+          enabled: true
+        }
       }
     ],
     [

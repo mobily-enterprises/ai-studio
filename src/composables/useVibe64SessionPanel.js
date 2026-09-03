@@ -92,12 +92,10 @@ function useVibe64SessionPanel(props, emit) {
     requestRecoveryLabel: "Project settings"
   });
   const promptHintPolicy = computed(() => {
-    const aiPolicy = projectSettings.data.value?.aiPolicy;
+    const promptHints = projectSettings.data.value?.promptHints;
     return {
-      enabled: aiPolicy?.promptHints !== false,
-      ready: Boolean(aiPolicy && !projectSettings.loadError.value),
-      revision: Number(aiPolicy?.revision || 0),
-      version: Number(aiPolicy?.version || 0)
+      enabled: promptHints?.enabled !== false,
+      ready: Boolean(promptHints && !projectSettings.loadError.value)
     };
   });
   const selection = proxyRefs({

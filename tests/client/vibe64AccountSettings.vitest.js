@@ -44,7 +44,7 @@ describe("standalone personal AI profile settings", () => {
       "utf8"
     );
 
-    expect(component).toContain("What should the assistant call you?");
+    expect(component).toContain("What should Vibe64 call you?");
     expect(component).toContain("You — all projects");
     expect(component).toContain("min-height: 3rem");
     expect(component).toContain("profileRequested");

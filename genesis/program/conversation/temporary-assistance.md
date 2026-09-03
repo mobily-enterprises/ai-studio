@@ -56,10 +56,17 @@ provider timeout remains visible as secondary audit detail instead of leaving
 the user with a false failure conclusion.
 
 Temporary and lightweight helper conversations use the parent session's
-selected Codex or OpenCode service and its bounded low-cost execution profile.
-They remain isolated provider conversations with the same session directory and
-command boundary, but they do not start or retain a second resident assistant
-service. Codex helper admission is bound to that shared service's selected
+selected Codex or OpenCode service, but they do not start or retain a second
+resident assistant service. A user-visible temporary conversation receives one
+stable Genesis and Vibe64 context for its read-only or workspace-writing kind,
+while each human turn contains only the person's authored text. It keeps the
+session directory and appropriate command boundary.
+
+Prompt suggestions, commit subjects, database help, and source explanations
+use the bounded low-cost execution profile in a private non-project workspace.
+Their complete task prompt is their only model context: they receive neither
+Genesis project context nor Vibe64 driver output. Codex helper admission is
+bound to that shared service's selected
 account identity, so a credential refresh for the same account remains valid
 while an account switch cannot reuse earlier helper ownership. OpenCode tasks
 use the same model-advertised response-limit policy as the main conversation,

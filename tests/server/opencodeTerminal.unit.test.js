@@ -192,7 +192,9 @@ async function controllerHarness({
   const commandEnvironmentCalls = [];
   const catalogReadCalls = [];
   const createdSessions = [];
+  const createdSessionDirectories = [];
   const promptCalls = [];
+  const promptDirectories = [];
   const publishedSessionChanges = [];
   const switchedAgents = [];
   const switchedModels = [];
@@ -207,7 +209,7 @@ async function controllerHarness({
   let readSessionCalls = 0;
   let runtimeCreateCalls = 0;
 
-  function client() {
+  function client(directory = "") {
     return {
       async *events() {
         for (const event of providerEvents) {
@@ -221,6 +223,7 @@ async function controllerHarness({
         const id = input.id || `ses_detached_${nextSession++}`;
         const created = { ...input, id };
         createdSessions.push(created);
+        createdSessionDirectories.push({ directory, id });
         upstreamSessions.set(id, created);
         return created;
       },
@@ -269,6 +272,7 @@ async function controllerHarness({
       },
       async prompt(id, input = {}) {
         promptCalls.push({ id, input });
+        promptDirectories.push({ directory, id });
         if (failNextPrompt) {
           failNextPrompt = false;
           throw Object.assign(new Error("admission failed"), { statusCode: 503 });
@@ -280,6 +284,9 @@ async function controllerHarness({
       },
       async providers() {
         return catalogProviders;
+      },
+      forDirectory(nextDirectory = "") {
+        return client(path.resolve(nextDirectory));
       },
       async readSession(id) {
         readSessionCalls += 1;
@@ -377,8 +384,8 @@ async function controllerHarness({
         runtimeCreateCalls += 1;
         return runtime;
       },
-      async readProjectAiPolicy() {
-        return { aiPolicy: {}, ok: true };
+      async readPromptHints() {
+        return { ok: true, promptHints: true };
       }
     },
     async readCatalogCommand(options) {
@@ -411,6 +418,7 @@ async function controllerHarness({
     connection,
     commandEnvironmentCalls,
     controller,
+    createdSessionDirectories,
     createdSessions,
     failHealth() {
       failNextHealth = true;
@@ -422,6 +430,7 @@ async function controllerHarness({
     metadataWrites,
     processStarts,
     processStops,
+    promptDirectories,
     promptCalls,
     publishedSessionChanges,
     root,
@@ -640,7 +649,7 @@ test("OpenCode persists a user message and its display attachments only after up
   }, {
     runtime: harness.runtime,
     session: harness.session,
-    vibe64User: { username: "ada" }
+    vibe64User: { preferredName: "Ada", username: "ada" }
   });
   assert.equal(delivered.ok, true);
   assert.equal(harness.userMessages.length, 1);
@@ -668,15 +677,18 @@ test("OpenCode persists a user message and its display attachments only after up
     operationId: "opencode-server",
     ownerId: "opencode"
   });
-  const mainPrompt = harness.promptCalls.find((entry) => entry.id === delivered.thread.id).input;
+  const mainPrompt = harness.promptCalls.filter((entry) => (
+    entry.id === delivered.thread.id
+  )).at(-1).input;
   assert.equal(mainPrompt.agent, "build");
   assert.deepEqual(mainPrompt.model, {
     id: "deepseek-chat",
     providerID: "deepseek",
     variant: "high"
   });
-  assert.match(mainPrompt.prompt.text, /Issue the ordinary shell command you intend to run exactly once/u);
-  assert.match(mainPrompt.prompt.text, /Never encode, copy, reconstruct, or invoke Vibe64's session-command wrapper/u);
+  assert.equal(mainPrompt.prompt.text, "GENESIS start: Second attempt");
+  assert.equal(Object.hasOwn(mainPrompt.prompt, "turnContext"), false);
+  assert.doesNotMatch(mainPrompt.prompt.text, /Vibe64 session briefing|hidden-turn-context/u);
   const completed = await harness.controller.waitForTurn("session-1", {
     runtime: harness.runtime,
     session: harness.session
@@ -755,11 +767,10 @@ test("OpenCode reuses an established session without repeating setup or model sw
   assert.deepEqual(harness.switchedModels, []);
   assert.deepEqual(harness.switchedAgents, []);
   assert.deepEqual(harness.renderPromptCalls.map(({ task }) => task), ["start"]);
-  assert.match(harness.promptCalls[0].input.prompt.text, /Session briefing instruction:/u);
-  assert.match(harness.promptCalls[0].input.prompt.text, /GENESIS start: First/u);
-  assert.doesNotMatch(harness.promptCalls[1].input.prompt.text, /Session briefing instruction:/u);
-  assert.doesNotMatch(harness.promptCalls[1].input.prompt.text, /GENESIS work:/u);
-  assert.match(harness.promptCalls[1].input.prompt.text, /Second$/u);
+  assert.equal(harness.promptCalls[0].input.prompt.text, "GENESIS start: First");
+  assert.equal(harness.promptCalls[1].input.prompt.text, "Second");
+  assert.equal(Object.hasOwn(harness.promptCalls[0].input.prompt, "turnContext"), false);
+  assert.equal(Object.hasOwn(harness.promptCalls[1].input.prompt, "turnContext"), false);
 });
 
 test("OpenCode renders explicit Deslop through Genesis and leaves later follow-ups ordinary", async (t) => {
@@ -1482,7 +1493,14 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
     workloadId: VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.COMMIT_TITLE
   });
+  const conversation = await harness.controller.createConversation("session-1", {
+    executionProfile
+  }, {
+    runtime: harness.runtime,
+    session: harness.session
+  });
   const result = await harness.controller.runDetachedChatTurn("session-1", {
+    conversationId: conversation.conversationId,
     executionProfile,
     outputSchema: {
       properties: { subject: { type: "string" } },
@@ -1508,8 +1526,25 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     id: "deepseek-chat",
     providerID: "deepseek"
   });
+  const helperWorkdir = harness.processStarts[0].options.workdir;
+  assert.equal(helperSession.location.directory, helperWorkdir);
+  assert.notEqual(helperWorkdir, path.join(
+    harness.root,
+    "sessions",
+    "active",
+    "session-1",
+    "source"
+  ));
+  assert.deepEqual(
+    harness.createdSessionDirectories.find(({ id }) => id === result.threadId),
+    { directory: helperWorkdir, id: result.threadId }
+  );
   assert.equal(result.text, '{"subject":"Add durable OpenCode sessions"}');
   const helperPrompt = harness.promptCalls.find((entry) => entry.id === result.threadId).input;
+  assert.deepEqual(
+    harness.promptDirectories.find(({ id }) => id === result.threadId),
+    { directory: helperWorkdir, id: result.threadId }
+  );
   assert.equal(helperPrompt.agent, OPENCODE_ECONOMY_AGENT_ID);
   assert.deepEqual(helperPrompt.model, {
     id: "deepseek-chat",
@@ -1517,10 +1552,16 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
   });
   assert.match(helperPrompt.prompt.text, /Return only one JSON value matching this JSON Schema/u);
   assert.match(helperPrompt.prompt.text, /"required":\["subject"\]/u);
+  assert.equal(Object.hasOwn(helperPrompt.prompt, "turnContext"), false);
   assert.equal(events.some((event) => event.type === "session.next.reasoning.started"), true);
   assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
     payload.reason === "opencode-server-progress"
   )), false);
+  const registry = JSON.parse(await readFile(
+    harness.processStarts[0].options.sessionEnvironmentRegistry,
+    "utf8"
+  ));
+  assert.deepEqual(registry.promptContexts, []);
 
   const tinyProfile = {
     ...executionProfile,
@@ -1569,6 +1610,7 @@ test("OpenCode receives the same complete session command boundary as Codex", as
     entry.options.execution.operationId === "opencode-server"
   ));
   assert.deepEqual(sessionProcess.options.shimDirs, ["/managed/wrappers"]);
+  assert.match(sessionProcess.options.hostContextResolver, /vibe64-genesis-host-context$/u);
   const registry = JSON.parse(await readFile(
     sessionProcess.options.sessionEnvironmentRegistry,
     "utf8"
@@ -1581,6 +1623,16 @@ test("OpenCode receives the same complete session command boundary as Codex", as
   });
   assert.deepEqual(registry.sessions[0].pathEntries, ["/managed/wrappers"]);
   assert.equal(registry.sessions[0].sessionId, "session-1");
+  assert.deepEqual(registry.sessions[0].promptContext, {
+    conversationKind: "main",
+    scope: "session",
+    session: {
+      managedDatabaseRefresh: true,
+      managedEnvironment: true,
+      managedGit: true,
+      managedPreview: true
+    }
+  });
 });
 
 test("OpenCode starts its interactive terminal by attaching to the session's native history", async (t) => {
@@ -1611,7 +1663,7 @@ test("OpenCode starts its interactive terminal by attaching to the session's nat
   assert.match(harness.terminalStarts[0].upstreamSessionId, /^ses_vibe64_/u);
 });
 
-test("OpenCode reuses the session's running interactive terminal", async (t) => {
+test("OpenCode reuses its terminal without creating prompt actor state", async (t) => {
   const harness = await controllerHarness({
     realAttachedTerminal: true,
     withCommandBoundary: true
@@ -1632,4 +1684,35 @@ test("OpenCode reuses the session's running interactive terminal", async (t) => 
   assert.equal(first.ok, true);
   assert.equal(second.id, first.id);
   assert.equal(harness.terminalStarts.length, 1);
+
+  await harness.controller.writeTerminal("session-1", first.id, "first", {
+    trackGitActor: true
+  }, {
+    ...options,
+    vibe64User: { preferredName: "Ada", username: "ada" }
+  });
+  await harness.controller.writeTerminal("session-1", first.id, "second", {
+    trackGitActor: true
+  }, {
+    ...options,
+    vibe64User: { preferredName: "Grace", username: "grace" }
+  });
+  await harness.controller.writeTerminal("session-1", first.id, "third", {
+    trackGitActor: true
+  }, {
+    ...options,
+    vibe64User: { username: "unnamed" }
+  });
+  const registryPath = harness.processStarts[0].options.sessionEnvironmentRegistry;
+  const registry = JSON.parse(await readFile(registryPath, "utf8"));
+  assert.equal(Object.hasOwn(registry.sessions[0], "turnContext"), false);
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Routed message",
+    messageId: "client-message-after-terminal"
+  }, {
+    ...options,
+    vibe64User: { preferredName: "Ada", username: "ada" }
+  });
+  assert.equal(Object.hasOwn(harness.promptCalls.at(-1).input.prompt, "turnContext"), false);
 });

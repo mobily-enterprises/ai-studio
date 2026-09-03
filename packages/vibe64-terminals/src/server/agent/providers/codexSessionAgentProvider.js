@@ -653,13 +653,17 @@ function createCodexSessionAgentProvider({
     },
     async runDetachedChatTurn(context, input = {}) {
       const executionProfile = emitCodexExecutionProfile(context, input.executionProfile);
+      const request = {
+        ...input,
+        vibe64User: input.vibe64User || context.vibe64User || null
+      };
       const result = typeof context.onEvent === "function"
-        ? await controller.streamDetachedChatTurn(context.sessionId, input, {
+        ? await controller.streamDetachedChatTurn(context.sessionId, request, {
             onEvent: context.onEvent,
             runtime: context.runtime,
             session: context.session
           })
-        : await controller.runDetachedChatTurn(context.sessionId, input, {
+        : await controller.runDetachedChatTurn(context.sessionId, request, {
             runtime: context.runtime,
             session: context.session
           });
@@ -725,23 +729,27 @@ function createCodexSessionAgentProvider({
       }));
     },
     async startConversationTurn(context, input = {}) {
-      const attachmentLimit = codexAttachmentLimitResult(input);
+      const message = {
+        ...input,
+        vibe64User: input.vibe64User || context.vibe64User || null
+      };
+      const attachmentLimit = codexAttachmentLimitResult(message);
       if (attachmentLimit) {
         return attachmentLimit;
       }
       const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
         controller,
         context.sessionId,
-        input
+        message
       );
       if (attachmentValidation) {
         return attachmentValidation;
       }
-      const result = await controller.startConversationTurn(context.sessionId, input);
+      const result = await controller.startConversationTurn(context.sessionId, message);
       await renewAcceptedCodexAttachments(
         controller,
         context.sessionId,
-        input,
+        message,
         result?.ok !== false && Boolean(normalizeText(result?.runId))
       );
       return result;
@@ -754,7 +762,10 @@ function createCodexSessionAgentProvider({
     },
     async streamDetachedChatTurn(context, input = {}) {
       const executionProfile = emitCodexExecutionProfile(context, input.executionProfile);
-      const result = await controller.streamDetachedChatTurn(context.sessionId, input, {
+      const result = await controller.streamDetachedChatTurn(context.sessionId, {
+        ...input,
+        vibe64User: input.vibe64User || context.vibe64User || null
+      }, {
         onEvent: context.onEvent,
         runtime: context.runtime,
         session: context.session
@@ -791,14 +802,18 @@ function createCodexSessionAgentProvider({
       });
     },
     async writeTerminal(context, input = {}) {
-      const attachmentLimit = codexAttachmentLimitResult(input.input);
+      const terminalInput = {
+        ...input.input,
+        vibe64User: input.input?.vibe64User || context.vibe64User || null
+      };
+      const attachmentLimit = codexAttachmentLimitResult(terminalInput);
       if (attachmentLimit) {
         return attachmentLimit;
       }
       const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
         controller,
         context.sessionId,
-        input.input
+        terminalInput
       );
       if (attachmentValidation) {
         return attachmentValidation;
@@ -807,12 +822,12 @@ function createCodexSessionAgentProvider({
         context.sessionId,
         input.terminalSessionId,
         input.data,
-        input.input
+        terminalInput
       );
       await renewAcceptedCodexAttachments(
         controller,
         context.sessionId,
-        input.input,
+        terminalInput,
         result?.ok === true
       );
       return result;

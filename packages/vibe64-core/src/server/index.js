@@ -20,7 +20,7 @@ export * from "./studioRoots.js";
 export * from "./terminalWebSocketRoutes.js";
 export * from "./vibe64MembershipStore.js";
 export * from "./projectState.js";
-export * from "./projectAiPolicy.js";
+export * from "./projectPromptHints.js";
 export * from "./projectRecordMetadata.js";
 export * from "./projectRuntimeOpenState.js";
 export * from "./projectRuntimeIdentity.js";

@@ -7,8 +7,9 @@ import {
   ACTION_READ_ENV,
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_COLLABORATION_SETTINGS,
   ACTION_SAVE_ENGINEERING_PROFILE,
-  ACTION_SAVE_PROJECT_AI_POLICY,
+  ACTION_SAVE_PROJECT_PROMPT_HINTS,
   createProjectActions
 } from "../../packages/vibe64-project/src/server/actions.js";
 
@@ -140,33 +141,40 @@ test("project mutations publish first-class action events", async () => {
   });
 });
 
-test("project AI policy mutation publishes project realtime invalidation", async () => {
-  const action = featureAction({
-    async saveProjectAiPolicy() {
+test("collaboration and prompt-hint mutations publish project realtime invalidation", async () => {
+  const project = {
+    async saveCollaborationSettings() {
       return {
-        aiPolicy: {
-          revision: 4,
-          version: 1
-        },
+        collaboration: { tone: "direct" },
         ok: true,
         projectSlug: "catalogue"
       };
+    },
+    async savePromptHints() {
+      return {
+        ok: true,
+        projectSlug: "catalogue",
+        promptHints: { canEdit: true, enabled: false }
+      };
     }
-  }, ACTION_SAVE_PROJECT_AI_POLICY);
-  const result = await action.execute({ tone: "direct" }, {});
-  const event = await action.events[0]({
-    context: {},
-    input: { tone: "direct" },
-    result
-  });
+  };
 
-  assert.equal(event.type, "entity.changed");
-  assert.equal(event.entity, "project");
-  assert.equal(event.entityId, "catalogue");
-  assert.equal(event.realtime.event, "vibe64.project.changed");
-  assert.deepEqual(event.realtime.payload, {
-    projectSlug: "catalogue"
-  });
+  for (const [actionId, input] of [
+    [ACTION_SAVE_COLLABORATION_SETTINGS, { tone: "direct" }],
+    [ACTION_SAVE_PROJECT_PROMPT_HINTS, { promptHints: false }]
+  ]) {
+    const action = featureAction(project, actionId);
+    const result = await action.execute(input, {});
+    const event = await action.events[0]({ context: {}, input, result });
+
+    assert.equal(event.type, "entity.changed");
+    assert.equal(event.entity, "project");
+    assert.equal(event.entityId, "catalogue");
+    assert.equal(event.realtime.event, "vibe64.project.changed");
+    assert.deepEqual(event.realtime.payload, {
+      projectSlug: "catalogue"
+    });
+  }
 });
 
 test("Env save action forwards user-owned values", async () => {

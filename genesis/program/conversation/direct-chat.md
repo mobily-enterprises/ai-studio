@@ -13,11 +13,14 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
+- `packages/vibe64-genesis/src/server/index.js`
+- `packages/vibe64-genesis/src/server/promptContext.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
 - `packages/vibe64-execution/src/host/execHelper.js`
 - `packages/vibe64-execution/src/server/engines/helperClient.js`
 - `packages/vibe64-terminals/src/server/agentCommandEnvironment.js`
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
+- `packages/vibe64-terminals/src/server/conversationActor.js`
 - `packages/vibe64-terminals/src/server/agent/providers/opencodeSessionAgentProvider.js`
 - `packages/vibe64-terminals/src/server/codexAppServerEvents.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
@@ -72,11 +75,25 @@ conversation into the new provider thread, and then delivers that message once.
 An active turn and unrelated invalid provider requests remain failures rather
 than being reinterpreted as missing history.
 
-Separately, each agent receives Genesis's short project operating guide when a
-conversation is created and again after compaction. Codex receives it through
-the project SessionStart hook. OpenCode loads the ordinary project plugin that
-Genesis installs, exactly as it does outside Vibe64. This context creates no
-conversation message and no additional agent turn.
+Separately, Genesis composes one stable session context containing its project,
+Engineering, and Collaboration guidance plus Vibe64's main-conversation rules.
+Codex installs it as thread instructions and OpenCode keeps it in the system
+context through Genesis's ordinary project plugin. It creates no conversation
+message or additional agent turn. Collaboration changes become current only
+when that stable context is next established or refreshed; Codex cannot replace
+developer instructions inside an already-live thread.
+The provider may serialize its system or developer instructions again for a
+later stateless model request, but Vibe64 does not rerender them into the
+person's message or copy them into the turn-context lane.
+
+Every real human turn keeps the person's authored text unchanged. Vibe64 adds
+no turn context: no name, actor id, policy identifier, tone, response length,
+experience, explanation style, project note, question format, or concealment
+instruction. Genesis retains a generic bounded turn-context capability for
+hosts that need one, but Vibe64 deliberately does not use it. When Codex mirrors
+a user message entered through its native terminal into Vibe64 History, that
+history item inherits the actor metadata from the latest Vibe64 UI message.
+This attribution is internal conversation data and is never sent to the model.
 
 Message delivery and provider work remain visibly distinct. The composer shows
 the initial send while the message is being accepted, then reports the selected
@@ -242,6 +259,13 @@ an unrelated failure cannot gain an account link merely because of its wording.
   Deslop request; later ordinary messages are sent without rebuilding the full
   Genesis prompt, and Codex steering continues through its existing direct
   steer path.
+- `composeVibe64SessionContext()` uses one provider-neutral, session-only
+  Vibe64 driver through Genesis for stable Vibe64 conversation rules.
+- `sendCodexAppServerPromptForSession()` and `stablePromptBody()` preserve the
+  authored user text without attaching Vibe64 turn context.
+- `writeMirroredCodexAppServerTerminalMessage()` copies the latest prior UI
+  user's existing actor metadata onto a native-terminal user item in History;
+  it does not alter provider input.
 - `sendCodexAppServerMessage()` recognizes only the provider's exact
   missing-thread response for an inactive conversation and routes it through
   `ensureCodexAppServerThreadForSession()` so its existing replacement,

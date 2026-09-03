@@ -11,7 +11,8 @@ const VIBE64_ENV_API_SUFFIX = "/vibe64/env";
 const VIBE64_ENV_SECRET_REVEAL_API_SUFFIX = "/vibe64/env/reveal";
 const VIBE64_DEVELOPMENT_DATABASE_API_SUFFIX = "/vibe64/settings/development-database";
 const VIBE64_ENGINEERING_API_SUFFIX = "/vibe64/settings/engineering";
-const VIBE64_AI_POLICY_API_SUFFIX = "/vibe64/settings/ai-policy";
+const VIBE64_COLLABORATION_API_SUFFIX = "/vibe64/settings/collaboration";
+const VIBE64_PROMPT_HINTS_SETTINGS_API_SUFFIX = "/vibe64/settings/prompt-hints";
 const VIBE64_ENV_USER_VALUES_API_SUFFIX = "/vibe64/env/user-values";
 const VIBE64_PREVIEW_IDENTITIES_API_SUFFIX = "/vibe64/preview-identities";
 const VIBE64_PROJECT_SELECT_API_SUFFIX = "/vibe64/projects/select";
@@ -27,7 +28,8 @@ const ENV_SECRET_REVEAL_ENDPOINT = `${ENV_ENDPOINT}/reveal`;
 const PROJECT_SETTINGS_ENDPOINT = `${VIBE64_ENDPOINT}/settings`;
 const DEVELOPMENT_DATABASE_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/development-database`;
 const ENGINEERING_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/engineering`;
-const AI_POLICY_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/ai-policy`;
+const COLLABORATION_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/collaboration`;
+const PROMPT_HINTS_SETTINGS_ENDPOINT = `${PROJECT_SETTINGS_ENDPOINT}/prompt-hints`;
 const ENV_USER_VALUES_ENDPOINT = `${ENV_ENDPOINT}/user-values`;
 const PREVIEW_IDENTITIES_ENDPOINT = `${VIBE64_ENDPOINT}/preview-identities`;
 
@@ -39,8 +41,15 @@ function envQueryKey(surfaceId, ownershipFilter, projectSlug) {
   return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "env"];
 }
 
-function projectSettingsQueryKey(surfaceId, ownershipFilter, projectSlug) {
-  return ["vibe64", ...vibe64ProjectQueryScope(projectSlug), surfaceId, ownershipFilter, "settings"];
+function projectSettingsQueryKey(surfaceId, ownershipFilter, projectSlug, sessionId = "") {
+  return [
+    "vibe64",
+    ...vibe64ProjectQueryScope(projectSlug),
+    surfaceId,
+    ownershipFilter,
+    "settings",
+    String(sessionId || "").trim() || "selected-source"
+  ];
 }
 
 function engineeringSettingsQueryKey(surfaceId, ownershipFilter, projectSlug, sessionId = "") {
@@ -67,7 +76,7 @@ function studioHealthQueryKey(surfaceId, ownershipFilter) {
 }
 
 export {
-  VIBE64_AI_POLICY_API_SUFFIX,
+  VIBE64_COLLABORATION_API_SUFFIX,
   VIBE64_DEVELOPMENT_DATABASE_API_SUFFIX,
   VIBE64_ENGINEERING_API_SUFFIX,
   VIBE64_CONNECTIONS_CHANGED_EVENT,
@@ -78,14 +87,16 @@ export {
   VIBE64_ENV_SECRET_REVEAL_API_SUFFIX,
   VIBE64_ENV_USER_VALUES_API_SUFFIX,
   VIBE64_PREVIEW_IDENTITIES_API_SUFFIX,
+  VIBE64_PROMPT_HINTS_SETTINGS_API_SUFFIX,
   PROJECT_SELECTION_ENDPOINT,
   ENV_ENDPOINT,
   ENV_SECRET_REVEAL_ENDPOINT,
   DEVELOPMENT_DATABASE_ENDPOINT,
   ENGINEERING_ENDPOINT,
-  AI_POLICY_ENDPOINT,
+  COLLABORATION_ENDPOINT,
   ENV_USER_VALUES_ENDPOINT,
   PROJECT_SETTINGS_ENDPOINT,
+  PROMPT_HINTS_SETTINGS_ENDPOINT,
   PREVIEW_IDENTITIES_ENDPOINT,
   TARGET_PROJECT_API_SUFFIX,
   TARGET_PROJECT_ENDPOINT,

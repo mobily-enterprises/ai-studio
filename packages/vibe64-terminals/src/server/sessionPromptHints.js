@@ -123,21 +123,8 @@ function visibleConversation(conversation = {}) {
   return visible;
 }
 
-function normalizedPolicy(value = {}) {
-  return {
-    customNote: boundedText(value.customNote, 500),
-    expertise: normalizeText(value.expertise),
-    promptHints: value.promptHints !== false,
-    rationale: normalizeText(value.rationale),
-    responseLength: normalizeText(value.responseLength),
-    revision: Number.isSafeInteger(value.revision) && value.revision >= 0
-      ? value.revision
-      : 0,
-    tone: normalizeText(value.tone),
-    version: Number.isSafeInteger(value.version) && value.version > 0
-      ? value.version
-      : 1
-  };
+function normalizedPromptHints(value = {}) {
+  return { promptHints: value.promptHints !== false };
 }
 
 function sessionAgentActive(session = {}) {
@@ -172,7 +159,7 @@ function promptHintBasis(context = {}) {
     ? context.conversation.pagination
     : {};
   const conversation = visibleConversation(context.conversation);
-  const policy = normalizedPolicy(context.policy);
+  const policy = normalizedPromptHints(context.policy);
   const blueprint = boundedText(context.blueprint, PROMPT_HINT_BLUEPRINT_MAX_CHARACTERS);
   return {
     basis: {
@@ -184,8 +171,7 @@ function promptHintBasis(context = {}) {
           : 0,
         visible: conversation
       }),
-      policyRevision: policy.revision,
-      policyVersion: policy.version,
+      promptHints: policy.promptHints,
       sessionRevision: canonicalHash(context.sessionState)
     },
     blueprint,
@@ -240,7 +226,6 @@ function promptHintContextStatus(context = {}) {
 function promptHintPrompt({
   blueprint = "",
   conversation = [],
-  policy = {},
   sessionState = {}
 } = {}) {
   return [
@@ -255,13 +240,6 @@ function promptHintPrompt({
     JSON.stringify({
       blueprint,
       conversation,
-      policy: {
-        customNote: policy.customNote,
-        expertise: policy.expertise,
-        rationale: policy.rationale,
-        responseLength: policy.responseLength,
-        tone: policy.tone
-      },
       session: {
         status: sessionState.status,
         workspaceSetupStatus: sessionState.workspaceSetupStatus
@@ -517,15 +495,15 @@ function createSessionPromptHintsService({
     }
   }
 
-  async function readContext(sessionId = "", vibe64User = null) {
-    if (typeof projectService.readProjectAiPolicy !== "function") {
-      throw new TypeError("Prompt hints require project AI behaviour.");
+  async function readContext(sessionId = "") {
+    if (typeof projectService.readPromptHints !== "function") {
+      throw new TypeError("Prompt hints require the project prompt-hints setting.");
     }
     const runtime = await projectService.createRuntime({ inspectSource: false });
     const session = await runtime.getSession(sessionId, { inspectSource: false });
     const sourceRoot = normalizeText(sessionSourcePath(session));
     const [policyResult, conversation, repositoryTasks, blueprint] = await Promise.all([
-      projectService.readProjectAiPolicy({ vibe64User }),
+      projectService.readPromptHints(),
       runtime.readConversationLogPage(sessionId, {
         limit: PROMPT_HINT_RECENT_TURN_LIMIT
       }),
@@ -537,7 +515,7 @@ function createSessionPromptHintsService({
       sourceRoot ? readBlueprint(sourceRoot) : ""
     ]);
     if (policyResult?.ok === false) {
-      throw new Error(policyResult.error || "Project AI behaviour could not be read.");
+      throw new Error(policyResult.error || "Project prompt-hint settings could not be read.");
     }
     const repositoryOperationActive = repositoryTasks.some((task) => (
       ["queued", "running", "starting"].includes(normalizeText(task?.status))
@@ -549,7 +527,7 @@ function createSessionPromptHintsService({
     return {
       blueprint,
       conversation,
-      policy: normalizedPolicy(policyResult?.aiPolicy || {}),
+      policy: normalizedPromptHints(policyResult || {}),
       runtime,
       session,
       sessionState,
@@ -716,7 +694,6 @@ function createSessionPromptHintsService({
       const prompt = promptHintPrompt({
         blueprint: job.snapshot.blueprint,
         conversation: job.snapshot.conversation,
-        policy: job.snapshot.policy,
         sessionState: job.context.sessionState
       });
       if (Array.from(prompt).length > job.identity.profile.limits.maxInputCharacters) {
@@ -805,7 +782,7 @@ function createSessionPromptHintsService({
 
     let current = null;
     try {
-      current = await readContext(job.sessionId, job.vibe64User);
+      current = await readContext(job.sessionId);
     } catch (error) {
       if (job.cancelRequested) {
         return promptHintResponse("cancelled", { basis: job.snapshot.basis });
@@ -909,7 +886,7 @@ function createSessionPromptHintsService({
     }
     let context = null;
     try {
-      context = await readContext(sessionId, vibe64User);
+      context = await readContext(sessionId);
     } catch (error) {
       if (request.cancelled) {
         return promptHintResponse("cancelled");
@@ -966,7 +943,7 @@ function createSessionPromptHintsService({
     const cached = cacheGet(key);
     if (cached) {
       try {
-        const current = await readContext(sessionId, vibe64User);
+        const current = await readContext(sessionId);
         if (request.cancelled) {
           return promptHintResponse("cancelled", { basis: snapshot.basis });
         }

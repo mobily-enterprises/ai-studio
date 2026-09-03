@@ -10,6 +10,7 @@ Genesis without creating another interpretation of the application.
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-genesis/src/server/index.js`
+- `packages/vibe64-genesis/src/server/promptContext.js`
 - `packages/vibe64-system-graph/src/server/service.js`
 - `packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue`
 
@@ -18,6 +19,14 @@ Genesis without creating another interpretation of the application.
 New projects begin with Genesis and existing repositories can be adopted without
 moving their source. Agent turns receive Genesis task guidance, while new and
 compacted conversations receive the shorter portable Genesis session context.
+For persistent conversations, Genesis composes Engineering and Collaboration
+guidance with one provider-neutral Vibe64 session contribution. Vibe64's
+numbered-question presentation and managed-session operating rules live in
+that stable contribution rather than being appended to each user message. The
+Vibe64 driver has no turn form and Vibe64 adds nothing to ordinary user turns.
+Genesis still offers a generic bounded turn-context capability, but Vibe64 does
+not use it. Genesis supports the one host driver and process bridge, not a
+general prompt-plugin system.
 For a new project, Genesis's opening task establishes product intent, presents
 only relevant installed Stack choices, and waits for explicit confirmation
 before selecting a technology. Vibe64 supplies the pinned catalog and its

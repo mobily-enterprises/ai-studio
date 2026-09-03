@@ -2263,22 +2263,9 @@ function createVibe64SessionStore({
         "vibe64_invalid_conversation_turn_metadata"
       );
     }
-    const policyRevision = Number(value.policyRevision);
-    const policyVersion = Number(value.policyVersion);
-    if (
-      !Number.isSafeInteger(policyRevision) || policyRevision < 0 ||
-      !Number.isSafeInteger(policyVersion) || policyVersion < 1
-    ) {
-      throw vibe64Error(
-        "Conversation turn AI policy attribution is invalid.",
-        "vibe64_invalid_conversation_turn_metadata"
-      );
-    }
     return {
       actorDisplayName: normalizeText(value.actorDisplayName),
-      actorId: normalizeText(value.actorId),
-      policyRevision,
-      policyVersion
+      actorId: normalizeText(value.actorId)
     };
   }
 

@@ -207,8 +207,8 @@ function stablePromptBody(input = {}) {
   const model = input?.model && typeof input.model === "object" ? input.model : {};
   const modelID = text(model.modelID || model.id);
   const providerID = text(model.providerID);
-  const prompt = text(input?.prompt?.text);
-  if (!prompt) {
+  const prompt = typeof input?.prompt?.text === "string" ? input.prompt.text : "";
+  if (!prompt.trim()) {
     throw new TypeError("OpenCode prompt requests require text.");
   }
   return {

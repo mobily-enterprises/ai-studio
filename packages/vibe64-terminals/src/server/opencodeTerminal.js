@@ -9,9 +9,10 @@ import {
   VIBE64_AGENT_RUN_STATE,
   vibe64AgentRunStateIsActive
 } from "@local/vibe64-runtime/server";
-import { vibe64SessionBriefing } from "@local/vibe64-runtime/server/vibeSessionBriefing";
+import { vibe64HostContextResolverPath } from "@local/vibe64-genesis/server";
 import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
+  VIBE64_AGENT_WORKSPACE_WRITE_POLICY,
   VIBE64_ASSISTANT_ENGINE_IDS,
   resolveVibe64AssistantSelection,
   vibe64AgentExecutionProfileAuditSnapshot,
@@ -35,12 +36,7 @@ import {
   openCodeAssistantCapabilities,
   openCodeConfiguredAssistantCapabilities
 } from "./agent/providers/opencodeAssistantCatalog.js";
-import {
-  aiTurnMetadata,
-  projectAiPolicyInstructions,
-  promptWithHiddenAiTurnContext,
-  resolveAiTurnContext
-} from "./aiTurnContext.js";
+import { conversationActorMetadata } from "./conversationActor.js";
 import {
   prepareAgentSessionCommandEnvironment
 } from "./agentCommandEnvironment.js";
@@ -241,31 +237,6 @@ function openCodeSelection(session = {}) {
     );
   }
   return selection;
-}
-
-function openCodeSessionInstructions(session = {}, policy = {}) {
-  return [
-    vibe64SessionBriefing({ session }),
-    "",
-    "Session briefing instruction:",
-    "Keep this Vibe64 briefing as the source of truth for this OpenCode session. Do not start project work from this briefing alone.",
-    "",
-    "Live progress instruction:",
-    "Keep progress updates short, calm, and friendly to non-technical users.",
-    "Describe visible work in plain language. Reserve detailed commands and logs for the final answer when they matter.",
-    "",
-    "Shell command instruction:",
-    "Issue the ordinary shell command you intend to run exactly once. Vibe64 applies the session boundary transparently.",
-    "Never encode, copy, reconstruct, or invoke Vibe64's session-command wrapper, even if provider history shows it.",
-    "If session command control is unavailable, stop and report that failure instead of retrying through the wrapper.",
-    "",
-    "GitHub operation instruction:",
-    "`git` and `gh` are available through Vibe64's session-scoped command boundary.",
-    "They run as the GitHub account recorded as this session's Git command actor.",
-    "If GitHub authentication is unavailable, report the command error clearly instead of trying to log in or inspect credentials.",
-    "",
-    projectAiPolicyInstructions(policy)
-  ].join("\n").trim();
 }
 
 function connectionIdentity(connection = {}, apiKey = "") {
@@ -584,6 +555,19 @@ function createOpenCodeTerminalController({
   let sharedProcessStart = null;
   let sharedProcessStop = null;
 
+  function promptContext(conversationKind = "main") {
+    return {
+      conversationKind,
+      scope: "session",
+      session: {
+        managedDatabaseRefresh: Boolean(agentDatabaseCommand),
+        managedEnvironment: Boolean(agentEnvCommand),
+        managedGit: Boolean(codexGitCommand),
+        managedPreview: Boolean(agentPreviewCommand)
+      }
+    };
+  }
+
   async function contextFor(sessionId = "", options = {}) {
     const id = safeSessionId(sessionId);
     const runtime = options.runtime || await projectService.createRuntime({
@@ -631,6 +615,12 @@ function createOpenCodeTerminalController({
     await mkdir(path.dirname(registryPath), { mode: 0o700, recursive: true });
     const temporaryPath = `${registryPath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify({
+      promptContexts: [...temporaryConversations.values()]
+        .filter((entry) => entry.promptContext && text(entry.conversationId))
+        .map((entry) => ({
+          promptContext: entry.promptContext,
+          upstreamSessionId: entry.conversationId
+        })),
       sessions: [...sessionEnvironments.values()]
     })}\n`, {
       mode: 0o600
@@ -674,6 +664,18 @@ function createOpenCodeTerminalController({
         ? server.client.forDirectory(workdir)
         : server.client
     });
+  }
+
+  function boundedHelperTarget(target = {}, executionProfile = null) {
+    if (!executionProfile) {
+      return target;
+    }
+    const workdir = sharedRoots().workdir;
+    return {
+      ...target,
+      server: openCodeServerForDirectory(target.server, workdir),
+      workdir
+    };
   }
 
   async function stopSharedProcess(reason = "opencode-last-session-closed") {
@@ -733,6 +735,7 @@ function createOpenCodeTerminalController({
           ownerId: "opencode"
         },
         privateRoot: path.join(roots.root, `private-${randomUUID()}`),
+        hostContextResolver: vibe64HostContextResolverPath(),
         providerConnections: connections,
         sessionEnvironmentRegistry: roots.registryPath,
         shimDirs,
@@ -978,6 +981,7 @@ function createOpenCodeTerminalController({
         env: commands.env,
         pathEntries: commands.shimDirs,
         projectContextRoot: path.resolve(context.runtime.projectContextRoot),
+        promptContext: promptContext("main"),
         sessionId: context.sessionId,
         upstreamSessionId: upstreamSessionId(context.runtime.stateRoot, context.sessionId),
         workdir: context.workdir
@@ -1611,7 +1615,7 @@ function createOpenCodeTerminalController({
     }
     let actor = null;
     let actorFailure = null;
-    let aiContext = null;
+    let actorMetadata = null;
     let admitted = null;
     let target = null;
     try {
@@ -1638,8 +1642,7 @@ function createOpenCodeTerminalController({
         throw new Error(actorFailure.error);
       }
       target = await ensureUpstreamSession(context, options);
-      aiContext = await resolveAiTurnContext({
-        projectService,
+      actorMetadata = await conversationActorMetadata({
         vibe64User: options.vibe64User || null
       });
       const genesisTask = text(input.genesisTask);
@@ -1665,14 +1668,7 @@ function createOpenCodeTerminalController({
         delivery: currentMonitor ? "steer" : "queue",
         id: providerMessageId,
         model: openCodeModel(context.selection),
-        prompt: {
-          text: promptWithHiddenAiTurnContext(needsOpeningPrompt
-            ? [
-                openCodeSessionInstructions(actor?.session || context.session, aiContext.policy),
-                renderedPrompt
-              ].join("\n\n")
-            : renderedPrompt, aiContext)
-        },
+        prompt: { text: renderedPrompt },
         resume: true
       });
     } catch (error) {
@@ -1701,7 +1697,7 @@ function createOpenCodeTerminalController({
         text: text(input.displayMessage) || message,
         turnMetadata: {
           assistantSelection: context.selection,
-          ...aiTurnMetadata(aiContext),
+          ...actorMetadata,
           engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
           upstreamMessageId: text(admitted?.id)
         }
@@ -1749,12 +1745,15 @@ function createOpenCodeTerminalController({
 
   async function createConversation(sessionId = "", input = {}, options = {}) {
     const context = await contextFor(sessionId, options);
-    const target = await ensureProcess(context, options);
     const executionProfile = openCodeExecutionProfile(input);
+    const target = boundedHelperTarget(
+      await ensureProcess(context, options),
+      executionProfile
+    );
     const conversation = await target.server.client.createSession({
       agent: openCodeAgent(context.selection, executionProfile),
-      location: { directory: context.workdir },
-      model: openCodeModel(context.selection)
+      location: { directory: target.workdir },
+      model: openCodeModel(context.selection, executionProfile)
     });
     temporaryConversations.set(`${context.key}\0${conversation.id}`, {
       active: false,
@@ -1772,8 +1771,11 @@ function createOpenCodeTerminalController({
     createIfMissing = true
   } = {}) {
     const context = await contextFor(sessionId, options);
-    const target = await ensureProcess(context, options);
     const executionProfile = openCodeExecutionProfile(input);
+    const target = boundedHelperTarget(
+      await ensureProcess(context, options),
+      executionProfile
+    );
     const agent = openCodeAgent(context.selection, executionProfile);
     let conversationId = text(input.conversationId || input.threadId);
     if (!conversationId) {
@@ -1787,7 +1789,7 @@ function createOpenCodeTerminalController({
       }
       const created = await target.server.client.createSession({
         agent,
-        location: { directory: context.workdir },
+        location: { directory: target.workdir },
         model: openCodeModel(context.selection, executionProfile)
       });
       conversationId = created.id;
@@ -1801,13 +1803,19 @@ function createOpenCodeTerminalController({
     const key = `${context.key}\0${conversationId}`;
     const tracked = temporaryConversations.get(key) || { active: false, target };
     tracked.target = target;
+    tracked.conversationId = conversationId;
+    tracked.promptContext = executionProfile
+      ? null
+      : promptContext(input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY
+        ? "temporary-task"
+        : "temporary-readonly");
     temporaryConversations.set(key, tracked);
+    await writeSessionEnvironmentRegistry();
     return { context, conversationId, executionProfile, key, target, tracked };
   }
 
   async function existingDetachedTarget(sessionId = "", input = {}, options = {}) {
     const context = await contextFor(sessionId, options);
-    const target = processes.get(context.key) || null;
     const conversationId = text(input.conversationId || input.threadId);
     if (!conversationId) {
       throw openCodeError(
@@ -1817,11 +1825,12 @@ function createOpenCodeTerminalController({
         400
       );
     }
+    const key = `${context.key}\0${conversationId}`;
     return {
       context,
       conversationId,
-      key: `${context.key}\0${conversationId}`,
-      target
+      key,
+      target: temporaryConversations.get(key)?.target || processes.get(context.key) || null
     };
   }
 
@@ -2138,10 +2147,12 @@ function createOpenCodeTerminalController({
       );
       if (!target) {
         temporaryConversations.delete(`${context.key}\0${conversationId}`);
+        await writeSessionEnvironmentRegistry();
         return { conversationId, deleted: false, ok: true };
       }
       await target.server.client.deleteSession(conversationId);
       temporaryConversations.delete(`${context.key}\0${conversationId}`);
+      await writeSessionEnvironmentRegistry();
       return { conversationId, deleted: true, ok: true };
     },
     async describeProvider(sessionId, options = {}) {

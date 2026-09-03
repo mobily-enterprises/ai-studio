@@ -1,12 +1,5 @@
 import { createSchema } from "json-rest-schema";
 import { deepFreeze } from "@jskit-ai/kernel/shared/support/deepFreeze";
-import {
-  PROJECT_AI_POLICY_EXPERTISE_LEVELS,
-  PROJECT_AI_POLICY_RATIONALE_LEVELS,
-  PROJECT_AI_POLICY_RESPONSE_LENGTHS,
-  PROJECT_AI_POLICY_TONES
-} from "@local/vibe64-core/server/projectAiPolicy";
-
 function patchSchema(fields) {
   return deepFreeze({
     schema: createSchema(fields),
@@ -30,7 +23,11 @@ const previewApplicationIdentitiesReadInputValidator = patchSchema({
   }
 });
 const projectSettingsReadInputValidator = patchSchema({
-  ...optionalUser
+  ...optionalUser,
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
 });
 
 const projectEngineeringSettingsReadInputValidator = patchSchema({
@@ -52,40 +49,44 @@ const projectEngineeringProfileInputValidator = patchSchema({
   }
 });
 
-const projectAiPolicyInputValidator = patchSchema({
+const projectCollaborationInputValidator = patchSchema({
   ...optionalUser,
-  customNote: {
+  requirements: {
     noTrim: false,
     required: true,
     type: "string"
   },
-  expertise: {
-    enum: PROJECT_AI_POLICY_EXPERTISE_LEVELS,
+  experience: {
     noTrim: false,
     required: true,
     type: "string"
   },
-  promptHints: {
-    required: true,
-    type: "boolean"
-  },
-  rationale: {
-    enum: PROJECT_AI_POLICY_RATIONALE_LEVELS,
+  explanationStyle: {
     noTrim: false,
     required: true,
     type: "string"
   },
   responseLength: {
-    enum: PROJECT_AI_POLICY_RESPONSE_LENGTHS,
     noTrim: false,
     required: true,
     type: "string"
   },
   tone: {
-    enum: PROJECT_AI_POLICY_TONES,
     noTrim: false,
     required: true,
     type: "string"
+  },
+  sessionId: {
+    type: "string",
+    noTrim: false
+  }
+});
+
+const projectPromptHintsInputValidator = patchSchema({
+  ...optionalUser,
+  promptHints: {
+    required: true,
+    type: "boolean"
   }
 });
 
@@ -180,7 +181,7 @@ const previewApplicationIdentitiesInputValidator = patchSchema({
 });
 
 export {
-  projectAiPolicyInputValidator,
+  projectCollaborationInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectEngineeringProfileInputValidator,
   projectEngineeringSettingsReadInputValidator,
@@ -189,6 +190,7 @@ export {
   projectEnvSecretRevealInputValidator,
   projectEnvUserValuesInputValidator,
   projectsReadInputValidator,
+  projectPromptHintsInputValidator,
   projectSelectInputValidator,
   projectSettingsReadInputValidator,
   previewApplicationIdentitiesInputValidator,

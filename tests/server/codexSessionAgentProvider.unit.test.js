@@ -123,6 +123,50 @@ test("Codex adapter forwards trusted renewal operations without selecting an eco
   assert.equal(calls[5][2].session, session);
 });
 
+test("Codex adapter forwards the authenticated Vibe64 user to every human turn", async () => {
+  const actor = { userId: "user-1" };
+  const calls = [];
+  const controller = {
+    async runDetachedChatTurn(_sessionId, input) {
+      calls.push(["detached", input]);
+      return { ok: true, text: "done" };
+    },
+    async startConversationTurn(_sessionId, input) {
+      calls.push(["temporary", input]);
+      return { ok: true, runId: "turn-1" };
+    },
+    async streamDetachedChatTurn(_sessionId, input) {
+      calls.push(["stream", input]);
+      return { ok: true, text: "done" };
+    },
+    async writeTerminal(_sessionId, _terminalSessionId, _data, input) {
+      calls.push(["terminal", input]);
+      return { ok: true };
+    }
+  };
+  const provider = createCodexSessionAgentProvider({ controller });
+  const context = { sessionId: "session-1", vibe64User: actor };
+
+  await provider.runDetachedChatTurn(context, { prompt: "Detached" });
+  await provider.streamDetachedChatTurn(context, { prompt: "Streamed" });
+  await provider.startConversationTurn(context, { message: "Temporary" });
+  await provider.writeTerminal(context, {
+    data: "Native input",
+    input: { trackGitActor: true },
+    terminalSessionId: "terminal-1"
+  });
+
+  assert.deepEqual(calls.map(([kind]) => kind), [
+    "detached",
+    "stream",
+    "temporary",
+    "terminal"
+  ]);
+  for (const [, input] of calls) {
+    assert.equal(input.vibe64User, actor);
+  }
+});
+
 test("Codex adapter reports every active Temporary AI turn", async () => {
   const provider = createCodexSessionAgentProvider({
     controller: {

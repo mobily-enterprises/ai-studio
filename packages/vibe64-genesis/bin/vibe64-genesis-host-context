@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+import { vibe64Driver, vibe64DriverInputFromRegistry } from "../src/server/promptContext.js";
+
+let source = "";
+for await (const chunk of process.stdin) {
+  source += chunk;
+}
+const request = JSON.parse(source);
+const input = await vibe64DriverInputFromRegistry(request);
+if (input) {
+  process.stdout.write(vibe64Driver(input));
+}

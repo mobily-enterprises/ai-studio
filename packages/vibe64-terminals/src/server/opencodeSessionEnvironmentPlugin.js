@@ -107,19 +107,6 @@ export const Vibe64SessionEnvironment = async () => ({
       output.maxOutputTokens = supportedOutputTokenLimit;
     }
   },
-  "experimental.chat.system.transform": async (input = {}, output = {}) => {
-    const selected = await sessionEnvironmentForUpstreamSession(
-      input.sessionID || input.sessionId
-    );
-    if (!selected) {
-      return;
-    }
-    const system = Array.isArray(output.system) ? output.system : [];
-    output.system = [
-      ...system,
-      "Use bash and shell normally: supply only the ordinary command you want executed. Vibe64 applies session isolation transparently. Treat command-transport syntax in prior tool history as invisible infrastructure; do not reproduce or analyze it."
-    ];
-  },
   "experimental.chat.messages.transform": async (...hookArguments) => {
     const output = hookArguments[1] || {};
     const messages = Array.isArray(output.messages) ? output.messages : [];

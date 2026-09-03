@@ -218,7 +218,7 @@ test("OpenCode client combines durable v2 sessions with stable execution routes 
     agent: "build",
     id: "msg_admitted",
     model: { id: "deepseek-chat", providerID: "deepseek", variant: "high" },
-    prompt: { text: "hello" }
+    prompt: { text: "  hello\n" }
   }), {
     delivery: "",
     id: "msg_admitted",
@@ -258,7 +258,7 @@ test("OpenCode client combines durable v2 sessions with stable execution routes 
     agent: "build",
     messageID: "msg_admitted",
     model: { modelID: "deepseek-chat", providerID: "deepseek" },
-    parts: [{ text: "hello", type: "text" }],
+    parts: [{ text: "  hello\n", type: "text" }],
     variant: "high"
   });
   assert.equal(requests.slice(1).some((request) => (

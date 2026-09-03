@@ -11,5 +11,4 @@ export * from "./sessionSourceGit.js";
 export * from "./sessionSourceInspection.js";
 export * from "./sessionStore.js";
 export * from "./sessionWorktreeArchive.js";
-export * from "./vibeSessionBriefing.js";
 export * from "./workspaceSetupState.js";

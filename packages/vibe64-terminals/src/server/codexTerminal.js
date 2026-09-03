@@ -22,7 +22,11 @@ import {
 import {
   codexRuntimeContext
 } from "@local/studio-terminal-core/server/codexRuntimeContext";
-import { withGenesisCommandShim } from "@local/vibe64-genesis/server";
+import {
+  SESSION_CONTEXT_INSTALLED_ENV,
+  composeVibe64SessionContext,
+  withGenesisCommandShim
+} from "@local/vibe64-genesis/server";
 import {
   terminalAppOwnerMetadata
 } from "@local/studio-terminal-core/server/terminalOwnership";
@@ -93,7 +97,6 @@ import {
 import {
   getStudioProjectContext
 } from "@local/vibe64-core/server/studioProjectContext";
-import { vibe64SessionBriefing } from "@local/vibe64-runtime/server/vibeSessionBriefing";
 import {
   vibe64Result,
   codexTerminalNamespace,
@@ -146,12 +149,7 @@ import {
   agentTerminalIdentityForWorkdir,
   agentTerminalIdentityState
 } from "./agentTerminalIdentity.js";
-import {
-  aiTurnMetadata,
-  projectAiPolicyInstructions,
-  promptWithHiddenAiTurnContext,
-  resolveAiTurnContext
-} from "./aiTurnContext.js";
+import { conversationActorMetadata } from "./conversationActor.js";
 import {
   classifyCodexAppServerEvent,
   codexAppServerAssistantItemText,
@@ -1201,35 +1199,6 @@ function codexSessionBriefingFingerprint(developerInstructions = "") {
   return stableHash(normalizeText(developerInstructions));
 }
 
-function codexSessionBriefingNeedsRefresh(session = {}, developerInstructions = "") {
-  return sessionBriefingIsDelivered(session) &&
-    normalizeText(session.metadata?.[CODEX_SESSION_BRIEFING_FINGERPRINT_METADATA]) !==
-      codexSessionBriefingFingerprint(developerInstructions);
-}
-
-function codexAppServerDeveloperInstructions(session = {}, policy = {}) {
-  const briefing = vibe64SessionBriefing({ session });
-  return [
-    briefing,
-    "",
-    "Session briefing instruction:",
-    "Keep this Vibe64 briefing as the source of truth for this Codex session. Do not start project work from this briefing alone.",
-    "",
-    "Live progress instruction:",
-    "When you send progress updates before the final answer, keep each update short, calm, and friendly to non-technical users.",
-    "Use progress only for brief status notes, not for the plan or final answer.",
-    "Describe the visible user-facing work in plain language. Keep detailed commands, package names, and logs for the terminal or final answer when they matter.",
-    "",
-    "GitHub operation instruction:",
-    "`git` and `gh` are available in this session.",
-    "They run as the GitHub account recorded as this session's Git command actor.",
-    "Use normal `git` and `gh` commands for status, commits, pushes, issues, pull requests, and merges.",
-    "If GitHub authentication is unavailable, report the command error clearly instead of trying to log in or inspect credentials.",
-    "",
-    projectAiPolicyInstructions(policy)
-  ].join("\n").trim();
-}
-
 function codexContextRefreshPending(session = {}) {
   return normalizeText(session.metadata?.codex_context_refresh_pending) === "yes";
 }
@@ -1322,6 +1291,7 @@ function createCodexTerminalController({
   codexAppServerProviderFactory = createCodexAppServerAgentProvider,
   codexAppServerPromptDeliveryEnabled = CODEX_APP_SERVER_PROMPT_DELIVERY_ENABLED,
   codexEconomyThreadLedgerFactory = createCodexEconomyThreadLedger,
+  composeSessionContext = composeVibe64SessionContext,
   codexToolHomeRequired = false,
   codexToolHomeSource = "",
   env = process.env,
@@ -1360,6 +1330,7 @@ function createCodexTerminalController({
   const codexAppServerEconomyTurnStarts = new Map();
   const codexAppServerEconomyThreadRestores = new Map();
   const codexAppServerEphemeralConversations = new Map();
+  const codexAppServerSessionContexts = new Map();
   const codexAppServerSessionClosures = new Map();
   const codexAppServerRenewalSessionClosures = new WeakSet();
   const codexAppServerMessageDeliveries = new Map();
@@ -1392,12 +1363,60 @@ function createCodexTerminalController({
   let codexAppServerServerClosing = false;
   let codexAppServerShutdownPromise = null;
 
-  function currentAiTurnContext(vibe64User = null) {
-    return resolveAiTurnContext({
+  function currentConversationActorMetadata(vibe64User = null) {
+    return conversationActorMetadata({
       personalProfileStore,
-      projectService,
       vibe64User
     });
+  }
+
+  function vibe64SessionContextInput(conversationKind = "main") {
+    return {
+      conversationKind,
+      session: {
+        managedDatabaseRefresh: Boolean(agentDatabaseCommand),
+        managedEnvironment: Boolean(agentEnvCommand),
+        managedGit: Boolean(codexGitCommand),
+        managedPreview: Boolean(agentPreviewCommand)
+      }
+    };
+  }
+
+  function clearCodexAppServerSessionContexts(sessionId = "") {
+    const prefix = `${normalizeText(sessionId)}\0`;
+    for (const key of codexAppServerSessionContexts.keys()) {
+      if (key.startsWith(prefix)) codexAppServerSessionContexts.delete(key);
+    }
+  }
+
+  async function codexAppServerSessionInstructions(session = {}, {
+    conversationKind = "main",
+    workdir = ""
+  } = {}) {
+    const sessionId = normalizeText(session.sessionId || session.id);
+    const projectRoot = normalizeText(workdir) || terminalWorktreePath(session);
+    if (!sessionId || !projectRoot) {
+      throw new Error("Codex session context requires a session and source worktree.");
+    }
+    if (codexContextRefreshPending(session)) {
+      clearCodexAppServerSessionContexts(sessionId);
+    }
+    const key = [sessionId, conversationKind, projectRoot].join("\0");
+    let pending = codexAppServerSessionContexts.get(key);
+    if (!pending) {
+      const input = vibe64SessionContextInput(conversationKind);
+      pending = composeSessionContext({
+        ...input,
+        projectRoot
+      });
+      codexAppServerSessionContexts.set(key, pending);
+      pending.catch(() => {
+        if (codexAppServerSessionContexts.get(key) === pending) {
+          codexAppServerSessionContexts.delete(key);
+        }
+      });
+    }
+    return pending;
   }
 
   function codexAppServerTurnResultWasProcessed(session = {}, threadId = "", turnId = "") {
@@ -2163,7 +2182,10 @@ function createCodexTerminalController({
       runtimeDir: normalizeText(runtimeDir) || reusableMetadataRuntimeDir || expectedRuntimeDir,
       session,
       executionRoot: effectiveExecutionRoot,
-      terminalEnv: effectiveTerminalEnv,
+      terminalEnv: {
+        ...effectiveTerminalEnv,
+        [SESSION_CONTEXT_INSTALLED_ENV]: "1"
+      },
       toolHomeSource,
       workdir: effectiveWorkdir
     });
@@ -4652,6 +4674,13 @@ function createCodexTerminalController({
         codexAppServerMirroredTerminalItems.delete(key);
         return null;
       }
+      let turnMetadata = null;
+      if (normalizedRole === "user" && typeof store.readConversationLog === "function") {
+        const turns = await store.readConversationLog(normalizedSessionId);
+        turnMetadata = [...turns].reverse().find((turn) => (
+          turn?.user && turn?.metadata
+        ))?.metadata || null;
+      }
       written = await writer.call(store, normalizedSessionId, {
         messageId: codexAppServerConversationMessageId(
           threadId,
@@ -4659,7 +4688,8 @@ function createCodexTerminalController({
           normalizedRole,
           normalizedText
         ),
-        text: normalizedText
+        text: normalizedText,
+        ...(turnMetadata ? { turnMetadata } : {})
       });
       if (!written) {
         codexAppServerMirroredTerminalItems.delete(key);
@@ -4701,6 +4731,7 @@ function createCodexTerminalController({
     if (!normalizedSessionId || typeof store?.writeMetadataValue !== "function") {
       return null;
     }
+    clearCodexAppServerSessionContexts(normalizedSessionId);
     const at = new Date().toISOString();
     await store.mutateSession(normalizedSessionId, async () => {
       await Promise.all([
@@ -7933,11 +7964,10 @@ function createCodexTerminalController({
             sessionId,
             providerOptions
           );
-          const aiContext = await currentAiTurnContext();
-          const developerInstructions = codexAppServerDeveloperInstructions(
+          const developerInstructions = (await codexAppServerSessionInstructions(
             currentSession,
-            aiContext.policy
-          );
+            { workdir }
+          )).output;
           const thread = await ensureCodexAppServerThreadForSession({
             agentSettings,
             developerInstructions,
@@ -8066,7 +8096,7 @@ function createCodexTerminalController({
       toolHomeSource,
       workdir
     } = context;
-    const aiContext = await currentAiTurnContext(vibe64User);
+    const turnMetadata = await currentConversationActorMetadata(vibe64User);
     vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.start", {
       durationMs: Date.now() - startedAt,
       messageId,
@@ -8143,10 +8173,10 @@ function createCodexTerminalController({
             sessionId,
             stage: "provider"
           });
-          const developerInstructions = codexAppServerDeveloperInstructions(
+          const developerInstructions = (await codexAppServerSessionInstructions(
             currentSession,
-            aiContext.policy
-          );
+            { workdir }
+          )).output;
           stageStartedAt = Date.now();
           const thread = await ensureCodexAppServerThreadForSession({
             agentSettings,
@@ -8227,13 +8257,6 @@ function createCodexTerminalController({
       }
       const refreshMetadata = preparedSession.metadata || {};
       const providerContextRefreshPending = codexContextRefreshPending(preparedSession);
-      const briefingNeedsRefresh = codexSessionBriefingNeedsRefresh(
-        preparedSession,
-        developerInstructions
-      );
-      const contextRefresh = providerContextRefreshPending || briefingNeedsRefresh
-        ? developerInstructions
-        : "";
       stageStartedAt = Date.now();
       const genesisTask = normalizeText(input.genesisTask);
       const needsOpeningPrompt = !sessionBriefingIsDelivered(preparedSession);
@@ -8254,7 +8277,6 @@ function createCodexTerminalController({
       if (!renderedPrompt) {
         throw new Error("The assistant prompt is empty.");
       }
-      const terminalInput = promptWithHiddenAiTurnContext(renderedPrompt, aiContext);
       vibe64SessionDebugLog("server.codexTerminal.appServerPrompt.prepared", {
         messageCount: 1,
         messageId,
@@ -8271,8 +8293,7 @@ function createCodexTerminalController({
         delivery = await sendCodexAppServerPromptForSession({
           agentSettings,
           clientUserMessageId,
-          contextRefresh,
-          prompt: terminalInput,
+          prompt: renderedPrompt,
           provider,
           threadId: thread.threadId,
           workdir
@@ -8328,7 +8349,7 @@ function createCodexTerminalController({
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_delivered_at", deliveredAt),
             runtime.store.writeMetadataValue(sessionId, "agent_briefing_transport", "codex_app_server")
           ] : []),
-          ...(briefingWasDelivered || briefingNeedsRefresh ? [
+          ...(briefingWasDelivered || providerContextRefreshPending ? [
             runtime.store.writeMetadataValue(
               sessionId,
               CODEX_SESSION_BRIEFING_FINGERPRINT_METADATA,
@@ -8358,7 +8379,7 @@ function createCodexTerminalController({
           ok: !providerFailure
         }, currentSession),
         connectionReused: providerAlreadyAvailable,
-        turnMetadata: aiTurnMetadata(aiContext),
+        turnMetadata,
         turnId: delivery.turn?.id || ""
       };
     } catch (error) {
@@ -8383,32 +8404,6 @@ function createCodexTerminalController({
     } finally {
       codexAppServerPromptDeliveries.delete(promptDeliveryKey);
     }
-  }
-
-  function codexAppServerDetachedChatInstructions(session = {}, policy = {}) {
-    return [
-      codexAppServerDeveloperInstructions(session, policy),
-      "",
-      "Detached Vibe64 chat instruction:",
-      "This is not the main Vibe64 conversation.",
-      "Respond normally without transport metadata.",
-      "Do not edit files or run commands that change project state.",
-      "Answer the prompt as a focused source-code chat response."
-    ].join("\n").trim();
-  }
-
-  function codexAppServerTaskConversationInstructions(session = {}, policy = {}) {
-    return [
-      codexAppServerDeveloperInstructions(session, policy),
-      "",
-      "Focused Vibe64 task instruction:",
-      "This is a temporary task conversation, separate from the main Vibe64 conversation.",
-      "You may edit the session worktree and run state-changing commands when they are required by the task.",
-      "Stay within the requested task. Do not start unrelated work or modify Vibe64 runtime/session state.",
-      "Every response uses the required task result shape.",
-      "Use kind=continue when you need a user decision or another follow-up turn.",
-      "Use kind=complete only after the task is actually finished, and provide a concise factual report for the main conversation."
-    ].join("\n").trim();
   }
 
   function codexAppServerEconomyThreadKey({
@@ -9456,9 +9451,9 @@ function createCodexTerminalController({
     return {
       ...context,
       agentSettings,
-      aiContext: isRecord(input.executionProfile)
-        ? null
-        : await currentAiTurnContext(input.vibe64User || null),
+      actorMetadata: isRecord(input.executionProfile)
+        ? {}
+        : await currentConversationActorMetadata(input.vibe64User || null),
       economyRestore,
       provider
     };
@@ -9633,13 +9628,17 @@ function createCodexTerminalController({
   }
 
   async function codexAppServerConversationThreadSettings(context = {}, input = {}) {
-    const promptSession = context.session;
+    const conversationKind = input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY
+      ? "temporary-task"
+      : "temporary-readonly";
+    const sessionContext = await codexAppServerSessionInstructions(context.session, {
+      conversationKind,
+      workdir: context.workdir
+    });
     return codexAppServerThreadSettings({
       agentSettings: context.agentSettings,
       cwd: context.workdir,
-      developerInstructions: input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY
-        ? codexAppServerTaskConversationInstructions(promptSession, context.aiContext?.policy)
-        : codexAppServerDetachedChatInstructions(promptSession, context.aiContext?.policy)
+      developerInstructions: sessionContext.output
     });
   }
 
@@ -10180,10 +10179,10 @@ function createCodexTerminalController({
       } = context;
       const agentSettings = codexAppServerRenewalAgentSettings(session);
       const effectiveSettings = codexEffectiveAgentSettings(agentSettings);
-      const developerInstructions = codexAppServerDeveloperInstructions(
+      const developerInstructions = (await codexAppServerSessionInstructions(
         session,
-        context.aiContext?.policy
-      );
+        { workdir }
+      )).output;
       const providerOptions = await codexAppServerRuntimeOptionsForSession(session, {
         runtime,
         executionRoot,
@@ -10307,7 +10306,6 @@ function createCodexTerminalController({
             agentSettings,
             clientUserMessageId: clientMessageId,
             prompt: sessionRenewalHandoverPrompt({ source }),
-            promptLabel: "Vibe64 session renewal handover",
             provider,
             threadId,
             workdir
@@ -10454,10 +10452,10 @@ function createCodexTerminalController({
       } = context;
       const agentSettings = codexAppServerRenewalAgentSettings(session);
       const effectiveSettings = codexEffectiveAgentSettings(agentSettings);
-      const developerInstructions = codexAppServerDeveloperInstructions(
+      const developerInstructions = (await codexAppServerSessionInstructions(
         session,
-        context.aiContext?.policy
-      );
+        { workdir }
+      )).output;
       const started = await startFreshCodexAppServerThreadForSession({
         additionalMetadata: {
           agent_renewal_seed_handover_hash: approved.handoverHash
@@ -10558,7 +10556,6 @@ function createCodexTerminalController({
               source: approved.source
             }),
             prompt: sessionRenewalSeedPrompt(approved),
-            promptLabel: "Vibe64 renewed-session handover",
             provider,
             readOnly: true,
             threadId,
@@ -10771,7 +10768,7 @@ function createCodexTerminalController({
           rawText: "",
           runId: "",
           status: "starting",
-          turnMetadata: aiTurnMetadata(context.aiContext),
+          turnMetadata: context.actorMetadata,
           workspaceWrite
         });
         watcher = createCodexAppServerDetachedTurnWatcher(context.provider, conversationId, {
@@ -10795,8 +10792,7 @@ function createCodexTerminalController({
         delivery = await sendCodexAppServerPromptForSession({
           agentSettings: context.agentSettings,
           outputSchema: workspaceWrite ? VIBE64_AGENT_TASK_RESULT_SCHEMA : null,
-          prompt: promptWithHiddenAiTurnContext(prompt, context.aiContext),
-          promptLabel: normalizeText(input.promptLabel) || "Focused Vibe64 task",
+          prompt,
           provider: context.provider,
           threadId: conversationId,
           workdir: context.workdir
@@ -11336,13 +11332,12 @@ function createCodexTerminalController({
           ({ delivery, status, turnId } = await economyTurnStart);
         } else {
           delivery = await sendCodexAppServerPromptForSession({
-              agentSettings,
-              prompt,
-              promptLabel: normalizeText(input.promptLabel) || "Detached Vibe64 source chat",
-              provider,
-              threadId,
-              workdir
-            });
+            agentSettings,
+            prompt,
+            provider,
+            threadId,
+            workdir
+          });
           turnId = normalizeText(delivery.turn?.id);
           status = normalizeText(delivery.turn?.status || delivery.turn?.raw?.status);
         }
@@ -12112,7 +12107,7 @@ function createCodexTerminalController({
       }, session);
     }
     const vibe64User = input?.vibe64User || null;
-    const aiContext = await currentAiTurnContext(vibe64User);
+    const turnMetadata = await currentConversationActorMetadata(vibe64User);
     vibe64SessionDebugLog("server.codexTerminal.appServerMessage.contextReady", {
       durationMs: Date.now() - startedAt,
       messageId,
@@ -12335,9 +12330,9 @@ function createCodexTerminalController({
       result = await provider.steerTurn(
         threadId,
         turnId,
-        promptWithHiddenAiTurnContext(message, aiContext),
+        message,
         {
-        clientUserMessageId
+          clientUserMessageId
         }
       );
     } catch (error) {
@@ -12380,7 +12375,7 @@ function createCodexTerminalController({
       sessionId,
       displayMessage || message,
       messageId,
-      aiTurnMetadata(aiContext),
+      turnMetadata,
       input?.displayAttachments
     );
     splitCodexAppServerReasoningTurn(threadId, turnId);
@@ -12436,6 +12431,7 @@ function createCodexTerminalController({
       }
       const closing = (async () => {
         clearCodexAppServerSessionRecoveryTimers(normalizedSessionId);
+        clearCodexAppServerSessionContexts(normalizedSessionId);
         let runtime = null;
         let session = null;
         let providerOptions = null;
@@ -13153,7 +13149,6 @@ export {
   codexGitCommandShimDirs,
   codexRemoteEndpointForWorkdir,
   codexSessionBriefingFingerprint,
-  codexSessionBriefingNeedsRefresh,
   codexTerminalArgs,
   createCodexTerminalController
 };

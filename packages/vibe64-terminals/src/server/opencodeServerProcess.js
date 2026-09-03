@@ -138,6 +138,7 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
   cacheRoot = "",
   canonicalUrl = "",
   dbPath = "",
+  hostContextResolver = "",
   managedEnv = {},
   modelProviderId = "",
   outputTokenMax = 0,
@@ -181,6 +182,14 @@ function safeOpenCodeEnvironment(baseEnv = {}, {
         : {}),
       ...(text(sessionEnvironmentRegistry)
         ? {
+            ...(text(hostContextResolver)
+              ? {
+                  GENESIS_HOST_CONTEXT_RESOLVER: path.resolve(hostContextResolver),
+                  GENESIS_HOST_CONTEXT_RESOLVER_DATA: JSON.stringify({
+                    registryPath: path.resolve(sessionEnvironmentRegistry)
+                  })
+                }
+              : {}),
             OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: String(OPENCODE_MANAGED_OUTPUT_TOKEN_MAX),
             VIBE64_OPENCODE_SESSION_ENV_REGISTRY: path.resolve(sessionEnvironmentRegistry)
           }
@@ -261,6 +270,7 @@ async function createOpenCodeServerProcess({
   execution = {},
   expectedVersion = OPENCODE_EXPECTED_VERSION,
   fetchImpl = globalThis.fetch,
+  hostContextResolver = "",
   managedEnv = {},
   modelProviderId = "",
   port = 0,
@@ -351,6 +361,7 @@ async function createOpenCodeServerProcess({
       cacheRoot: text(cacheRoot) ? path.resolve(text(cacheRoot)) : "",
       canonicalUrl,
       dbPath: normalizedDbPath,
+      hostContextResolver,
       managedEnv,
       modelProviderId,
       password,

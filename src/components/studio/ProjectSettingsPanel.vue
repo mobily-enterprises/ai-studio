@@ -152,11 +152,11 @@
 
       <section class="project-settings__section" aria-labelledby="ai-behaviour-title">
         <div class="project-settings__section-copy">
-          <p class="project-settings__scope">This project — owner managed</p>
+          <p class="project-settings__scope">{{ collaborationSourceLabel }}</p>
           <h2 id="ai-behaviour-title">AI behaviour</h2>
           <p>
-            Set how the assistant communicates in future turns for everyone working on
-            this project. Existing conversation history stays unchanged.
+            Collaboration guidance is stored in genesis/collaboration.md and follows this
+            source. Prompt suggestions remain a separate Vibe64 setting.
           </p>
           <v-btn
             class="project-settings__account-link"
@@ -165,14 +165,14 @@
             variant="text"
             @click="openPersonalSettings"
           >
-            Set what the assistant calls you
+            Set your Vibe64 name
           </v-btn>
         </div>
 
         <div class="project-settings__ai-fields">
           <v-select
-            v-model="aiPolicyDraft.tone"
-            :disabled="!aiPolicyCanEdit || aiPolicySaving"
+            v-model="collaborationDraft.tone"
+            :disabled="!collaborationAvailable || !collaborationCanEdit || collaborationSaving"
             density="comfortable"
             hide-details
             item-title="label"
@@ -182,8 +182,8 @@
             variant="outlined"
           />
           <v-select
-            v-model="aiPolicyDraft.responseLength"
-            :disabled="!aiPolicyCanEdit || aiPolicySaving"
+            v-model="collaborationDraft.responseLength"
+            :disabled="!collaborationAvailable || !collaborationCanEdit || collaborationSaving"
             density="comfortable"
             hide-details
             item-title="label"
@@ -193,67 +193,82 @@
             variant="outlined"
           />
           <v-select
-            v-model="aiPolicyDraft.expertise"
-            :disabled="!aiPolicyCanEdit || aiPolicySaving"
+            v-model="collaborationDraft.experience"
+            :disabled="!collaborationAvailable || !collaborationCanEdit || collaborationSaving"
             density="comfortable"
             hide-details
             item-title="label"
             item-value="value"
-            :items="expertiseOptions"
+            :items="experienceOptions"
             label="Experience level"
             variant="outlined"
           />
           <v-select
-            v-model="aiPolicyDraft.rationale"
-            :disabled="!aiPolicyCanEdit || aiPolicySaving"
+            v-model="collaborationDraft.explanationStyle"
+            :disabled="!collaborationAvailable || !collaborationCanEdit || collaborationSaving"
             density="comfortable"
             hide-details
             item-title="label"
             item-value="value"
-            :items="rationaleOptions"
+            :items="explanationStyleOptions"
             label="Explanation style"
             variant="outlined"
           />
           <v-textarea
-            v-model="aiPolicyDraft.customNote"
+            v-model="collaborationDraft.requirements"
             class="project-settings__ai-note"
-            :disabled="!aiPolicyCanEdit || aiPolicySaving"
+            :disabled="!collaborationAvailable || !collaborationCanEdit || collaborationSaving"
             density="compact"
-            :error-messages="aiPolicyCustomNoteError ? [aiPolicyCustomNoteError] : []"
-            :hint="`${aiPolicyCustomNoteLength} of ${AI_POLICY_CUSTOM_NOTE_MAX_LENGTH} characters`"
-            hide-details="auto"
-            label="Anything else (optional)"
+            hide-details
+            label="Project requirements (optional)"
             placeholder="For example: use Australian English."
-            persistent-hint
             rows="2"
             variant="outlined"
-          />
-          <v-switch
-            v-model="aiPolicyDraft.promptHints"
-            class="project-settings__ai-hints"
-            color="primary"
-            :disabled="!aiPolicyCanEdit || aiPolicySaving"
-            hide-details
-            label="Suggest useful next prompts"
           />
         </div>
 
         <div class="project-settings__action">
-          <p v-if="!aiPolicyCanEdit">
-            You can view this project's choices. Only its owner can change them.
+          <p v-if="!collaborationAvailable">{{ collaborationUnavailableReason }}</p>
+          <p v-else-if="!collaborationCanEdit">
+            Only the project owner can change these controls in Settings. Anyone who can
+            edit this source can change genesis/collaboration.md directly.
           </p>
           <p v-else>
-            These choices apply to main and Temporary AI conversations from the next turn.
+            Collaboration changes apply when an assistant conversation next establishes or
+            refreshes stable context; existing history and live Codex instructions do not change.
           </p>
           <v-btn
-            :disabled="!aiPolicyChanged || !aiPolicyCanEdit || aiPolicySaving || Boolean(aiPolicyCustomNoteError)"
+            :disabled="!collaborationChanged || !collaborationAvailable || !collaborationCanEdit || collaborationSaving"
             color="primary"
             size="small"
             type="button"
             variant="flat"
-            @click="saveAiPolicy"
+            @click="saveCollaboration"
           >
-            {{ aiPolicySaving ? "Saving…" : "Save AI behaviour" }}
+            {{ collaborationSaving ? "Saving…" : "Save collaboration" }}
+          </v-btn>
+
+          <v-switch
+            v-model="promptHintsDraft"
+            class="project-settings__ai-hints"
+            color="primary"
+            :disabled="!promptHintsCanEdit || promptHintsSaving"
+            hide-details
+            label="Suggest useful next prompts"
+          />
+          <p>
+            Prompt suggestions are a Vibe64 helper only; this choice never changes coding-agent
+            instructions.
+          </p>
+          <v-btn
+            :disabled="!promptHintsChanged || !promptHintsCanEdit || promptHintsSaving"
+            color="primary"
+            size="small"
+            type="button"
+            variant="flat"
+            @click="savePromptHints"
+          >
+            {{ promptHintsSaving ? "Saving…" : "Save prompt suggestions" }}
           </v-btn>
         </div>
       </section>
@@ -279,13 +294,15 @@ import {
   requestVibe64AccountConnectionsDialog
 } from "@/lib/vibe64AccountConnectionsDialog.js";
 import {
-  AI_POLICY_ENDPOINT,
+  COLLABORATION_ENDPOINT,
   DEVELOPMENT_DATABASE_ENDPOINT,
   ENGINEERING_ENDPOINT,
+  PROMPT_HINTS_SETTINGS_ENDPOINT,
   PROJECT_SETTINGS_ENDPOINT,
-  VIBE64_AI_POLICY_API_SUFFIX,
+  VIBE64_COLLABORATION_API_SUFFIX,
   VIBE64_DEVELOPMENT_DATABASE_API_SUFFIX,
   VIBE64_ENGINEERING_API_SUFFIX,
+  VIBE64_PROMPT_HINTS_SETTINGS_API_SUFFIX,
   VIBE64_PROJECT_CHANGED_EVENT,
   engineeringSettingsQueryKey,
   projectSettingsQueryKey
@@ -300,36 +317,22 @@ import {
 const projectSlug = useVibe64ProjectSlug();
 const route = useRoute();
 const router = useRouter();
-const AI_POLICY_CUSTOM_NOTE_MAX_LENGTH = 500;
 const scopeDraft = ref("session");
-const aiPolicyDraft = ref(normalizeAiPolicyDraft());
-const savedAiPolicy = ref(normalizeAiPolicyDraft());
+const collaborationDraft = ref(normalizeCollaborationDraft());
+const savedCollaboration = ref(normalizeCollaborationDraft());
+const promptHintsDraft = ref(true);
+const savedPromptHints = ref(true);
 const engineeringProfileDraft = ref("");
 const savedEngineeringProfile = ref("");
 const routeSessionId = computed(() => String(route.query.sessionId || "").trim());
 
-const toneOptions = Object.freeze([
-  { label: "Encouraging", value: "encouraging" },
-  { label: "Playful and cheeky", value: "playful" },
-  { label: "Direct", value: "direct" },
-  { label: "Crisp and military", value: "military" }
-]);
-const responseLengthOptions = Object.freeze([
-  { label: "Very short", value: "very_short" },
-  { label: "Concise", value: "concise" },
-  { label: "Balanced", value: "balanced" },
-  { label: "Detailed", value: "detailed" }
-]);
-const expertiseOptions = Object.freeze([
-  { label: "Beginner", value: "beginner" },
-  { label: "Comfortable", value: "comfortable" },
-  { label: "Expert", value: "expert" }
-]);
-const rationaleOptions = Object.freeze([
-  { label: "Conclusions only", value: "conclusions" },
-  { label: "Concise rationale", value: "concise" },
-  { label: "Teaching detail", value: "teaching" }
-]);
+const COLLABORATION_CHOICE_LABELS = Object.freeze({
+  conclusions: "Conclusions only",
+  military: "Crisp and military",
+  playful: "Playful and cheeky",
+  teaching: "Teaching detail",
+  very_short: "Very short"
+});
 
 const resource = useEndpointResource({
   fallbackLoadError: "Project settings could not load.",
@@ -337,7 +340,11 @@ const resource = useEndpointResource({
   queryKey: computed(() => projectSettingsQueryKey(
     VIBE64_SURFACE_ID,
     ROUTE_VISIBILITY_PUBLIC,
-    projectSlug.value
+    projectSlug.value,
+    routeSessionId.value
+  )),
+  readQuery: computed(() => (
+    routeSessionId.value ? { sessionId: routeSessionId.value } : {}
   )),
   realtime: {
     event: VIBE64_PROJECT_CHANGED_EVENT
@@ -386,23 +393,45 @@ const databaseSaveCommand = useCommand({
   writeMethod: "PUT"
 });
 
-const aiPolicySaveCommand = useCommand({
+const collaborationSaveCommand = useCommand({
   access: "never",
-  apiSuffix: VIBE64_AI_POLICY_API_SUFFIX,
+  apiSuffix: VIBE64_COLLABORATION_API_SUFFIX,
   buildCommandOptions: () => ({
     method: "PUT",
-    path: AI_POLICY_ENDPOINT
+    path: COLLABORATION_ENDPOINT
   }),
   buildRawPayload: (_model, { context }) => ({
-    ...context.aiPolicy
+    ...context.collaboration,
+    ...(context.sessionId ? { sessionId: context.sessionId } : {})
   }),
-  fallbackRunError: "AI behaviour could not be saved.",
+  fallbackRunError: "Collaboration guidance could not be saved.",
   messages: {
-    error: "AI behaviour could not be saved.",
-    success: "AI behaviour saved."
+    error: "Collaboration guidance could not be saved.",
+    success: "Collaboration guidance saved."
   },
   ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-  placementSource: "vibe64.ai-policy.save",
+  placementSource: "vibe64.collaboration.save",
+  surfaceId: VIBE64_SURFACE_ID,
+  writeMethod: "PUT"
+});
+
+const promptHintsSaveCommand = useCommand({
+  access: "never",
+  apiSuffix: VIBE64_PROMPT_HINTS_SETTINGS_API_SUFFIX,
+  buildCommandOptions: () => ({
+    method: "PUT",
+    path: PROMPT_HINTS_SETTINGS_ENDPOINT
+  }),
+  buildRawPayload: (_model, { context }) => ({
+    promptHints: context.promptHints
+  }),
+  fallbackRunError: "Prompt suggestions could not be saved.",
+  messages: {
+    error: "Prompt suggestions could not be saved.",
+    success: "Prompt suggestions saved."
+  },
+  ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+  placementSource: "vibe64.prompt-hints.save",
   surfaceId: VIBE64_SURFACE_ID,
   writeMethod: "PUT"
 });
@@ -442,8 +471,24 @@ const projectScopeReason = computed(() => String(projectScopeOption.value.disabl
 const scopeDraftAvailable = computed(() => (
   scopeDraft.value === "project" ? projectScopeAvailable.value : sessionScopeAvailable.value
 ));
-const aiPolicy = computed(() => resource.data.value?.aiPolicy || {});
-const aiPolicyCanEdit = computed(() => resource.data.value?.aiPolicyCanEdit === true);
+const collaboration = computed(() => resource.data.value?.collaboration || {});
+const collaborationAvailable = computed(() => collaboration.value.available === true);
+const collaborationCanEdit = computed(() => collaboration.value.canEdit === true);
+const collaborationSourceLabel = computed(() => (
+  collaboration.value.source?.rootKind === "session-source"
+    ? "This session's project source"
+    : "This project source"
+));
+const collaborationUnavailableReason = computed(() => String(
+  collaboration.value.unavailableReason ||
+  "Collaboration guidance is not available for this source."
+));
+const toneOptions = computed(() => collaborationOptions("tone"));
+const responseLengthOptions = computed(() => collaborationOptions("responseLength"));
+const experienceOptions = computed(() => collaborationOptions("experience"));
+const explanationStyleOptions = computed(() => collaborationOptions("explanationStyle"));
+const promptHints = computed(() => resource.data.value?.promptHints || {});
+const promptHintsCanEdit = computed(() => promptHints.value.canEdit === true);
 const engineering = computed(() => engineeringResource.data.value?.engineering || {});
 const engineeringAvailable = computed(() => engineering.value.available === true);
 const engineeringProfiles = computed(() => (
@@ -475,28 +520,21 @@ const loadError = computed(() => String(
   resource.loadError.value || engineeringResource.loadError.value || ""
 ));
 const databaseSaving = computed(() => databaseSaveCommand.isRunning === true);
-const aiPolicySaving = computed(() => aiPolicySaveCommand.isRunning === true);
+const collaborationSaving = computed(() => collaborationSaveCommand.isRunning === true);
+const promptHintsSaving = computed(() => promptHintsSaveCommand.isRunning === true);
 const engineeringSaving = computed(() => engineeringSaveCommand.isRunning === true);
 const databaseChanged = computed(() => (
   managed.value && scopeDraft.value !== developmentDatabase.value.scope
 ));
-const aiPolicyChanged = computed(() => (
-  JSON.stringify(aiPolicyDraft.value) !== JSON.stringify(savedAiPolicy.value)
+const collaborationChanged = computed(() => (
+  JSON.stringify(collaborationDraft.value) !== JSON.stringify(savedCollaboration.value)
 ));
+const promptHintsChanged = computed(() => promptHintsDraft.value !== savedPromptHints.value);
 const engineeringChanged = computed(() => (
   engineeringAvailable.value &&
   Boolean(engineeringProfileDraft.value) &&
   engineeringProfileDraft.value !== savedEngineeringProfile.value
 ));
-const aiPolicyCustomNoteLength = computed(() => (
-  Array.from(String(aiPolicyDraft.value.customNote || "")).length
-));
-const aiPolicyCustomNoteError = computed(() => (
-  aiPolicyCustomNoteLength.value > AI_POLICY_CUSTOM_NOTE_MAX_LENGTH
-    ? `Use ${AI_POLICY_CUSTOM_NOTE_MAX_LENGTH} characters or fewer.`
-    : ""
-));
-
 watch(() => developmentDatabase.value.scope, (scope) => {
   if (["project", "session"].includes(scope)) {
     scopeDraft.value = scope;
@@ -505,10 +543,18 @@ watch(() => developmentDatabase.value.scope, (scope) => {
   immediate: true
 });
 
-watch(aiPolicy, (value) => {
-  const next = normalizeAiPolicyDraft(value);
-  aiPolicyDraft.value = next;
-  savedAiPolicy.value = normalizeAiPolicyDraft(next);
+watch(collaboration, (value) => {
+  const next = normalizeCollaborationDraft(value);
+  collaborationDraft.value = next;
+  savedCollaboration.value = normalizeCollaborationDraft(next);
+}, {
+  immediate: true
+});
+
+watch(() => promptHints.value.enabled, (value) => {
+  const enabled = value !== false;
+  promptHintsDraft.value = enabled;
+  savedPromptHints.value = enabled;
 }, {
   immediate: true
 });
@@ -546,14 +592,30 @@ async function refresh() {
   ]);
 }
 
-function normalizeAiPolicyDraft(value = {}) {
+function choiceLabel(value = "") {
+  const id = String(value || "").trim();
+  if (COLLABORATION_CHOICE_LABELS[id]) {
+    return COLLABORATION_CHOICE_LABELS[id];
+  }
+  const words = id.replaceAll("_", " ");
+  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "";
+}
+
+function collaborationOptions(field = "") {
+  const choices = collaboration.value.choices?.[field];
+  return (Array.isArray(choices) ? choices : []).flatMap((choice) => {
+    const value = String(choice?.id || "").trim();
+    return value ? [{ label: choiceLabel(value), value }] : [];
+  });
+}
+
+function normalizeCollaborationDraft(value = {}) {
   return {
-    tone: String(value?.tone || "encouraging"),
-    responseLength: String(value?.responseLength || "concise"),
-    expertise: String(value?.expertise || "comfortable"),
-    rationale: String(value?.rationale || "concise"),
-    customNote: String(value?.customNote || ""),
-    promptHints: value?.promptHints !== false
+    tone: String(value?.tone || ""),
+    responseLength: String(value?.responseLength || ""),
+    experience: String(value?.experience || ""),
+    explanationStyle: String(value?.explanationStyle || ""),
+    requirements: String(value?.requirements || "")
   };
 }
 
@@ -572,17 +634,28 @@ async function saveDatabase() {
   await resource.reload();
 }
 
-async function saveAiPolicy() {
+async function saveCollaboration() {
   if (
-    !aiPolicyChanged.value ||
-    !aiPolicyCanEdit.value ||
-    aiPolicySaving.value ||
-    aiPolicyCustomNoteError.value
+    !collaborationChanged.value ||
+    !collaborationAvailable.value ||
+    !collaborationCanEdit.value ||
+    collaborationSaving.value
   ) {
     return;
   }
-  await aiPolicySaveCommand.run({
-    aiPolicy: normalizeAiPolicyDraft(aiPolicyDraft.value)
+  await collaborationSaveCommand.run({
+    collaboration: normalizeCollaborationDraft(collaborationDraft.value),
+    sessionId: routeSessionId.value || String(collaboration.value.source?.sessionId || "").trim()
+  });
+  await resource.reload();
+}
+
+async function savePromptHints() {
+  if (!promptHintsChanged.value || !promptHintsCanEdit.value || promptHintsSaving.value) {
+    return;
+  }
+  await promptHintsSaveCommand.run({
+    promptHints: promptHintsDraft.value
   });
   await resource.reload();
 }

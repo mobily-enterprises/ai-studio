@@ -1,7 +1,7 @@
 import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions";
 
 import {
-  projectAiPolicyInputValidator,
+  projectCollaborationInputValidator,
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectEngineeringProfileInputValidator,
@@ -11,6 +11,7 @@ import {
   projectsReadInputValidator,
   projectSelectInputValidator,
   projectSettingsReadInputValidator,
+  projectPromptHintsInputValidator,
   previewApplicationIdentitiesInputValidator,
   previewApplicationIdentitiesReadInputValidator
 } from "./inputSchemas.js";
@@ -22,8 +23,9 @@ const ACTION_READ_ENV = "vibe64.project.env.read";
 const ACTION_SAVE_ENV_USER_VALUES = "vibe64.project.env.user-values.save";
 const ACTION_READ_PROJECT_SETTINGS = "vibe64.project.settings.read";
 const ACTION_READ_ENGINEERING_SETTINGS = "vibe64.project.engineering.read";
-const ACTION_SAVE_PROJECT_AI_POLICY = "vibe64.project.ai-policy.save";
+const ACTION_SAVE_COLLABORATION_SETTINGS = "vibe64.project.collaboration.save";
 const ACTION_SAVE_ENGINEERING_PROFILE = "vibe64.project.engineering.profile.save";
+const ACTION_SAVE_PROJECT_PROMPT_HINTS = "vibe64.project.prompt-hints.save";
 const ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE = "vibe64.project.development-database.scope.save";
 const ACTION_READ_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.read";
 const ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES = "vibe64.project.preview-identities.save";
@@ -145,11 +147,18 @@ function createProjectActions({ project } = {}) {
       execute: (input) => project.readEngineeringSettings(input)
     }),
     action({
-      id: ACTION_SAVE_PROJECT_AI_POLICY,
+      id: ACTION_SAVE_COLLABORATION_SETTINGS,
       kind: "command",
-      input: projectAiPolicyInputValidator,
+      input: projectCollaborationInputValidator,
       events: [projectChangedEvent()],
-      execute: (input) => project.saveProjectAiPolicy(input)
+      execute: (input) => project.saveCollaborationSettings(input)
+    }),
+    action({
+      id: ACTION_SAVE_PROJECT_PROMPT_HINTS,
+      kind: "command",
+      input: projectPromptHintsInputValidator,
+      events: [projectChangedEvent()],
+      execute: (input) => project.savePromptHints(input)
     }),
     action({
       id: ACTION_SAVE_ENGINEERING_PROFILE,
@@ -189,8 +198,9 @@ export {
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_ENV_USER_VALUES,
+  ACTION_SAVE_COLLABORATION_SETTINGS,
   ACTION_SAVE_ENGINEERING_PROFILE,
-  ACTION_SAVE_PROJECT_AI_POLICY,
+  ACTION_SAVE_PROJECT_PROMPT_HINTS,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT,

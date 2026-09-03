@@ -10,11 +10,13 @@ import {
   GENESIS_DERIVED_ARTIFACT_PATHS,
   addGenesisStack,
   assertGenesisPromptTask,
+  composeVibe64SessionContext,
   genesisCommandShimDirectory,
   genesisPackageBinDirectory,
   genesisPromptRequest,
   genesisPromptTask,
   initializeGenesisProject,
+  inspectGenesisCollaboration,
   inspectGenesisDerivedArtifacts,
   inspectGenesisEngineering,
   inspectGenesisEnvironment,
@@ -26,10 +28,14 @@ import {
   parseVibe64OutputsLines,
   parseVibe64WorkspaceSetupLines,
   renderGenesisPrompt,
+  setGenesisCollaboration,
   setGenesisEngineeringProfile,
-  withVibe64ConversationContract,
+  vibe64Driver,
   withGenesisCommandShim
 } from "../../packages/vibe64-genesis/src/server/index.js";
+import {
+  vibe64DriverInputFromRegistry
+} from "../../packages/vibe64-genesis/src/server/promptContext.js";
 import { withTemporaryRoot } from "./vibe64TestHelpers.js";
 
 const execFileAsync = promisify(execFile);
@@ -66,7 +72,7 @@ test("Genesis project-format inspection identifies a migratable unversioned proj
     assert.equal(projectFormat.status, "unversioned");
     assert.equal(projectFormat.action, "migrate");
     assert.equal(projectFormat.projectVersion, null);
-    assert.equal(projectFormat.supportedVersion, 2);
+    assert.equal(projectFormat.supportedVersion, 3);
   });
 });
 
@@ -89,14 +95,31 @@ test("the Genesis integration maps Vibe actions to explicit Genesis tasks and re
   assert.equal(genesisPromptRequest({}, { label: "Inspect this" }), "Inspect this");
 });
 
-test("Vibe64 keeps structured questions as a direct-chat presentation contract", () => {
-  const prompt = withVibe64ConversationContract("Build the requested feature.");
+test("the Vibe64 driver contributes stable session rules and no turn context", () => {
+  const session = vibe64Driver({
+    conversationKind: "main",
+    scope: "session",
+    session: {
+      managedDatabaseRefresh: true,
+      managedEnvironment: true,
+      managedGit: true,
+      managedPreview: true
+    }
+  });
 
-  assert.match(prompt, /Build the requested feature\./u);
-  assert.match(prompt, /no more than three concise/u);
-  assert.match(prompt, /`\[1\] Question`/u);
-  assert.match(prompt, /`Possible answers:`/u);
-  assert.doesNotMatch(prompt, /VIBE64 NEW-PROJECT OPENING/u);
+  assert.match(session, /no more than three concise/u);
+  assert.match(session, /`\[1\] Question`/u);
+  assert.match(session, /`Possible answers:`/u);
+  assert.match(session, /vibe64-preview status/u);
+  assert.match(session, /vibe64-env status/u);
+  assert.match(session, /vibe64-database refresh/u);
+  assert.doesNotMatch(session, /tone|response length|policy revision|actor id|do not reveal/iu);
+  assert.throws(
+    () => vibe64Driver({
+      scope: "turn"
+    }),
+    /session scope only/u
+  );
 });
 
 test("Genesis initialization creates its complete technology-neutral project", async () => {
@@ -106,12 +129,13 @@ test("Genesis initialization creates its complete technology-neutral project", a
     const result = await initializeGenesisProject({ projectRoot });
 
     assert.equal(result.status, "updated");
-    assert.equal(await readFile(path.join(projectRoot, "genesis", "version"), "utf8"), "2\n");
+    assert.equal(await readFile(path.join(projectRoot, "genesis", "version"), "utf8"), "3\n");
     assert.match(await readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"), /# Blueprint/u);
+    assert.match(await readFile(path.join(projectRoot, "genesis", "collaboration.md"), "utf8"), /# Collaboration approach/u);
     assert.match(await readFile(path.join(projectRoot, "genesis", "engineering.md"), "utf8"), /focused\.v1/u);
     assert.match(await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8"), /# Stack/u);
     const hooks = JSON.parse(await readFile(path.join(projectRoot, ".codex", "hooks.json"), "utf8"));
-    assert.deepEqual(Object.keys(hooks.hooks), ["SessionStart"]);
+    assert.deepEqual(Object.keys(hooks.hooks), ["SessionStart", "UserPromptSubmit"]);
     assert.match(
       await readFile(
         path.join(projectRoot, ".opencode", "plugins", "genesis-project-guidance.js"),
@@ -121,6 +145,78 @@ test("Genesis initialization creates its complete technology-neutral project", a
     );
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".genesis", "machine-city.json"), "utf8")));
     assert.ok(JSON.parse(await readFile(path.join(projectRoot, ".genesis", "program-city.json"), "utf8")));
+  });
+});
+
+test("the Genesis boundary composes source-owned collaboration once with Vibe64 session context", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    const initial = await inspectGenesisCollaboration({ projectRoot });
+    await setGenesisCollaboration({
+      experience: "expert",
+      explanationStyle: "conclusions",
+      projectRoot,
+      requirements: "- Use Australian English.",
+      responseLength: "very_short",
+      tone: "direct"
+    });
+    const composed = await composeVibe64SessionContext({
+      conversationKind: "temporary-readonly",
+      projectRoot,
+      session: {
+        managedDatabaseRefresh: true,
+        managedEnvironment: true,
+        managedGit: true,
+        managedPreview: true
+      }
+    });
+
+    assert.equal(initial.contract, "genesis.collaboration.v1");
+    assert.equal(composed.contract, "genesis.session-context.v1");
+    assert.match(composed.output, /Be direct, calm, and matter-of-fact\./u);
+    assert.match(composed.output, /Use Australian English\./u);
+    assert.match(composed.output, /temporary conversation separate from the main conversation/u);
+    assert.doesNotMatch(composed.output, /vibe64-env set|vibe64-database refresh/u);
+  });
+});
+
+test("the host resolver maps one provider session to the normalized Vibe64 driver input", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    const registryPath = path.join(projectRoot, "context-registry.json");
+    const promptContext = {
+      conversationKind: "main",
+      scope: "session",
+      session: {
+        managedDatabaseRefresh: true,
+        managedEnvironment: true,
+        managedGit: true,
+        managedPreview: true
+      }
+    };
+    await writeFile(registryPath, `${JSON.stringify({
+      sessions: [{
+        promptContext,
+        upstreamSessionId: "provider-session-1",
+        workdir: projectRoot
+      }]
+    })}\n`, "utf8");
+
+    assert.deepEqual(await vibe64DriverInputFromRegistry({
+      data: { registryPath },
+      providerSessionId: "provider-session-1",
+      scope: "session"
+    }), promptContext);
+    assert.equal(await vibe64DriverInputFromRegistry({
+      data: { registryPath },
+      providerSessionId: "provider-session-1",
+      scope: "turn"
+    }), null);
+    assert.equal(await vibe64DriverInputFromRegistry({
+      data: { registryPath },
+      providerSessionId: "missing-provider-session",
+      scope: "turn"
+    }), null);
   });
 });
 
@@ -386,6 +482,7 @@ test("a blank initialized project stays in Genesis onboarding before ordinary wo
     assert.match(rendered.prompt, /On confirmation, run\s+the Genesis `stack add <piece\.\.\.>` operation/u);
     assert.doesNotMatch(rendered.prompt, /VIBE64 NEW-PROJECT OPENING/u);
     assert.doesNotMatch(rendered.prompt, /explicit Vibe64 host default/u);
+    assert.doesNotMatch(rendered.prompt, /COLLABORATION APPROACH|ENGINEERING APPROACH/u);
   });
 });
 
@@ -558,7 +655,11 @@ test("the managed Genesis command migrates a legacy Stack into Vibe64 contracts"
       cwd: projectRoot
     });
 
-    assert.equal(await readFile(path.join(projectRoot, "genesis", "version"), "utf8"), "2\n");
+    assert.equal(await readFile(path.join(projectRoot, "genesis", "version"), "utf8"), "3\n");
+    assert.match(
+      await readFile(path.join(projectRoot, "genesis", "collaboration.md"), "utf8"),
+      /# Collaboration approach/u
+    );
     const stack = await readFile(path.join(projectRoot, "genesis", "stack.md"), "utf8");
     assert.match(stack, /## Workspace setup/u);
     assert.match(stack, /## Outputs/u);

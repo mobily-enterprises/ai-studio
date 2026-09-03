@@ -58,13 +58,22 @@ import {
 import {
   sessionRenewalHandoverHash
 } from "../../packages/vibe64-terminals/src/server/sessionRenewalHandover.js";
-import {
-  genesisCommandShimDirectory
-} from "../../packages/vibe64-genesis/src/server/index.js";
+import { genesisCommandShimDirectory } from "../../packages/vibe64-genesis/src/server/index.js";
 
 const TEST_ACCOUNT_IDENTITY_SIGNATURE = `sha256:${"a".repeat(64)}`;
 const TEST_AUTH_STATE_SIGNATURE = `v1:${"b".repeat(24)}`;
 const TEST_OTHER_ACCOUNT_IDENTITY_SIGNATURE = `sha256:${"d".repeat(64)}`;
+
+const TEST_SESSION_CONTEXT_COMPOSITION = Object.freeze({
+  async composeSessionContext({ conversationKind }) {
+    return {
+      contract: "genesis.session-context.v1",
+      identity: `session-context:${conversationKind}`,
+      output: `Genesis and Vibe64 ${conversationKind} session context.`,
+      status: "ready"
+    };
+  }
+});
 
 function exactStoppedRuntimeMetadata(runtimeDir, {
   stopped = false
@@ -1109,7 +1118,7 @@ function createDeterministicHold() {
 }
 
 async function withConversationController(operation, {
-  aiPolicy = null,
+  promptHints = null,
   codexEconomyThreadLedgerFactory = null
 } = {}) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-temporary-conversation-"));
@@ -1173,7 +1182,7 @@ async function withConversationController(operation, {
     turns: [],
     undefinedDeletes: 0
   };
-  const policyReads = [];
+  const promptHintReads = [];
   const subscribers = new Set();
   const {
     projectContextRoot,
@@ -1214,14 +1223,16 @@ async function withConversationController(operation, {
         VIBE64_WORKSPACE: "test"
       };
     },
-    async readProjectAiPolicy({ vibe64User } = {}) {
-      policyReads.push(vibe64User || null);
-      return aiPolicy
-        ? { aiPolicy, ok: true }
-        : { ok: true };
+    async readPromptHints() {
+      promptHintReads.push(true);
+      return {
+        ok: true,
+        promptHints: promptHints !== false
+      };
     }
   };
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderFactory(providerOptions) {
       captures.onProviderFactory?.();
       return createProvider(calls, subscribers, captures, providerOptions);
@@ -1240,7 +1251,7 @@ async function withConversationController(operation, {
       calls,
       captures,
       controller,
-      policyReads,
+      promptHintReads,
       projectContextRoot,
       projectRuntimeRoot,
       projectService,
@@ -1307,6 +1318,7 @@ function createRestartedController({
   const agentRuntimeRoot = projectService.agentRuntimeRoot ||
     path.join(projectRuntimeRoot, "agent-runtimes");
   return createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderFactory(providerOptions) {
       return createProvider(calls, subscribers, captures, providerOptions);
     },
@@ -1383,13 +1395,15 @@ async function withAgentMessageController(operation) {
         VIBE64_WORKSPACE: "test"
       };
     },
-    async readProjectAiPolicy() {
+    async readPromptHints() {
       return {
-        ok: true
+        ok: true,
+        promptHints: true
       };
     }
   };
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
     codexAppServerProviderFactory(providerOptions) {
@@ -1999,8 +2013,11 @@ test("an idle message replaces a provider thread that is no longer loaded", asyn
     assert.equal(result.codexThreadId, replacementThreadId);
     assert.equal(result.turnId, "turn-2");
     assert.equal(captures.turns.length, 2);
-    assert.match(captures.turns[0].input, /VIBE64_CONTEXT_RECOVERY:/u);
-    assert.match(captures.turns[1].input, /Continue after the missing provider thread\./u);
+    const recoveryInput = Array.isArray(captures.turns[0].input)
+      ? captures.turns[0].input[0]
+      : captures.turns[0].input;
+    assert.match(recoveryInput, /VIBE64_CONTEXT_RECOVERY:/u);
+    assert.equal(captures.turns[1].input[0], "Continue after the missing provider thread.");
 
     const recoveredSession = await store.readSession(sessionId);
     assert.equal(
@@ -2072,10 +2089,11 @@ test("Codex renders only opening and explicit Deslop prompts through Genesis", a
     await waitForIdle("turn-3");
 
     assert.deepEqual(captures.renderPrompts.map(({ task }) => task), ["start", "deslop"]);
-    assert.match(captures.turns[0].input, /GENESIS start: Start this session\./u);
-    assert.match(captures.turns[1].input, /GENESIS deslop: Deslop commit/u);
-    assert.doesNotMatch(captures.turns[2].input, /GENESIS/u);
-    assert.match(captures.turns[2].input, /Explain one cleanup choice\.$/u);
+    assert.match(captures.turns[0].input[0], /GENESIS start: Start this session\./u);
+    assert.match(captures.turns[1].input[0], /GENESIS deslop: Deslop commit/u);
+    assert.doesNotMatch(captures.turns[2].input[0], /GENESIS/u);
+    assert.equal(captures.turns[2].input[0], "Explain one cleanup choice.");
+    assert.equal(captures.turns.every(({ input }) => input.length === 1), true);
   });
 });
 
@@ -2099,9 +2117,10 @@ test("agent messages release an orphaned STARTING claim before starting the next
         provider: "codex",
         providerInterface: "codex_app_server",
         providerStatus: "starting",
-        providerThreadId: captures.provider.threadId,
+        providerThreadId: "",
         providerTurnId: "",
-        state: VIBE64_AGENT_RUN_STATE.STARTING
+        state: VIBE64_AGENT_RUN_STATE.STARTING,
+        updatedAt: new Date(Date.now() - 15_001).toISOString()
       }
     });
 
@@ -2786,11 +2805,15 @@ test("a persisted active goal restores its chat owner when a successor is observ
   });
 });
 
-test("goal ownership does not change genuine terminal-origin message mirroring", async () => {
+test("terminal-origin messages inherit the latest UI actor without changing goal ownership", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
     const started = await controller.sendMessage(sessionId, {
       message: "Establish the visible chat thread.",
-      messageId: "message-before-terminal-origin"
+      messageId: "message-before-terminal-origin",
+      vibe64User: {
+        preferredName: "Ada",
+        username: "ada-owner"
+      }
     });
     assert.equal(started.ok, true, JSON.stringify(started));
 
@@ -2830,6 +2853,29 @@ test("goal ownership does not change genuine terminal-origin message mirroring",
       "the terminal-origin turn to activate"
     );
     assert.equal(terminalRun.inputSource, "terminal");
+
+    emitCodexNotification(captures.subscribers, {
+      method: "item/completed",
+      params: {
+        item: {
+          content: [{ text: "Native terminal request.", type: "text" }],
+          id: "terminal-user-message",
+          type: "userMessage"
+        },
+        threadId,
+        turnId: terminalTurnId
+      }
+    });
+    const terminalUserMessage = await waitForSessionValue(
+      async () => (await store.readConversationLog(sessionId))
+        .find((turn) => turn.user?.text === "Native terminal request."),
+      Boolean,
+      "the terminal-origin user message to be mirrored"
+    );
+    assert.deepEqual(terminalUserMessage.metadata, {
+      actorDisplayName: "Ada",
+      actorId: "ada-owner"
+    });
 
     emitCodexNotification(captures.subscribers, reasoningSummaryDelta({
       itemId: "terminal-reasoning",
@@ -2889,6 +2935,7 @@ test("a changed session environment retires the previous provider for the same r
   let environmentVersion = "one";
   const providers = [];
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderFactory(options) {
       const provider = {
         closed: 0,
@@ -3001,6 +3048,7 @@ test("Codex sessions retain one shared runtime and concurrent final closes stop 
   const providers = [];
   let stopRuntimeCalls = 0;
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderFactory(options) {
       const provider = {
         closed: 0,
@@ -3082,7 +3130,7 @@ test("Codex sessions retain one shared runtime and concurrent final closes stop 
   }
 });
 
-test("an active chat keeps its provider across environment changes until the next turn", async () => {
+test("an active chat keeps one composed session context while authored turns stay unchanged", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-active-provider-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
@@ -3119,22 +3167,11 @@ test("an active chat keeps its provider across environment changes until the nex
 
   let environmentVersion = "one";
   let nextTurn = 0;
-  let aiPolicy = {
-    customNote: "Use examples from the apiary.",
-    expertise: "expert",
-    promptHints: false,
-    rationale: "conclusions",
-    responseLength: "very_short",
-    revision: 4,
-    tone: "direct",
-    version: 1
-  };
   const vibe64User = {
     preferredName: "Ada",
     role: "owner",
     username: "ada-owner"
   };
-  const policyReaders = [];
   const providers = [];
   const runtime = {
     async getSession(sessionId) {
@@ -3150,6 +3187,7 @@ test("an active chat keeps its provider across environment changes until the nex
     store
   };
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
     codexAppServerProviderFactory(options) {
@@ -3236,9 +3274,10 @@ test("an active chat keeps its provider across environment changes until the nex
             id: provider.threadId
           };
         },
-        async steerTurn(threadId, turnId, message) {
+        async steerTurn(threadId, turnId, message, settings) {
           provider.steeredMessages.push({
             message,
+            settings,
             threadId,
             turnId
           });
@@ -3273,13 +3312,6 @@ test("an active chat keeps its provider across environment changes until the nex
           VIBE64_RUNTIME_NAMESPACE: "test",
           VIBE64_WORKSPACE: "test"
         };
-      },
-      async readProjectAiPolicy({ vibe64User: requestingUser } = {}) {
-        policyReaders.push(requestingUser || null);
-        return {
-          aiPolicy,
-          ok: true
-        };
       }
     }
   });
@@ -3297,15 +3329,21 @@ test("an active chat keeps its provider across environment changes until the nex
       providers[0].options.threadEnv.PATH.split(path.delimiter).includes(genesisCommandShimDirectory()),
       true
     );
-    assert.match(
+    assert.equal(
       providers[0].startedThreads[0].developerInstructions,
-      /Project owner preference: Use examples from the apiary\./u
+      "Genesis and Vibe64 main session context."
     );
-    assert.match(providers[0].startedThreads[0].developerInstructions, /Assume the user is an expert/u);
-    assert.match(providers[0].sentTurns[0].input, /Current actor id: "ada-owner"/u);
-    assert.match(providers[0].sentTurns[0].input, /Current actor display name: "Ada"/u);
-    assert.match(providers[0].sentTurns[0].input, /Project AI policy revision: 4/u);
-    assert.equal(policyReaders.some((reader) => reader?.username === "ada-owner"), true);
+    assert.equal(providers[0].options.threadEnv.GENESIS_SESSION_CONTEXT_INSTALLED, "1");
+    assert.equal(Object.hasOwn(
+      providers[0].options.threadEnv,
+      "GENESIS_HOST_CONTEXT_RESOLVER"
+    ), false);
+    assert.equal(Object.hasOwn(
+      providers[0].options.threadEnv,
+      "GENESIS_HOST_CONTEXT_RESOLVER_DATA"
+    ), false);
+    assert.deepEqual(providers[0].sentTurns[0].input, ["Start the work."]);
+    assert.equal(Object.hasOwn(providers[0].sentTurns[0].settings, "additionalContext"), false);
     const firstBriefingFingerprint = (
       await store.readSession("session-1")
     ).metadata.agent_briefing_fingerprint;
@@ -3328,15 +3366,18 @@ test("an active chat keeps its provider across environment changes until the nex
     assert.equal(providers[0].steeredMessages.length, 1);
     assert.equal(providers[0].steeredMessages[0].threadId, providers[0].threadId);
     assert.equal(providers[0].steeredMessages[0].turnId, "turn-1");
-    assert.match(providers[0].steeredMessages[0].message, /<vibe64-hidden-turn-context>/u);
-    assert.match(providers[0].steeredMessages[0].message, /Current actor id: "[^"]+"/u);
-    assert.match(providers[0].steeredMessages[0].message, /Use this additional detail\.$/u);
+    assert.equal(
+      providers[0].steeredMessages[0].message,
+      "Use this additional detail."
+    );
+    assert.equal(Object.hasOwn(
+      providers[0].steeredMessages[0].settings,
+      "additionalContext"
+    ), false);
     const attributedTurns = await store.readConversationLog("session-1");
     assert.equal(attributedTurns.slice(0, 2).every((turn) => (
       turn.metadata?.actorId === "ada-owner" &&
-      turn.metadata.actorDisplayName === "Ada" &&
-      turn.metadata.policyRevision === 4 &&
-      turn.metadata.policyVersion === 1
+      turn.metadata.actorDisplayName === "Ada"
     )), true);
 
     const activeReconciliation = await controller.reconcileThreads([{
@@ -3360,12 +3401,6 @@ test("an active chat keeps its provider across environment changes until the nex
       /The original turn completed safely\./u
     );
 
-    aiPolicy = {
-      ...aiPolicy,
-      customNote: "Prefer the latest hive measurements.",
-      revision: 5,
-      tone: "playful"
-    };
     const restarted = await controller.sendMessage("session-1", {
       message: "Start the next turn.",
       messageId: "message-3",
@@ -3376,18 +3411,14 @@ test("an active chat keeps its provider across environment changes until the nex
     assert.equal(providers[0].closed, 1);
     assert.equal(providers[1].closed, 0);
     assert.equal(providers[1].options.threadEnv.PROVIDER_OWNERSHIP_VERSION, "two");
-    assert.match(
+    assert.equal(
       providers[1].resumedThreads[0].settings.developerInstructions,
-      /Project owner preference: Prefer the latest hive measurements\./u
+      "Genesis and Vibe64 main session context."
     );
-    assert.match(providers[1].sentTurns[0].input, /VIBE64_CONTEXT_REFRESH:/u);
-    assert.match(providers[1].sentTurns[0].input, /Project AI policy revision: 5/u);
-    assert.match(
-      providers[1].sentTurns[0].input,
-      /Project owner preference: Prefer the latest hive measurements\./u
-    );
+    assert.deepEqual(providers[1].sentTurns[0].input, ["Start the next turn."]);
+    assert.equal(Object.hasOwn(providers[1].sentTurns[0].settings, "additionalContext"), false);
     const refreshedSession = await store.readSession("session-1");
-    assert.notEqual(
+    assert.equal(
       refreshedSession.metadata.agent_briefing_fingerprint,
       firstBriefingFingerprint
     );
@@ -3395,9 +3426,7 @@ test("an active chat keeps its provider across environment changes until the nex
       .find((turn) => turn.user?.text === "Start the next turn.");
     assert.deepEqual(restartedMessage?.metadata, {
       actorDisplayName: "Ada",
-      actorId: "ada-owner",
-      policyRevision: 5,
-      policyVersion: 1
+      actorId: "ada-owner"
     });
 
     environmentVersion = "three";
@@ -3445,6 +3474,7 @@ test("closing a session without recorded Codex ownership leaves the shared runti
   );
   let currentSession = session;
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderOptions: {
       env: providerEnv
     },
@@ -3511,24 +3541,14 @@ test("temporary conversations start turns without resuming a nonexistent rollout
   });
 });
 
-test("temporary conversations receive the saved project policy and trusted actor context", async () => {
-  const aiPolicy = {
-    customNote: "Use examples from the apiary.",
-    expertise: "expert",
-    promptHints: false,
-    rationale: "conclusions",
-    responseLength: "very_short",
-    revision: 8,
-    tone: "playful",
-    version: 1
-  };
+test("temporary conversations receive task session context without turn enrichment", async () => {
   const vibe64User = {
     preferredName: "Ada",
     role: "owner",
     username: "ada-owner"
   };
 
-  await withConversationController(async ({ captures, controller, policyReads }) => {
+  await withConversationController(async ({ captures, controller, promptHintReads }) => {
     const conversation = await controller.createConversation("session-1", {
       ephemeral: true,
       policy: "workspace_write",
@@ -3545,15 +3565,13 @@ test("temporary conversations receive the saved project policy and trusted actor
     });
     assert.equal(turn.ok, true, JSON.stringify(turn));
 
-    assert.match(
+    assert.equal(
       captures.threads[0].developerInstructions,
-      /Project owner preference: Use examples from the apiary\./u
+      "Genesis and Vibe64 temporary-task session context."
     );
-    assert.match(captures.threads[0].developerInstructions, /Assume the user is an expert/u);
-    assert.match(captures.turns[0].input, /Current actor id: "ada-owner"/u);
-    assert.match(captures.turns[0].input, /Current actor display name: "Ada"/u);
-    assert.match(captures.turns[0].input, /Project AI policy revision: 8/u);
-    assert.deepEqual(policyReads, [vibe64User, vibe64User]);
+    assert.deepEqual(captures.turns[0].input, ["Fix the focused issue."]);
+    assert.equal(Object.hasOwn(captures.turns[0].settings, "additionalContext"), false);
+    assert.deepEqual(promptHintReads, []);
 
     const snapshot = await controller.readConversation("session-1", {
       conversationId: conversation.conversationId,
@@ -3562,11 +3580,9 @@ test("temporary conversations receive the saved project policy and trusted actor
     });
     assert.deepEqual(snapshot.turnMetadata, {
       actorDisplayName: "Ada",
-      actorId: "ada-owner",
-      policyRevision: 8,
-      policyVersion: 1
+      actorId: "ada-owner"
     });
-  }, { aiPolicy });
+  }, { promptHints: false });
 });
 
 test("temporary workspace-write turns remain active for renewal until completion", async () => {
@@ -4507,6 +4523,7 @@ test("server shutdown serializes with an owned runtime before metadata is publis
   let runtimeDir = "";
   let stopRuntimeCalls = 0;
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderFactory(providerOptions) {
       runtimeDir = providerOptions.runtimeDir;
       return {
@@ -4583,8 +4600,8 @@ test("server shutdown serializes with an owned runtime before metadata is publis
           VIBE64_WORKSPACE: "test"
         };
       },
-      async readProjectAiPolicy() {
-        return { ok: true };
+      async readPromptHints() {
+        return { ok: true, promptHints: true };
       }
     }
   });
@@ -4663,6 +4680,7 @@ test("server shutdown proves exit of the exact owned detached runtime", async (t
   let child = null;
   let runtimeDir = "";
   const controller = createCodexTerminalController({
+    ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerProviderFactory(providerOptions) {
       runtimeDir = providerOptions.runtimeDir;
       return {
@@ -4722,8 +4740,8 @@ test("server shutdown proves exit of the exact owned detached runtime", async (t
           VIBE64_WORKSPACE: "test"
         };
       },
-      async readProjectAiPolicy() {
-        return { ok: true };
+      async readPromptHints() {
+        return { ok: true, promptHints: true };
       }
     }
   });

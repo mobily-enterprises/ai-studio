@@ -51,15 +51,17 @@ import {
   resolveSourceConfigRoot
 } from "@local/vibe64-core/server/projectState";
 import {
-  readProjectAiPolicy as readStoredProjectAiPolicy,
-  saveProjectAiPolicy as saveStoredProjectAiPolicy
-} from "@local/vibe64-core/server/projectAiPolicy";
+  readProjectPromptHints,
+  saveProjectPromptHints
+} from "@local/vibe64-core/server/projectPromptHints";
 import {
   sessionSourcePath
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
+  inspectGenesisCollaboration,
   inspectGenesisEngineering,
   inspectGenesisEnvironment,
+  setGenesisCollaboration,
   setGenesisEngineeringProfile
 } from "@local/vibe64-genesis/server";
 import {
@@ -239,9 +241,11 @@ function genesisEnvironmentIsUnconfigured(error) {
 
 function createService({
   env = process.env,
+  inspectCollaboration = inspectGenesisCollaboration,
   inspectEngineering = inspectGenesisEngineering,
   inspectEnvironment = inspectGenesisEnvironment,
   projectContext = null,
+  setCollaboration = setGenesisCollaboration,
   setEngineeringProfile = setGenesisEngineeringProfile,
   targetRoot = ""
 } = {}) {
@@ -663,44 +667,119 @@ function createService({
     return (await currentDevelopmentDatabaseConfiguration()).developmentDatabaseScope;
   }
 
-  function canEditProjectAiPolicy(input = {}) {
+  function canEditProjectSettings(input = {}) {
     return !input.vibe64User || input.vibe64User.role === "owner";
   }
 
-  async function readProjectAiPolicyState(input = {}) {
-    const { policy } = await readStoredProjectAiPolicy({
-      projectRuntimeRoot: selectedProjectRuntimeRoot()
+  async function collaborationSettingsState(input = {}) {
+    const source = await genesisSettingsSourceForInput(input);
+    const publicSource = {
+      rootKind: source.rootKind,
+      sessionId: source.sessionId
+    };
+    if (!source.sourceRoot) {
+      return {
+        available: false,
+        canEdit: false,
+        choices: {},
+        experience: "",
+        explanationStyle: "",
+        requirements: "",
+        responseLength: "",
+        source: publicSource,
+        status: "unavailable",
+        tone: "",
+        unavailableReason: source.sessionId
+          ? "This session does not have an available project source yet."
+          : "Create or select an AI session to set collaboration guidance."
+      };
+    }
+    await assertProjectDirectoryUsable(source.sourceRoot);
+    const collaboration = await inspectCollaboration({
+      projectRoot: source.sourceRoot
     });
     return {
-      aiPolicy: policy,
-      canEdit: canEditProjectAiPolicy(input),
-      ok: true
+      available: true,
+      canEdit: canEditProjectSettings(input),
+      choices: collaboration.choices,
+      experience: collaboration.experience,
+      explanationStyle: collaboration.explanationStyle,
+      requirements: collaboration.requirements,
+      responseLength: collaboration.responseLength,
+      source: publicSource,
+      status: collaboration.status,
+      tone: collaboration.tone,
+      unavailableReason: ""
     };
   }
 
-  async function saveProjectAiPolicyState(input = {}) {
-    if (!canEditProjectAiPolicy(input)) {
+  async function saveCollaborationSettingsState(input = {}) {
+    if (!canEditProjectSettings(input)) {
       throw vibe64Error(
-        "Only the Vibe64 project owner can change AI behaviour.",
+        "Only the Vibe64 project owner can change collaboration through Project settings.",
         "vibe64_owner_required"
       );
     }
-    const { policy } = await saveStoredProjectAiPolicy({
-      policy: {
-        customNote: input.customNote,
-        expertise: input.expertise,
-        promptHints: input.promptHints,
-        rationale: input.rationale,
-        responseLength: input.responseLength,
-        tone: input.tone
-      },
-      projectRuntimeRoot: selectedProjectRuntimeRoot()
+    let sourceInput = input;
+    if (!String(input.sessionId || "").trim() && !selectedSourceRoot()) {
+      const session = await sessionStore().readCurrentSession();
+      if (session?.sessionId) {
+        sourceInput = {
+          ...input,
+          sessionId: session.sessionId
+        };
+      }
+    }
+    return runSessionSourceWorkExclusive(sourceInput, async () => {
+      const source = await genesisSettingsSourceForInput(sourceInput);
+      if (!source.sourceRoot) {
+        throw vibe64Error(
+          "Collaboration guidance requires an available project source. Create or select an AI session first.",
+          "vibe64_collaboration_source_required"
+        );
+      }
+      await assertProjectDirectoryUsable(source.sourceRoot);
+      return runProjectSourceMutationExclusive(
+        selectedProjectRuntimeRoot(),
+        async () => {
+          await setCollaboration({
+            experience: input.experience,
+            explanationStyle: input.explanationStyle,
+            projectRoot: source.sourceRoot,
+            requirements: input.requirements,
+            responseLength: input.responseLength,
+            tone: input.tone
+          });
+          const collaboration = await collaborationSettingsState(sourceInput);
+          return {
+            collaboration,
+            ok: true,
+            projectSlug: String(currentProjectRequestContext()?.slug || path.basename(requireSelectedTargetRoot())).trim()
+          };
+        },
+        { operation: "save-collaboration-guidance" }
+      );
+    });
+  }
+
+  async function savePromptHintsState(input = {}) {
+    if (!canEditProjectSettings(input)) {
+      throw vibe64Error(
+        "Only the Vibe64 project owner can change prompt suggestions.",
+        "vibe64_owner_required"
+      );
+    }
+    const { settings } = await saveProjectPromptHints({
+      projectRuntimeRoot: selectedProjectRuntimeRoot(),
+      settings: { promptHints: input.promptHints }
     });
     return {
-      aiPolicy: policy,
-      canEdit: true,
       ok: true,
-      projectSlug: String(currentProjectRequestContext()?.slug || path.basename(requireSelectedTargetRoot())).trim()
+      projectSlug: String(currentProjectRequestContext()?.slug || path.basename(requireSelectedTargetRoot())).trim(),
+      promptHints: {
+        canEdit: true,
+        enabled: settings.promptHints
+      }
     };
   }
 
@@ -835,7 +914,7 @@ function createService({
     return (await resolvedProjectEnvironment({}, await userEnvRecords())).effectiveEnvironment;
   }
 
-  async function engineeringSourceForInput(input = {}) {
+  async function genesisSettingsSourceForInput(input = {}) {
     const source = await sourceForInput(input);
     if (source.sourceRoot || source.sessionId) {
       return source;
@@ -851,7 +930,7 @@ function createService({
   }
 
   async function engineeringProfileState(input = {}) {
-    const source = await engineeringSourceForInput(input);
+    const source = await genesisSettingsSourceForInput(input);
     const publicSource = {
       rootKind: source.rootKind,
       sessionId: source.sessionId
@@ -901,7 +980,7 @@ function createService({
       }
     }
     return runSessionSourceWorkExclusive(sourceInput, async () => {
-      const source = await engineeringSourceForInput(sourceInput);
+      const source = await genesisSettingsSourceForInput(sourceInput);
       if (!source.sourceRoot) {
         throw vibe64Error(
           "Engineering profiles require an available project source. Create or select an AI session first.",
@@ -1110,18 +1189,34 @@ function createService({
       return projectResult(() => previewApplicationIdentitiesState(input));
     },
 
-    async readProjectAiPolicy(input = {}) {
-      return projectResult(() => readProjectAiPolicyState(input));
+    async readPromptHints() {
+      return projectResult(async () => {
+        const { settings } = await readProjectPromptHints({
+          projectRuntimeRoot: selectedProjectRuntimeRoot()
+        });
+        return {
+          ok: true,
+          promptHints: settings.promptHints
+        };
+      });
     },
 
     async readSettings(input = {}) {
       return projectResult(async () => {
-        const aiPolicyState = await readProjectAiPolicyState(input);
+        const [collaboration, { settings }] = await Promise.all([
+          collaborationSettingsState(input),
+          readProjectPromptHints({
+            projectRuntimeRoot: selectedProjectRuntimeRoot()
+          })
+        ]);
         return {
-          aiPolicy: aiPolicyState.aiPolicy,
-          aiPolicyCanEdit: aiPolicyState.canEdit,
+          collaboration,
           developmentDatabase: await developmentDatabaseState(),
-          ok: true
+          ok: true,
+          promptHints: {
+            canEdit: canEditProjectSettings(input),
+            enabled: settings.promptHints
+          }
         };
       });
     },
@@ -1189,8 +1284,12 @@ function createService({
       return projectResult(() => saveEngineeringProfileState(input));
     },
 
-    async saveProjectAiPolicy(input = {}) {
-      return projectResult(() => saveProjectAiPolicyState(input));
+    async saveCollaborationSettings(input = {}) {
+      return projectResult(() => saveCollaborationSettingsState(input));
+    },
+
+    async savePromptHints(input = {}) {
+      return projectResult(() => savePromptHintsState(input));
     },
 
     async savePreviewApplicationIdentities(input = {}) {

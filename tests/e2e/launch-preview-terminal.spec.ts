@@ -1909,15 +1909,19 @@ for (const viewportWidth of [390, 960, 1600]) {
     await mockProjectGateReady(page);
     await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/settings(?:\?.*)?$/u, async (route) => {
       await fulfillJson(route, {
-        aiPolicy: {
-          customNote: "",
-          expertise: "comfortable",
-          promptHints: true,
-          rationale: "concise",
+        collaboration: {
+          available: true,
+          canEdit: true,
+          choices: {},
+          experience: "comfortable",
+          explanationStyle: "concise",
+          requirements: "",
           responseLength: "concise",
-          tone: "encouraging"
+          source: { rootKind: "session-source", sessionId: "session-a" },
+          status: "configured",
+          tone: "encouraging",
+          unavailableReason: ""
         },
-        aiPolicyCanEdit: true,
         developmentDatabase: {
           canChange: false,
           disabledReason: "Close all 2 open sessions (First task, Second task) before changing the development database.",
@@ -1934,7 +1938,8 @@ for (const viewportWidth of [390, 960, 1600]) {
           },
           scope: "session"
         },
-        ok: true
+        ok: true,
+        promptHints: { canEdit: true, enabled: true }
       });
     });
 
@@ -2017,17 +2022,22 @@ for (const viewportWidth of [390, 960, 1600]) {
         return;
       }
       await fulfillJson(route, {
-        aiPolicy: {
-          customNote: "",
-          expertise: "comfortable",
-          promptHints: true,
-          rationale: "concise",
+        collaboration: {
+          available: true,
+          canEdit: true,
+          choices: {},
+          experience: "comfortable",
+          explanationStyle: "concise",
+          requirements: "",
           responseLength: "concise",
-          tone: "encouraging"
+          source: { rootKind: "session-source", sessionId: "session-a" },
+          status: "configured",
+          tone: "encouraging",
+          unavailableReason: ""
         },
-        aiPolicyCanEdit: true,
         developmentDatabase: developmentDatabase(),
-        ok: true
+        ok: true,
+        promptHints: { canEdit: true, enabled: true }
       });
     });
 

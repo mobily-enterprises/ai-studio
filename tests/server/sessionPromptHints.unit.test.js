@@ -43,21 +43,8 @@ function resolvedPromptHintProfile() {
   };
 }
 
-function projectPolicy({
-  promptHints = true,
-  revision = 7
-} = {}) {
-  return {
-    customNote: "Keep suggestions practical.",
-    expertise: "comfortable",
-    promptHints,
-    rationale: "concise",
-    responseLength: "concise",
-    revision,
-    tone: "encouraging",
-    updatedAt: "2026-08-25T00:00:00.000Z",
-    version: 1
-  };
+function projectPolicy({ promptHints = true } = {}) {
+  return { promptHints };
 }
 
 function conversationPage({
@@ -293,11 +280,10 @@ function createFixture({
       async createRuntime() {
         return runtime;
       },
-      async readProjectAiPolicy(input) {
-        calls.policy.push(input);
+      async readPromptHints() {
+        calls.policy.push({});
         return {
-          aiPolicy: currentPolicy,
-          canEdit: true,
+          ...currentPolicy,
           ok: true
         };
       }
@@ -501,7 +487,7 @@ test("unsafe Blueprint filesystem entries fail hints closed before provider work
   }
 });
 
-test("prompt hints stop at project policy and blank-session static starters without using a provider", async () => {
+test("prompt hints stop at the project toggle and blank-session static starters without using a provider", async () => {
   const disabled = createFixture({
     policy: projectPolicy({ promptHints: false })
   });
@@ -513,7 +499,7 @@ test("prompt hints stop at project policy and blank-session static starters with
   assert.equal(disabledResult.status, "disabled");
   assert.equal(disabledResult.cached, false);
   assert.deepEqual(disabledResult.suggestions, []);
-  assert.equal(disabledResult.basis.policyRevision, 7);
+  assert.equal(disabledResult.basis.promptHints, false);
   assert.equal(typeof disabledResult.basis.conversationRevision, "string");
   assert.equal(disabled.calls.describe.length, 0);
   assert.equal(disabled.calls.resolve.length, 0);
@@ -594,7 +580,13 @@ test("restricted prompt hints stop before provider inspection and cannot reuse a
 });
 
 test("prompt hints use only the selected account's prompt_hint economy profile and clean the detached thread", async () => {
-  const fixture = createFixture();
+  const fixture = createFixture({
+    policy: {
+      customNote: "Never suggest tests.",
+      promptHints: true,
+      tone: "military"
+    }
+  });
   const input = generateInput("hint:profile");
   const result = await fixture.service.generateSessionPromptHints("session-1", input);
 
@@ -608,7 +600,11 @@ test("prompt hints use only the selected account's prompt_hint economy profile a
   ]);
   assert.equal(typeof result.basis.conversationRevision, "string");
   assert.equal(result.basis.conversationRevision.length > 0, true);
-  assert.equal(result.basis.policyRevision, 7);
+  assert.equal(result.basis.promptHints, true);
+  assert.doesNotMatch(
+    fixture.calls.run[0].input.prompt,
+    /Never suggest tests|military/u
+  );
 
   assert.deepEqual(fixture.calls.resolve.map(({ input: profileInput, sessionId }) => ({
     input: profileInput,
@@ -778,7 +774,7 @@ test("prompt hints reject malformed, duplicate, multiline, and overlong model su
   }
 });
 
-test("prompt hints coalesce identical work, cache only valid output, and invalidate on conversation or policy revision", async () => {
+test("prompt hints coalesce identical work, invalidate on conversation, and ignore former policy fields", async () => {
   const started = deferred();
   const release = deferred();
   let agentCalls = 0;
@@ -839,14 +835,18 @@ test("prompt hints coalesce identical work, cache only valid output, and invalid
   assert.equal(conversationChanged.cached, false);
   assert.equal(agentCalls, 2);
 
-  fixture.setPolicy(projectPolicy({ revision: 8 }));
+  fixture.setPolicy({
+    promptHints: true,
+    revision: 8,
+    tone: "military"
+  });
   const policyChanged = await fixture.service.generateSessionPromptHints(
     "session-1",
     generateInput("hint:cache:policy")
   );
   assert.equal(policyChanged.status, "ready");
-  assert.equal(policyChanged.cached, false);
-  assert.equal(agentCalls, 3);
+  assert.equal(policyChanged.cached, true);
+  assert.equal(agentCalls, 2);
 });
 
 test("prompt-hint cache identity follows the selected provider account and expires at its bounded TTL", async () => {

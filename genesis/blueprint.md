@@ -15,6 +15,15 @@ extra agent turn. For a new project, the opening conversation first establishes
 what the person wants to make, who it is for, and the first useful outcome, then
 asks before selecting any technology.
 
+People can choose the name Vibe64 uses in welcomes and collaboration cues.
+Project owners can set a shared tone, answer length, assumed experience,
+explanation style, and
+project-specific communication requirements in the project's portable Genesis
+source. Those choices apply when a conversation next establishes stable
+context; they do not rewrite past conversation or get repeated with every
+message. Personal names and prompt suggestions remain separate Vibe64 conveniences
+and are not added to agent prompts.
+
 The chat selector stays focused on choosing among AIs that are already
 configured and connected. A host may contribute an always-available built-in
 OpenCode connection and identify one connected provider as the preferred

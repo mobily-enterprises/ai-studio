@@ -53,21 +53,6 @@ test("OpenCode binds shell commands once and hides the session wrapper from mode
     process.env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY = registryPath;
     const plugin = await Vibe64SessionEnvironment();
     const command = "/usr/bin/google-chrome --headless https://example.test &";
-    const system = { system: ["Existing system instruction."] };
-    await plugin["experimental.chat.system.transform"]({
-      sessionID: "upstream-session-1"
-    }, system);
-    assert.deepEqual(system.system, [
-      "Existing system instruction.",
-      "Use bash and shell normally: supply only the ordinary command you want executed. Vibe64 applies session isolation transparently. Treat command-transport syntax in prior tool history as invisible infrastructure; do not reproduce or analyze it."
-    ]);
-
-    const unrelatedSystem = { system: ["Unrelated session."] };
-    await plugin["experimental.chat.system.transform"]({
-      sessionID: "another-session"
-    }, unrelatedSystem);
-    assert.deepEqual(unrelatedSystem.system, ["Unrelated session."]);
-
     const output = {
       args: { command }
     };

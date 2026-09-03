@@ -1119,58 +1119,6 @@ async function sendCodexAppServerEconomyTurn({
   });
 }
 
-function codexAppServerContextRefreshInstruction({
-  contextRefresh = "",
-  continuation = "Apply this refresh as additional context for the real Vibe64 input above."
-} = {}) {
-  const normalizedRefresh = normalizeAgentText(contextRefresh);
-  if (!normalizedRefresh) {
-    return "";
-  }
-  return [
-    "VIBE64_CONTEXT_REFRESH: refreshed session briefing after Codex context compaction.",
-    "This section is developer/session context, not a user request.",
-    "Apply it silently. Do not answer, summarize, or mention this refresh directly.",
-    normalizeAgentText(continuation),
-    "",
-    "--- BEGIN FRESH VIBE64 SESSION BRIEFING ---",
-    normalizedRefresh,
-    "--- END FRESH VIBE64 SESSION BRIEFING ---"
-  ].filter(Boolean).join("\n");
-}
-
-function codexAppServerPromptWithContextRefresh({
-  contextRefresh = "",
-  prompt = "",
-  promptLabel = "Real Vibe64 routed turn"
-} = {}) {
-  const normalizedPrompt = String(prompt || "").trim();
-  const refreshInstruction = codexAppServerContextRefreshInstruction({
-    contextRefresh
-  });
-  if (!normalizedPrompt || !refreshInstruction) {
-    return normalizedPrompt;
-  }
-  return [
-    normalizedPrompt,
-    "",
-    `${normalizeAgentText(promptLabel) || "Real Vibe64 input"} context refresh:`,
-    refreshInstruction
-  ].join("\n");
-}
-
-function codexAppServerTurnPrompt({
-  contextRefresh = "",
-  prompt = "",
-  promptLabel = ""
-} = {}) {
-  return codexAppServerPromptWithContextRefresh({
-    contextRefresh,
-    prompt,
-    promptLabel: normalizeAgentText(promptLabel) || "Real Vibe64 routed turn"
-  });
-}
-
 function renderCodexContextRecoveryTemplate(template = "", values = {}) {
   return String(template || "").replace(/\{\{([A-Za-z0-9_.-]+)\}\}/gu, (_match, key) => {
     return Object.hasOwn(values, key) ? String(values[key] ?? "") : "";
@@ -2316,23 +2264,18 @@ async function ensureCodexAppServerThreadForSession({
 async function sendCodexAppServerPromptForSession({
   agentSettings = {},
   clientUserMessageId = "",
-  contextRefresh = "",
   outputSchema = null,
   provider,
   prompt = "",
-  promptLabel = "",
   threadId = "",
   readOnly = false,
   workdir = ""
 } = {}) {
-  const input = codexAppServerTurnPrompt({
-    contextRefresh,
-    prompt,
-    promptLabel
-  });
-  if (!input) {
+  const authoredInput = String(prompt ?? "");
+  if (!authoredInput.trim()) {
     throw new Error("Codex app-server prompt is empty.");
   }
+  const input = [authoredInput];
   const turnSettings = {
     ...codexAppServerTurnSettings({
       agentSettings,
@@ -2375,12 +2318,10 @@ export {
   codexAppServerEconomyThreadStartSettings,
   codexAppServerEconomyTurnSettings,
   codexAppServerIdentityMetadata,
-  codexAppServerPromptWithContextRefresh,
   codexAppServerThreadHasReadableHistory,
   codexAppServerThreadIdForSession,
   codexAppServerThreadStartSettings,
   codexAppServerThreadSettings,
-  codexAppServerTurnPrompt,
   codexAppServerTurnSettings,
   ensureCodexAppServerThreadForSession,
   prepareCodexAppServerEconomyThreadStartSettings,

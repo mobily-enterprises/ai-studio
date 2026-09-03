@@ -14,6 +14,19 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v genesis >/dev/null 2>&1; then genesis hook turn; else node --input-type=module --eval \"const {runCli}=await import('genesis-compiler/cli');process.exitCode=await runCli(['hook','turn'])\"; fi",
+            "commandWindows": "genesis hook turn",
+            "timeout": 5,
+            "additionalContextLimit": 512
+          }
+        ]
+      }
     ]
   }
 }

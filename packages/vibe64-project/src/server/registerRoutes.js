@@ -6,9 +6,10 @@ import {
   ACTION_READ_PROJECT_SETTINGS,
   ACTION_READ_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
+  ACTION_SAVE_COLLABORATION_SETTINGS,
   ACTION_SAVE_ENV_USER_VALUES,
   ACTION_SAVE_ENGINEERING_PROFILE,
-  ACTION_SAVE_PROJECT_AI_POLICY,
+  ACTION_SAVE_PROJECT_PROMPT_HINTS,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT
 } from "./actions.js";
@@ -17,7 +18,9 @@ import {
   projectDevelopmentDatabaseScopeInputValidator,
   projectEngineeringProfileInputValidator,
   projectEngineeringSettingsReadInputValidator,
-  projectAiPolicyInputValidator,
+  projectCollaborationInputValidator,
+  projectSettingsReadInputValidator,
+  projectPromptHintsInputValidator,
   projectEnvReadInputValidator,
   projectEnvSecretRevealInputValidator,
   projectEnvUserValuesInputValidator,
@@ -87,15 +90,23 @@ function registerRoutes(http, {
   });
   routes.actionRoute("GET", "/settings", {
     actionId: ACTION_READ_PROJECT_SETTINGS,
-    buildInput: (request) => withUser(request),
-    summary: "Read Vibe64-owned project settings."
+    buildInput: (request) => withUser(request, routes.requestQuery(request)),
+    query: projectSettingsReadInputValidator,
+    summary: "Read Vibe64 and source-owned project settings."
   });
-  routes.actionRoute("PUT", "/settings/ai-policy", {
-    actionId: ACTION_SAVE_PROJECT_AI_POLICY,
-    body: projectAiPolicyInputValidator,
+  routes.actionRoute("PUT", "/settings/collaboration", {
+    actionId: ACTION_SAVE_COLLABORATION_SETTINGS,
+    body: projectCollaborationInputValidator,
     buildInput: (request) => withUser(request, routes.requestBody(request)),
-    statusCode: projectAiPolicyStatusCode,
-    summary: "Save the owner-managed project AI behaviour policy."
+    statusCode: projectSettingsMutationStatusCode,
+    summary: "Save Genesis collaboration guidance in project source."
+  });
+  routes.actionRoute("PUT", "/settings/prompt-hints", {
+    actionId: ACTION_SAVE_PROJECT_PROMPT_HINTS,
+    body: projectPromptHintsInputValidator,
+    buildInput: (request) => withUser(request, routes.requestBody(request)),
+    statusCode: projectSettingsMutationStatusCode,
+    summary: "Save the Vibe64 prompt-suggestion choice."
   });
   routes.actionRoute("PUT", "/settings/development-database", {
     actionId: ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
@@ -142,7 +153,7 @@ function envSecretRevealStatusCode(response = {}) {
   return 400;
 }
 
-function projectAiPolicyStatusCode(response = {}) {
+function projectSettingsMutationStatusCode(response = {}) {
   if (response?.ok === true) {
     return 200;
   }
