@@ -1,9 +1,11 @@
 # Vibe64 Agent Notes
 
 This repository is implemented with JSKIT runtime APIs and package-owned source
-patterns, but the product is Vibe64. There is no current JSKIT CLI. Use the
-repository's npm scripts and the installed JSKIT skill and patterns for
-maintenance and verification.
+patterns, but the product is Vibe64. JSKIT has no general source-authoring CLI;
+its supported commands only manage and check the package graph. Use the
+repository's npm scripts, selected Genesis Stack guidance, and JSKIT's
+authoritative documentation and package-owned patterns for maintenance and
+verification.
 
 Important boundaries:
 
