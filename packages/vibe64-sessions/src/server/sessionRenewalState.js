@@ -5,6 +5,9 @@ import {
   normalizeText,
   vibe64Error
 } from "@local/vibe64-core/server/core";
+import {
+  defineVibe64AssistantSelection
+} from "@local/vibe64-runtime/shared";
 
 const SESSION_RENEWAL_KIND = "vibe64.session_renewal";
 const SESSION_RENEWAL_SCHEMA_VERSION = 1;
@@ -333,6 +336,18 @@ function normalizeSessionRenewalState(value = {}, {
   }
   if (value.approved) {
     normalized.approved = renewalDraft(value.approved, { allowEmpty: false });
+  }
+  if (isPlainObject(value.successor)) {
+    normalized.successor = {
+      ...value.successor,
+      ...(value.successor.assistantSelection
+        ? {
+            assistantSelection: defineVibe64AssistantSelection(
+              value.successor.assistantSelection
+            )
+          }
+        : {})
+    };
   }
   const successorSessionId = normalizeText(value.successor?.sessionId);
   const commit = renewalCommit(value.commit, {

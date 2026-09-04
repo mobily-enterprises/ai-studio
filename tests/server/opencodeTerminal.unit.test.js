@@ -26,6 +26,10 @@ import {
 import {
   createOpenCodeTerminalController
 } from "../../packages/vibe64-terminals/src/server/opencodeTerminal.js";
+import {
+  sessionRenewalHandoverHash,
+  sessionRenewalSeedPrompt
+} from "../../packages/vibe64-terminals/src/server/sessionRenewalHandover.js";
 
 const providerDefinition = {
   id: "deepseek",
@@ -61,6 +65,35 @@ const providerRevision = openCodeAssistantCapabilities({
   agents,
   providers: providerResult
 }).modelProviders[0].definitionRevision;
+const renewalSource = Object.freeze({
+  authority: "github",
+  commit: "a".repeat(40),
+  ref: "refs/heads/main",
+  repository: "https://github.com/example/project.git"
+});
+
+function renewalHandover() {
+  return [
+    "# Session handover",
+    "## Objective",
+    "Continue the saved work.",
+    "## Decisions",
+    "Keep the existing architecture.",
+    "## Saved source",
+    "- Authority: github",
+    "- Repository: https://github.com/example/project.git",
+    "- Ref: refs/heads/main",
+    `- Commit: ${renewalSource.commit}`,
+    "## Touched areas",
+    "The server.",
+    "## Verification",
+    "Focused tests passed.",
+    "## Unresolved work",
+    "One task remains.",
+    "## Next action",
+    "Continue the task."
+  ].join("\n");
+}
 
 async function controllerHarness({
   assistantParts = [],
@@ -70,6 +103,8 @@ async function controllerHarness({
   commandEnvironmentGate = null,
   gitActorFailure = null,
   helperResponse = '{"subject":"Add durable OpenCode sessions"}',
+  messagesErrorAfterPrompt = null,
+  messagesErrorAfterPromptCount = 1,
   providerEvents = [],
   realAttachedTerminal = false,
   withCommandBoundary = false
@@ -109,6 +144,10 @@ async function controllerHarness({
   const agentRunEvents = [];
   const renderPromptCalls = [];
   let runStartedAt = "";
+  let queuedMessagesErrorAfterPrompt = messagesErrorAfterPrompt;
+  let queuedMessagesErrorCount = messagesErrorAfterPrompt
+    ? Math.max(1, Number(messagesErrorAfterPromptCount) || 1)
+    : 0;
   const runtime = {
     projectContextRoot: root,
     stateRoot: path.join(root, "runtime"),
@@ -250,6 +289,14 @@ async function controllerHarness({
           ? output
           : { text: output };
         const promptCall = [...promptCalls].reverse().find((entry) => entry.id === id);
+        if (promptCall && queuedMessagesErrorAfterPrompt && queuedMessagesErrorCount > 0) {
+          const error = queuedMessagesErrorAfterPrompt;
+          queuedMessagesErrorCount -= 1;
+          if (queuedMessagesErrorCount === 0) {
+            queuedMessagesErrorAfterPrompt = null;
+          }
+          throw error;
+        }
         const created = Date.now();
         return {
           data: output === undefined ? [] : [
@@ -1681,6 +1728,142 @@ test("OpenCode receives the same complete session command boundary as Codex", as
     },
     upstreamSessionId: conversation.conversationId
   });
+});
+
+test("OpenCode distinguishes an admitted renewal handover from a failed model response", async (t) => {
+  const harness = await controllerHarness({
+    assistantError: "Authentication failed"
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const handover = renewalHandover();
+  const handoverHash = sessionRenewalHandoverHash(handover);
+  let failure = null;
+
+  await assert.rejects(
+    () => harness.controller.seedSessionRenewalHandover("session-1", {
+      handover,
+      handoverHash,
+      oldThreadId: "predecessor-thread",
+      operationKey: "renewal:failed-model",
+      source: renewalSource
+    }, {
+      runtime: harness.runtime,
+      session: harness.session
+    }),
+    (error) => {
+      failure = error;
+      return error?.code === "vibe64_session_renewal_turn_failed";
+    }
+  );
+
+  assert.equal(failure.details.handoverPromptAccepted, true);
+  assert.ok(failure.details.threadId);
+  assert.ok(failure.details.turnId);
+  assert.equal(harness.promptCalls.length, 1);
+  assert.equal(
+    harness.promptCalls[0].input.prompt.text,
+    sessionRenewalSeedPrompt({ handover, handoverHash, source: renewalSource })
+  );
+});
+
+test("OpenCode preserves handover admission when waiting for the model fails", async (t) => {
+  const harness = await controllerHarness({
+    messagesErrorAfterPrompt: new Error("Timed out waiting for OpenCode")
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const handover = renewalHandover();
+  const handoverHash = sessionRenewalHandoverHash(handover);
+  let failure = null;
+
+  await assert.rejects(
+    () => harness.controller.seedSessionRenewalHandover("session-1", {
+      handover,
+      handoverHash,
+      oldThreadId: "predecessor-thread",
+      operationKey: "renewal:model-timeout",
+      source: renewalSource
+    }, {
+      runtime: harness.runtime,
+      session: harness.session
+    }),
+    (error) => {
+      failure = error;
+      return error?.code === "vibe64_session_renewal_turn_failed";
+    }
+  );
+
+  assert.equal(failure.details.handoverPromptAccepted, true);
+  assert.ok(failure.details.threadId);
+  assert.equal(harness.promptCalls.length, 1);
+});
+
+test("OpenCode does not claim handover delivery when the fresh history cannot be read", async (t) => {
+  const harness = await controllerHarness({
+    messagesErrorAfterPrompt: new Error("OpenCode history is unavailable"),
+    messagesErrorAfterPromptCount: 2
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const handover = renewalHandover();
+  let failure = null;
+
+  await assert.rejects(
+    () => harness.controller.seedSessionRenewalHandover("session-1", {
+      handover,
+      handoverHash: sessionRenewalHandoverHash(handover),
+      oldThreadId: "predecessor-thread",
+      operationKey: "renewal:unreadable-history",
+      source: renewalSource
+    }, {
+      runtime: harness.runtime,
+      session: harness.session
+    }),
+    (error) => {
+      failure = error;
+      return error?.code === "vibe64_session_renewal_turn_failed";
+    }
+  );
+
+  assert.equal(failure.details.handoverPromptAccepted, false);
+  assert.ok(failure.details.threadId);
+  assert.equal(harness.promptCalls.length, 1);
+});
+
+test("OpenCode leaves the first visible message raw after a delivered renewal handover", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  harness.session.metadata.renewal_handover_delivered_at =
+    "2026-09-04T01:00:00.000Z";
+
+  await harness.controller.sendMessage("session-1", {
+    message: "Continue after I repair the provider login.",
+    messageId: "renewal-visible-follow-up"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+  await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+
+  assert.deepEqual(harness.renderPromptCalls, []);
+  assert.equal(
+    harness.promptCalls[0].input.prompt.text,
+    "Continue after I repair the provider login."
+  );
 });
 
 test("OpenCode starts its interactive terminal by attaching to the session's native history", async (t) => {

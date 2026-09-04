@@ -27,6 +27,14 @@ import { withTemporaryRoot } from "./vibe64TestHelpers.js";
 
 const OLD_SESSION_ID = "session-old";
 const COMMIT = "a".repeat(40);
+const ASSISTANT_SELECTION = Object.freeze({
+  agentId: "codex",
+  catalogRevision: `sha256:${"b".repeat(64)}`,
+  engineId: "codex",
+  modelId: "gpt-5.6",
+  modelProviderId: "openai",
+  variantId: "high"
+});
 const HANDOVER = [
   "# Session handover",
   "## Objective",
@@ -242,6 +250,7 @@ function fixture({
   successorProcessExitProofAuthorizationErrors = [],
   successorProcessExitProofReleaseErrors = [],
   successorRuntimeRoot = "",
+  successorAssistantSelection = ASSISTANT_SELECTION,
   temporaryAgentActive = false,
   workflowLockHeld = false,
   workflowLockRetryMs = 1_000,
@@ -275,6 +284,7 @@ function fixture({
     successorProcessExitProofRelease: 0,
     release: 0,
     releaseInput: null,
+    selectionRequests: [],
     renewalClose: null,
     restore: 0,
     restoreClosing: 0,
@@ -398,9 +408,21 @@ function fixture({
     async readStatusForRenewal(sessionId) {
       return sessions.get(sessionId)?.status || "";
     },
-    async transitionRenewalSuccessor({ renewalId, sourceSessionId, successorSessionId }) {
+    async transitionRenewalSuccessor({
+      acknowledgedAt,
+      handoverDeliveredAt,
+      renewalId,
+      sourceSessionId,
+      successorSessionId
+    }) {
       assert.equal(sessions.get(sourceSessionId).status, "renewal_quiesced");
-      sessions.get(successorSessionId).metadata.renewal_id = renewalId;
+      assert.ok(acknowledgedAt || handoverDeliveredAt);
+      const metadata = sessions.get(successorSessionId).metadata;
+      metadata.renewal_id = renewalId;
+      metadata.renewal_handover_delivered_at = handoverDeliveredAt || acknowledgedAt;
+      if (acknowledgedAt) {
+        metadata.renewal_acknowledged_at = acknowledgedAt;
+      }
     },
     async activateRenewalSuccessor({ renewalId, sourceSessionId, successorSessionId }) {
       const source = sessions.get(sourceSessionId);
@@ -951,7 +973,10 @@ function fixture({
       calls.cleanupOrder.push("close-terminals");
       calls.renewalClose = {
         options,
-        session
+        session: {
+          ...session,
+          metadata: { ...(session.metadata || {}) }
+        }
       };
       const error = currentSuccessorCloseErrors.shift();
       if (error) {
@@ -1166,6 +1191,12 @@ function fixture({
     project,
     publishSessionChanged: async (_sessionId, event) => events.push(event),
     resolveRenewalActor,
+    resolveSuccessorAssistantSelection: async (requested, options) => {
+      calls.selectionRequests.push({ requested, ...options });
+      return requested && Object.keys(requested).length > 0
+        ? requested
+        : successorAssistantSelection;
+    },
     setupRunner,
     terminals,
     workflowLockRetryMs,
@@ -1772,6 +1803,42 @@ test("an unreadable old thread becomes an explicit editable manual draft", async
   assert.equal(state.error.code, error.code);
 });
 
+test("a failed predecessor model becomes an explicit editable manual draft", async () => {
+  const error = new Error("Authentication failed");
+  error.code = "vibe64_session_renewal_turn_failed";
+  const context = fixture({ generationError: error });
+  const state = await reviewedRenewal(context);
+
+  assert.equal(
+    state.draft.text,
+    sessionRenewalManualHandoverTemplate({ source: state.basis.source })
+  );
+  assert.equal(state.draft.origin, "manual");
+  assert.equal(state.manualRequired, true);
+  assert.equal(state.error.code, error.code);
+});
+
+for (const code of [
+  "vibe64_codex_app_server_start_failed",
+  "vibe64_opencode_start_failed",
+  "vibe64_opencode_start_timeout"
+]) {
+  test(`an unavailable predecessor provider becomes a manual draft (${code})`, async () => {
+    const error = new Error("The predecessor provider could not start");
+    error.code = code;
+    const context = fixture({ generationError: error });
+    const state = await reviewedRenewal(context);
+
+    assert.equal(
+      state.draft.text,
+      sessionRenewalManualHandoverTemplate({ source: state.basis.source })
+    );
+    assert.equal(state.draft.origin, "manual");
+    assert.equal(state.manualRequired, true);
+    assert.equal(state.error.code, code);
+  });
+}
+
 test("a manual handover completes when the unreadable predecessor has no recorded thread id", async () => {
   const error = new Error("Unreadable");
   error.code = "vibe64_session_renewal_thread_unreadable";
@@ -1993,7 +2060,12 @@ test("a confirmation replay resumes a durably approved workflow that was never s
     continuedBy: { id: "actor-a", name: "Actor A" },
     revision: reviewed.revision + 1,
     stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
-    status: SESSION_RENEWAL_STATUS.RUNNING
+    status: SESSION_RENEWAL_STATUS.RUNNING,
+    successor: {
+      assistantSelection: ASSISTANT_SELECTION,
+      attempt: 1,
+      replacementCeiling: 2
+    }
   }, null, 2)}\n`);
 
   const replay = await context.newController().confirmSessionRenewal(OLD_SESSION_ID, {
@@ -2275,16 +2347,19 @@ test("confirmed renewal creates a hidden successor and selects it only after ack
   assert.equal(context.calls.close, 2);
   assert.equal(context.calls.seed, 1);
   assert.equal(context.calls.expectedCommit, COMMIT);
-  assert.deepEqual(context.calls.createMetadata, {
-    agent_settings_model: "gpt-5.5",
-    agent_settings_provider: "codex",
-    agent_settings_thinking: "high"
+  assert.deepEqual(JSON.parse(context.calls.createMetadata.assistant_selection), {
+    ...ASSISTANT_SELECTION,
+    schema: "vibe64.assistant-selection.v1"
   });
-  assert.deepEqual({
-    agent_settings_model: context.calls.seedSessionMetadata.agent_settings_model,
-    agent_settings_provider: context.calls.seedSessionMetadata.agent_settings_provider,
-    agent_settings_thinking: context.calls.seedSessionMetadata.agent_settings_thinking
-  }, context.calls.createMetadata);
+  assert.equal(
+    context.calls.seedSessionMetadata.assistant_selection,
+    context.calls.createMetadata.assistant_selection
+  );
+  assert.equal(Object.hasOwn(context.calls.createMetadata, "agent_settings_model"), false);
+  assert.deepEqual(completed.successor.assistantSelection, {
+    ...ASSISTANT_SELECTION,
+    schema: "vibe64.assistant-selection.v1"
+  });
   assert.equal(context.sessions.get(OLD_SESSION_ID).status, "archived");
   assert.equal(context.sessions.get(completed.successor.sessionId).status, "active");
   assert.equal(context.currentSessionId, completed.successor.sessionId);
@@ -2305,11 +2380,77 @@ test("confirmed renewal creates a hidden successor and selects it only after ack
   assert.equal(context.terminalAdmissions.has(OLD_SESSION_ID), false);
 });
 
-test("a terminally invalid acknowledgement discards the hidden successor before a fresh retry", async () => {
-  const acknowledgementError = new Error("Invalid acknowledgement");
-  acknowledgementError.code = "vibe64_session_renewal_acknowledgement_invalid";
-  acknowledgementError.retryable = true;
-  const context = fixture({ seedErrors: [acknowledgementError] });
+test("renewal durably uses an explicitly selected assistant engine for its successor", async () => {
+  const selected = {
+    agentId: "build",
+    catalogRevision: `sha256:${"c".repeat(64)}`,
+    engineId: "opencode",
+    modelId: "glm-4.7-flash",
+    modelProviderId: "zai",
+    variantId: ""
+  };
+  const context = fixture();
+  const reviewed = await reviewedRenewal(context);
+
+  await context.controller.confirmSessionRenewal(OLD_SESSION_ID, {
+    assistantSelection: selected,
+    expectedHash: reviewed.draft.hash,
+    expectedRevision: reviewed.draft.revision,
+    operationKey: reviewed.operationKey
+  });
+  const completed = await eventually(
+    () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
+    (state) => state?.status === SESSION_RENEWAL_STATUS.COMPLETED
+  );
+
+  assert.deepEqual(context.calls.selectionRequests[0].requested, selected);
+  assert.equal(completed.successor.assistantSelection.engineId, "opencode");
+  assert.deepEqual(JSON.parse(context.calls.createMetadata.assistant_selection), {
+    ...selected,
+    schema: "vibe64.assistant-selection.v1"
+  });
+});
+
+test("an unavailable successor assistant is rejected before the predecessor is stopped", async () => {
+  const context = fixture();
+  const reviewed = await reviewedRenewal(context);
+  const selectionError = new Error("The selected assistant is unavailable.");
+  selectionError.code = "vibe64_assistant_selection_unavailable";
+  const controller = context.newController({
+    resolveSuccessorAssistantSelection: async () => {
+      throw selectionError;
+    }
+  });
+
+  await assert.rejects(
+    () => controller.confirmSessionRenewal(OLD_SESSION_ID, {
+      assistantSelection: ASSISTANT_SELECTION,
+      expectedHash: reviewed.draft.hash,
+      expectedRevision: reviewed.draft.revision,
+      operationKey: reviewed.operationKey
+    }),
+    (error) => error === selectionError
+  );
+
+  const durable = await readSessionRenewalState(context.runtime, OLD_SESSION_ID);
+  assert.equal(durable.status, SESSION_RENEWAL_STATUS.REVIEW);
+  assert.equal(context.calls.freeze, 0);
+  assert.equal(context.calls.close, 0);
+  assert.equal(context.calls.quiesce, 0);
+  assert.equal(context.calls.create, 0);
+  assert.equal(context.sessions.get(OLD_SESSION_ID).status, "active");
+});
+
+test("a model failure after handover admission still completes with the exact successor", async () => {
+  const providerError = new Error("Authentication failed");
+  providerError.code = "vibe64_session_renewal_turn_failed";
+  providerError.details = {
+    handoverPromptAccepted: true,
+    threadId: "thread-new",
+    turnId: "turn-failed"
+  };
+  providerError.retryable = true;
+  const context = fixture({ seedErrors: [providerError] });
   const reviewed = await reviewedRenewal(context);
   await context.controller.confirmSessionRenewal(OLD_SESSION_ID, {
     expectedHash: reviewed.draft.hash,
@@ -2320,14 +2461,8 @@ test("a terminally invalid acknowledgement discards the hidden successor before 
     () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
     (state) => state?.status === SESSION_RENEWAL_STATUS.COMPLETED
   );
-  assert.equal(context.calls.discard, 1);
-  assert.deepEqual(context.calls.cleanupOrder, [
-    "close-terminals",
-    "release-resources",
-    "authorize-process-exit-proof-release",
-    "release-process-exit-proof",
-    "discard-successor"
-  ]);
+  assert.equal(context.calls.discard, 0);
+  assert.deepEqual(context.calls.cleanupOrder, ["close-terminals"]);
   assert.equal(context.calls.renewalClose.session.sessionId.startsWith("renewal-"), true);
   assert.equal(context.calls.renewalClose.session.status, "renewal_pending");
   assert.equal(
@@ -2335,18 +2470,59 @@ test("a terminally invalid acknowledgement discards the hidden successor before 
     context.calls.renewalClose.options.renewalId
   );
   assert.equal(context.calls.renewalClose.options.runtime, context.runtime);
-  assert.equal(context.calls.seed, 2);
-  assert.equal(completed.successor.attempt, 2);
-  assert.match(completed.successor.sessionId, /-2$/u);
+  assert.equal(context.calls.seed, 1);
+  assert.equal(completed.successor.attempt, 1);
+  assert.equal(completed.successor.threadId, "thread-new");
+  assert.equal(completed.successor.turnId, "turn-failed");
+  assert.ok(completed.successor.handoverDeliveredAt);
+  assert.deepEqual(completed.successor.handoverError, {
+    code: "vibe64_session_renewal_turn_failed",
+    message: "Authentication failed",
+    retryable: true
+  });
   assert.equal(context.currentSessionId, completed.successor.sessionId);
   assert.equal(context.sessions.get(completed.successor.sessionId).status, "active");
+  assert.ok(
+    context.sessions.get(completed.successor.sessionId).metadata.renewal_handover_delivered_at
+  );
+  assert.equal(
+    context.sessions.get(completed.successor.sessionId).metadata.renewal_acknowledged_at,
+    undefined
+  );
 });
 
-test("persistently invalid acknowledgements consume one durable replacement allowance per user action", async () => {
+test("a provider error before handover admission cannot archive the predecessor", async () => {
+  const providerError = new Error("Provider request was not admitted");
+  providerError.code = "vibe64_session_renewal_turn_failed";
+  providerError.retryable = true;
+  const context = fixture({ seedErrors: [providerError] });
+  const reviewed = await reviewedRenewal(context);
+
+  await context.controller.confirmSessionRenewal(OLD_SESSION_ID, {
+    expectedHash: reviewed.draft.hash,
+    expectedRevision: reviewed.draft.revision,
+    operationKey: reviewed.operationKey
+  });
+  const failed = await eventually(
+    () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
+    (state) => state?.status === SESSION_RENEWAL_STATUS.FAILED
+  );
+
+  assert.equal(failed.stage, SESSION_RENEWAL_STAGE.SUCCESSOR_SEEDING);
+  assert.equal(context.calls.discard, 0);
+  assert.equal(context.sessions.get(OLD_SESSION_ID).status, "active");
+  assert.equal(context.currentSessionId, OLD_SESSION_ID);
+  assert.equal(
+    context.sessions.get(failed.successor.sessionId).status,
+    "renewal_pending"
+  );
+});
+
+test("persistently non-fresh successors consume one durable replacement allowance per user action", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
-    const invalidAcknowledgement = () => {
-      const error = new Error("Invalid acknowledgement");
-      error.code = "vibe64_session_renewal_acknowledgement_invalid";
+    const wrongThread = () => {
+      const error = new Error("Successor history is not fresh");
+      error.code = "vibe64_session_renewal_fresh_thread_required";
       error.retryable = true;
       return error;
     };
@@ -2354,12 +2530,12 @@ test("persistently invalid acknowledgements consume one durable replacement allo
     const successorRuntimeRoot = path.join(temporaryRoot, "successor-runtimes");
     const context = fixture({
       seedBarrier: { ...secondSeed.barrier, fromCall: 2 },
-      seedErrors: Array.from({ length: 4 }, invalidAcknowledgement),
+      seedErrors: Array.from({ length: 4 }, wrongThread),
       successorRuntimeRoot
     });
     const reviewed = await reviewedRenewal(
       context,
-      "renewal:persistently-invalid-acknowledgements"
+      "renewal:persistently-non-fresh-successors"
     );
 
     await context.controller.confirmSessionRenewal(OLD_SESSION_ID, {
@@ -2448,16 +2624,16 @@ test("persistently invalid acknowledgements consume one durable replacement allo
 });
 
 test("successor discard intent distinguishes pre-write failure from cleanup and retries exactly", async () => {
-  const invalidAcknowledgement = () => {
-    const error = new Error("Invalid acknowledgement");
-    error.code = "vibe64_session_renewal_acknowledgement_invalid";
+  const wrongThread = () => {
+    const error = new Error("Successor history is not fresh");
+    error.code = "vibe64_session_renewal_fresh_thread_required";
     error.retryable = true;
     return error;
   };
   const transitionFailure = new Error("State marker write unavailable");
   transitionFailure.code = "simulated_discard_marker_pre_write_failure";
   const context = fixture({
-    seedErrors: [invalidAcknowledgement(), invalidAcknowledgement()],
+    seedErrors: [wrongThread(), wrongThread()],
     successorDiscardTransitionPreWriteErrors: [transitionFailure]
   });
   const reviewed = await reviewedRenewal(context, "renewal:discard-marker-pre-write");
@@ -2499,16 +2675,16 @@ test("successor discard intent distinguishes pre-write failure from cleanup and 
 });
 
 test("a discard-transition retry permits only its current seed and one replacement", async () => {
-  const invalidAcknowledgement = () => {
-    const error = new Error("Invalid acknowledgement");
-    error.code = "vibe64_session_renewal_acknowledgement_invalid";
+  const wrongThread = () => {
+    const error = new Error("Successor history is not fresh");
+    error.code = "vibe64_session_renewal_fresh_thread_required";
     error.retryable = true;
     return error;
   };
   const transitionFailure = new Error("State marker write unavailable");
   transitionFailure.code = "simulated_discard_marker_pre_write_failure";
   const context = fixture({
-    seedErrors: Array.from({ length: 3 }, invalidAcknowledgement),
+    seedErrors: Array.from({ length: 3 }, wrongThread),
     successorDiscardTransitionPreWriteErrors: [transitionFailure]
   });
   const reviewed = await reviewedRenewal(
@@ -2553,13 +2729,13 @@ test("a discard-transition retry permits only its current seed and one replaceme
 });
 
 test("successor discard intent recovers an error thrown after the exact state write", async () => {
-  const acknowledgementError = new Error("Invalid acknowledgement");
-  acknowledgementError.code = "vibe64_session_renewal_acknowledgement_invalid";
-  acknowledgementError.retryable = true;
+  const wrongThreadError = new Error("Successor history is not fresh");
+  wrongThreadError.code = "vibe64_session_renewal_fresh_thread_required";
+  wrongThreadError.retryable = true;
   const postWriteFailure = new Error("State marker release interrupted");
   postWriteFailure.code = "simulated_discard_marker_post_write_failure";
   const context = fixture({
-    seedErrors: [acknowledgementError],
+    seedErrors: [wrongThreadError],
     successorDiscardTransitionPostWriteErrors: [postWriteFailure]
   });
   const reviewed = await reviewedRenewal(context, "renewal:discard-marker-post-write");
@@ -2588,9 +2764,9 @@ test("successor discard intent recovers an error thrown after the exact state wr
 
 test("repeated invalid successors leave no process runtime tombstones across restart", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {
-    const invalidAcknowledgement = () => {
-      const error = new Error("Invalid acknowledgement");
-      error.code = "vibe64_session_renewal_acknowledgement_invalid";
+    const wrongThread = () => {
+      const error = new Error("Successor history is not fresh");
+      error.code = "vibe64_session_renewal_fresh_thread_required";
       error.retryable = true;
       return error;
     };
@@ -2602,7 +2778,7 @@ test("repeated invalid successors leave no process runtime tombstones across res
     const successorRuntimeRoot = path.join(temporaryRoot, "successor-runtimes");
     const context = fixture({
       releaseFailure: true,
-      seedErrors: [invalidAcknowledgement(), invalidAcknowledgement()],
+      seedErrors: [wrongThread(), wrongThread()],
       successorProcessExitProofReleaseErrors: [releaseInterrupted],
       successorRuntimeRoot
     });
@@ -2654,9 +2830,9 @@ test("repeated invalid successors leave no process runtime tombstones across res
 });
 
 test("invalid successor disposal resumes exactly after each destructive cleanup boundary", async (t) => {
-  const acknowledgementError = () => {
-    const error = new Error("Invalid acknowledgement");
-    error.code = "vibe64_session_renewal_acknowledgement_invalid";
+  const wrongThread = () => {
+    const error = new Error("Successor history is not fresh");
+    error.code = "vibe64_session_renewal_fresh_thread_required";
     error.retryable = true;
     return error;
   };
@@ -2710,7 +2886,7 @@ test("invalid successor disposal resumes exactly after each destructive cleanup 
     await t.test(scenario.name, async () => {
       const context = fixture({
         ...scenario.fixtureOptions,
-        seedErrors: [acknowledgementError()]
+        seedErrors: [wrongThread()]
       });
       const reviewed = await reviewedRenewal(
         context,
@@ -2768,7 +2944,11 @@ test("restart resumes successor discard after predecessor restore and after stat
         revision: reviewed.revision + 1,
         stage: scenario.stage,
         status: SESSION_RENEWAL_STATUS.RUNNING,
-        successor: { attempt, replacementCeiling: 2 }
+        successor: {
+          assistantSelection: ASSISTANT_SELECTION,
+          attempt,
+          replacementCeiling: 2
+        }
       }, null, 2)}\n`);
 
       await context.newController().resumeSessionRenewals();
@@ -3235,6 +3415,7 @@ test("restart completes durable failure restoration before exposing FAILED", asy
     stage: SESSION_RENEWAL_STAGE.FAILURE_RESTORING,
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
+      assistantSelection: ASSISTANT_SELECTION,
       attempt: 1,
       sessionId: "renewal-restart-successor"
     }
@@ -3277,6 +3458,7 @@ test("restart never restores a predecessor quiesced by another renewal", async (
     stage: SESSION_RENEWAL_STAGE.FAILURE_RESTORING,
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
+      assistantSelection: ASSISTANT_SELECTION,
       attempt: 1,
       sessionId: "renewal-foreign-successor"
     }
@@ -3376,6 +3558,7 @@ test("actor recovery failure discards private archive preparation and restores t
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       attempt: 1,
       sessionId: successorSessionId
     }
@@ -3443,6 +3626,7 @@ test("restart completes durable private-archive failure restoration", async () =
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       attempt: 1,
       sessionId: successorSessionId
     }
@@ -3529,6 +3713,7 @@ test("restart recovery resumes an exact quiesced predecessor with a hidden succe
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       sessionId: successorSessionId,
       threadId: "thread-new",
       turnId: "turn-seed"
@@ -3583,6 +3768,7 @@ test("restart rejects a published predecessor without a durable commit marker", 
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       sessionId: successorSessionId,
       threadId: "thread-new",
       turnId: "turn-seed"
@@ -3676,6 +3862,7 @@ test("post-commit recovery completes without restoring the persisted actor", asy
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       sessionId: successorSessionId,
       threadId: "thread-new",
       turnId: "turn-seed"
@@ -3737,6 +3924,7 @@ test("actor recovery never repairs a published predecessor without a commit mark
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       sessionId: successorSessionId,
       threadId: "thread-new",
       turnId: "turn-seed"
@@ -3780,7 +3968,12 @@ test("automatic recovery resolves the persisted confirmer through the trusted ho
     approved: reviewed.draft,
     confirmedBy: { id: "confirmer-2", name: "Rae" },
     stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
-    status: SESSION_RENEWAL_STATUS.RUNNING
+    status: SESSION_RENEWAL_STATUS.RUNNING,
+    successor: {
+      assistantSelection: ASSISTANT_SELECTION,
+      attempt: 1,
+      replacementCeiling: 2
+    }
   }, null, 2)}\n`);
 
   const resumed = await context.newController().resumeSessionRenewals();
@@ -3814,7 +4007,12 @@ test("automatic recovery prefers the last trusted collaborator who continued the
     confirmedBy: { id: "confirmer-2", name: "Rae" },
     continuedBy: { id: "collaborator-3", name: "Kai" },
     stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
-    status: SESSION_RENEWAL_STATUS.RUNNING
+    status: SESSION_RENEWAL_STATUS.RUNNING,
+    successor: {
+      assistantSelection: ASSISTANT_SELECTION,
+      attempt: 1,
+      replacementCeiling: 2
+    }
   }, null, 2)}\n`);
 
   await context.newController().resumeSessionRenewals();
@@ -3858,7 +4056,12 @@ test("active OLD_QUIESCING recovery never closes predecessor work that is not id
         approved: reviewed.draft,
         confirmedBy: { id: "confirmer-2", name: "Rae" },
         stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
-        status: SESSION_RENEWAL_STATUS.RUNNING
+        status: SESSION_RENEWAL_STATUS.RUNNING,
+        successor: {
+          assistantSelection: ASSISTANT_SELECTION,
+          attempt: 1,
+          replacementCeiling: 2
+        }
       }, null, 2)}\n`);
       scenario.prepare(context);
 
@@ -3892,7 +4095,12 @@ test("unavailable automatic actor recovery pauses durably until an explicit retr
     approved: reviewed.draft,
     confirmedBy: { id: "removed-user", name: "Removed" },
     stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
-    status: SESSION_RENEWAL_STATUS.RUNNING
+    status: SESSION_RENEWAL_STATUS.RUNNING,
+    successor: {
+      assistantSelection: ASSISTANT_SELECTION,
+      attempt: 1,
+      replacementCeiling: 2
+    }
   }, null, 2)}\n`);
 
   const resumed = await context.newController().resumeSessionRenewals();
@@ -3961,6 +4169,7 @@ test("actor recovery failure after acknowledgement restores the unpublished pred
     status: SESSION_RENEWAL_STATUS.RUNNING,
     successor: {
       acknowledgedAt: "2026-08-24T04:00:00.000Z",
+      assistantSelection: ASSISTANT_SELECTION,
       attempt: 1,
       sessionId: successorId,
       threadId: "thread-new",
@@ -4002,7 +4211,12 @@ test("collaborator continuation after boot recovery cannot race a newly active p
     approved: reviewed.draft,
     confirmedBy: { id: "removed-user", name: "Removed" },
     stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
-    status: SESSION_RENEWAL_STATUS.RUNNING
+    status: SESSION_RENEWAL_STATUS.RUNNING,
+    successor: {
+      assistantSelection: ASSISTANT_SELECTION,
+      attempt: 1,
+      replacementCeiling: 2
+    }
   }, null, 2)}\n`);
 
   await context.newController().resumeSessionRenewals();

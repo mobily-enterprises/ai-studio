@@ -8,6 +8,15 @@ import { renderToString } from "@vue/server-renderer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renewalUiHarness = vi.hoisted(() => ({
+  assistantReady: true,
+  assistantSelection: {
+    agentId: "codex",
+    catalogRevision: `sha256:${"a".repeat(64)}`,
+    engineId: "codex",
+    modelId: "gpt-5.6",
+    modelProviderId: "openai",
+    variantId: "high"
+  },
   buttons: [],
   compact: false,
   dialogAttrs: null
@@ -60,6 +69,21 @@ vi.mock("vuetify/components/VTextarea", () => ({
 
 vi.mock("@/components/studio/StudioErrorNotice.vue", () => ({
   default: passthroughComponent("section")
+}));
+vi.mock("@/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue", () => ({
+  default: defineComponent({
+    props: {
+      active: Boolean
+    },
+    emits: ["update:ready", "update:selection"],
+    setup(props, { emit }) {
+      if (props.active) {
+        emit("update:selection", renewalUiHarness.assistantSelection);
+        emit("update:ready", renewalUiHarness.assistantReady);
+      }
+      return () => h("section", "AI for the fresh session");
+    }
+  })
 }));
 
 import Vibe64SessionRenewalDialog from "../../src/components/studio/vibe64-session/Vibe64SessionRenewalDialog.vue";
@@ -188,6 +212,7 @@ async function renderRenewal(renewal, { compact = false } = {}) {
 }
 
 beforeEach(() => {
+  renewalUiHarness.assistantReady = true;
   renewalUiHarness.buttons = [];
   renewalUiHarness.compact = false;
   renewalUiHarness.dialogAttrs = null;
@@ -204,6 +229,7 @@ describe("session renewal dialog", () => {
     expect(html).toContain("Renew soon");
     expect(html).toContain("This conversation is approaching its safe context limit.");
     expect(html).toContain("Prepare handover");
+    expect(html).toContain("renewal completes even if the model cannot answer");
     expect(html).toContain("autofocus");
     expect(html).toContain('height="48"');
     expect(renewalUiHarness.dialogAttrs.persistent).toBe(false);
@@ -373,6 +399,33 @@ describe("session renewal dialog", () => {
     expect(confirming).toContain("Save draft");
     expect(confirming).toContain("Saving…");
     expect(confirming).toContain('aria-busy="true"');
+  });
+
+  it("confirms with the exact ready assistant selected for the fresh session", async () => {
+    const renewal = renewalModel({
+      phase: "review",
+      renewal: { draft: { text: "Draft" }, sessionId: "session-1", status: "review" }
+    });
+    await renderRenewal(renewal);
+    const confirmButton = renewalUiHarness.buttons.find((attrs) => (
+      String(attrs.class || "").includes("studio-session-renewal__action--primary") &&
+      attrs.variant === "flat"
+    ));
+
+    expect(confirmButton).toBeTruthy();
+    expect(confirmButton.disabled).toBe(false);
+    confirmButton.onClick();
+    expect(renewal.confirm).toHaveBeenCalledWith(renewalUiHarness.assistantSelection);
+  });
+
+  it("cannot confirm while the fresh-session assistant choice is unresolved", async () => {
+    renewalUiHarness.assistantReady = false;
+    const html = await renderRenewal(renewalModel({
+      phase: "review",
+      renewal: { draft: { text: "Draft" }, sessionId: "session-1", status: "review" }
+    }));
+
+    expect(html).toMatch(/Renew session[\s\S]*?disabled|disabled[\s\S]*?Renew session/u);
   });
 
   it("makes concurrent handover edits explicit without discarding either version", async () => {

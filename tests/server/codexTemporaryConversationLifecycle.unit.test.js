@@ -1354,6 +1354,7 @@ async function withAgentMessageController(operation) {
 
   const captures = {
     finalText: "",
+    omitSendTurnId: false,
     onSendTurn: null,
     onSteerTurn: null,
     provider: null,
@@ -1513,7 +1514,7 @@ async function withAgentMessageController(operation) {
             await captures.sendTurnWait;
           }
           return {
-            id: turnId,
+            id: captures.omitSendTurnId ? "" : turnId,
             raw: {
               status: provider.status
             }
@@ -1632,13 +1633,25 @@ function completeAgentMessageHarnessTurn(captures, provider, turnId, text) {
   });
 }
 
-test("session renewal handover runs on the exact visible main thread with stored interactive settings", async () => {
+test("session renewal handover runs on the exact visible main thread with its durable assistant selection", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
     await store.mutateSession(sessionId, async () => {
       await Promise.all([
-        store.writeMetadataValue(sessionId, "agent_settings_model", "gpt-5.6-sol"),
+        store.writeMetadataValue(
+          sessionId,
+          VIBE64_ASSISTANT_SELECTION_METADATA,
+          serializeVibe64AssistantSelection({
+            agentId: "codex",
+            catalogRevision: `sha256:${"c".repeat(64)}`,
+            engineId: "codex",
+            modelId: "gpt-5.6-sol",
+            modelProviderId: "openai",
+            variantId: "high"
+          })
+        ),
+        store.writeMetadataValue(sessionId, "agent_settings_model", "gpt-5.5"),
         store.writeMetadataValue(sessionId, "agent_settings_provider", "codex"),
-        store.writeMetadataValue(sessionId, "agent_settings_thinking", "high")
+        store.writeMetadataValue(sessionId, "agent_settings_thinking", "low")
       ]);
     });
     const prepared = await controller.ensureThread(sessionId);
@@ -1690,9 +1703,24 @@ test("session renewal handover runs on the exact visible main thread with stored
 
 test("renewed-session seeding starts a fresh hidden turn and requires its exact structured acknowledgement", async () => {
   await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
-    await store.writeMetadataValue(sessionId, "agent_settings_model", "gpt-5.5");
+    const assistantSelection = {
+      agentId: "codex",
+      catalogRevision: `sha256:${"c".repeat(64)}`,
+      engineId: "codex",
+      modelId: "gpt-5.5",
+      modelProviderId: "openai",
+      variantId: "low"
+    };
+    await store.writeMetadataValue(
+      sessionId,
+      VIBE64_ASSISTANT_SELECTION_METADATA,
+      serializeVibe64AssistantSelection(assistantSelection)
+    );
+    // These fields are deliberately stale: the durable assistant selection
+    // owns the fresh thread's model and thinking choice.
+    await store.writeMetadataValue(sessionId, "agent_settings_model", "gpt-5.6-sol");
     await store.writeMetadataValue(sessionId, "agent_settings_provider", "codex");
-    await store.writeMetadataValue(sessionId, "agent_settings_thinking", "high");
+    await store.writeMetadataValue(sessionId, "agent_settings_thinking", "xhigh");
     const handover = renewalHandoverText();
     const handoverHash = sessionRenewalHandoverHash(handover);
     const acknowledgement = {
@@ -1713,9 +1741,9 @@ test("renewed-session seeding starts a fresh hidden turn and requires its exact 
     };
 
     const session = await store.readSession(sessionId);
-    assert.equal(session.metadata.agent_settings_model, "gpt-5.5");
+    assert.equal(session.metadata.agent_settings_model, "gpt-5.6-sol");
     assert.equal(session.metadata.agent_settings_provider, "codex");
-    assert.equal(session.metadata.agent_settings_thinking, "high");
+    assert.equal(session.metadata.agent_settings_thinking, "xhigh");
     const result = await controller.seedSessionRenewalHandover(sessionId, {
       agentSettings: {
         model: "gpt-5.6-sol",
@@ -1738,8 +1766,8 @@ test("renewed-session seeding starts a fresh hidden turn and requires its exact 
     assert.equal(result.turnId, "turn-1");
     assert.equal(captures.threadStarts.length, 1);
     assert.equal(captures.threadStarts[0].sandbox, "read-only");
-    assert.equal(captures.turns[0].settings.model, "gpt-5.5");
-    assert.equal(captures.turns[0].settings.effort, "high");
+    assert.equal(captures.turns[0].settings.model, assistantSelection.modelId);
+    assert.equal(captures.turns[0].settings.effort, assistantSelection.variantId);
     assert.deepEqual(captures.turns[0].settings.sandboxPolicy, {
       networkAccess: false,
       type: "readOnly"
@@ -1749,6 +1777,8 @@ test("renewed-session seeding starts a fresh hidden turn and requires its exact 
     const saved = await store.readSessionForRenewal(sessionId);
     assert.equal(saved.metadata.agent_renewal_seed_turn_id, "turn-1");
     assert.equal(saved.metadata.agent_briefing_delivered, "yes");
+    assert.equal(saved.metadata.agent_settings_model, assistantSelection.modelId);
+    assert.equal(saved.metadata.agent_settings_thinking, assistantSelection.variantId);
 
     const retried = await controller.seedSessionRenewalHandover(sessionId, {
       handover,
@@ -1778,16 +1808,16 @@ test("renewed-session seeding starts a fresh hidden turn and requires its exact 
     });
     assert.equal(ordinary.ok, true, JSON.stringify(ordinary));
     assert.equal(captures.turns.length, 2);
-    assert.equal(captures.turns[1].settings.model, "gpt-5.5");
-    assert.equal(captures.turns[1].settings.effort, "high");
+    assert.equal(captures.turns[1].settings.model, assistantSelection.modelId);
+    assert.equal(captures.turns[1].settings.effort, assistantSelection.variantId);
     assert.deepEqual(captures.turns[1].settings.sandboxPolicy, {
       networkAccess: "enabled",
       type: "externalSandbox"
     });
     const continued = await store.readSession(sessionId);
-    assert.equal(continued.metadata.agent_settings_model, "gpt-5.5");
+    assert.equal(continued.metadata.agent_settings_model, assistantSelection.modelId);
     assert.equal(continued.metadata.agent_settings_provider, "codex");
-    assert.equal(continued.metadata.agent_settings_thinking, "high");
+    assert.equal(continued.metadata.agent_settings_thinking, assistantSelection.variantId);
   });
 });
 
@@ -1826,6 +1856,57 @@ test("renewed-session seeding starts fresh when a manual handover has no predece
     assert.equal(result.freshThread, true);
     assert.equal(result.acknowledgement.handoverHash, handoverHash);
     assert.equal(captures.threadStarts.length, 1);
+    assert.equal(captures.turns.length, 1);
+  });
+});
+
+test("renewed-session seeding distinguishes an accepted handover from a failed model response", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
+    const handover = renewalHandoverText();
+    const handoverHash = sessionRenewalHandoverHash(handover);
+    captures.onSendTurn = ({ provider }) => {
+      provider.status = "failed";
+    };
+
+    const result = await controller.seedSessionRenewalHandover(sessionId, {
+      handover,
+      handoverHash,
+      oldThreadId: "22222222-2222-4222-8222-222222222222",
+      operationKey: "renewal:failed-model",
+      source: RENEWAL_SOURCE
+    }, {
+      runtime,
+      session: await store.readSession(sessionId)
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_session_renewal_turn_failed");
+    assert.equal(result.details.handoverPromptAccepted, true);
+    assert.equal(result.details.turnId, "turn-1");
+    assert.equal(captures.turns.length, 1);
+  });
+});
+
+test("renewed-session seeding does not claim delivery without the exact Codex turn id", async () => {
+  await withAgentMessageController(async ({ captures, controller, runtime, sessionId, store }) => {
+    const handover = renewalHandoverText();
+    captures.omitSendTurnId = true;
+
+    const result = await controller.seedSessionRenewalHandover(sessionId, {
+      handover,
+      handoverHash: sessionRenewalHandoverHash(handover),
+      oldThreadId: "22222222-2222-4222-8222-222222222222",
+      operationKey: "renewal:missing-turn-id",
+      source: RENEWAL_SOURCE
+    }, {
+      runtime,
+      session: await store.readSession(sessionId)
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_session_renewal_turn_identity_missing");
+    assert.equal(result.details.handoverPromptAccepted, undefined);
+    assert.equal(result.details.turnId, "");
     assert.equal(captures.turns.length, 1);
   });
 });
@@ -2094,6 +2175,30 @@ test("Codex renders only opening and explicit Deslop prompts through Genesis", a
     assert.doesNotMatch(captures.turns[2].input[0], /GENESIS/u);
     assert.equal(captures.turns[2].input[0], "Explain one cleanup choice.");
     assert.equal(captures.turns.every(({ input }) => input.length === 1), true);
+  });
+});
+
+test("Codex leaves the first visible message raw after a delivered renewal handover", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    await store.writeMetadataValue(
+      sessionId,
+      "renewal_handover_delivered_at",
+      "2026-09-04T01:00:00.000Z"
+    );
+
+    await controller.sendMessage(sessionId, {
+      message: "Continue after I repair the provider login.",
+      messageId: "renewal-visible-follow-up"
+    });
+    completeAgentMessageHarnessTurn(captures, captures.provider, "turn-1", "Continued.");
+    await waitForSessionValue(
+      () => store.readAgentRun(sessionId, "codex_app_server"),
+      (run) => run?.active === false && run?.providerTurnId === "turn-1",
+      "the renewed follow-up to complete"
+    );
+
+    assert.deepEqual(captures.renderPrompts, []);
+    assert.equal(captures.turns[0].input[0], "Continue after I repair the provider login.");
   });
 });
 

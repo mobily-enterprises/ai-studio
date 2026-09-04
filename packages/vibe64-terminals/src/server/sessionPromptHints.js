@@ -1061,7 +1061,9 @@ function createSessionPromptHintsService({
       }
       cancelRequest(request);
     }
-    await Promise.all([...jobs].map((job) => job.interruptPromise).filter(Boolean));
+    await Promise.all([...jobs].map((job) => (
+      Promise.resolve(job.promise).catch(() => null)
+    )));
     return {
       cancelled: requests.length,
       ok: true

@@ -62,12 +62,14 @@ import {
   startFreshCodexAppServerThreadForSession
 } from "@local/vibe64-runtime/server/codexAppServerSessionBridge";
 import {
+  VIBE64_ASSISTANT_ENGINE_IDS,
   VIBE64_AGENT_TASK_RESULT_SCHEMA,
   VIBE64_AGENT_WORKSPACE_WRITE_POLICY,
   defineVibe64AgentExecutionProfileRequest,
   effectiveVibe64AgentExecutionSettings,
   effectiveVibe64AgentSettings,
   normalizeVibe64AgentTaskResult,
+  vibe64AssistantSelectionFromMetadata,
   vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
 import {
@@ -374,6 +376,16 @@ function codexDetachedChatTurnError(error, {
 
 function codexAgentSettingsFromSession(session = {}) {
   const metadata = session.metadata || {};
+  const selection = vibe64AssistantSelectionFromMetadata(metadata, {
+    required: false
+  });
+  if (selection?.engineId === VIBE64_ASSISTANT_ENGINE_IDS.CODEX) {
+    return {
+      model: selection.modelId,
+      providerId: VIBE64_ASSISTANT_ENGINE_IDS.CODEX,
+      thinking: selection.variantId
+    };
+  }
   return {
     model: normalizeText(metadata.agent_settings_model),
     providerId: normalizeText(metadata.agent_settings_provider),
@@ -8264,7 +8276,8 @@ function createCodexTerminalController({
       const providerContextRefreshPending = codexContextRefreshPending(preparedSession);
       stageStartedAt = Date.now();
       const genesisTask = normalizeText(input.genesisTask);
-      const needsOpeningPrompt = !sessionBriefingIsDelivered(preparedSession);
+      const needsOpeningPrompt = !sessionBriefingIsDelivered(preparedSession) &&
+        !normalizeText(preparedSession.metadata?.renewal_handover_delivered_at);
       const rendered = genesisTask || needsOpeningPrompt
         ? await runtime.renderPrompt(sessionId, {
             input,
@@ -10050,6 +10063,9 @@ function createCodexTerminalController({
     source.details = {
       ...(isRecord(source.details) ? source.details : {}),
       clientMessageId: normalizeText(identity.clientMessageId),
+      ...(identity.handoverPromptAccepted === true
+        ? { handoverPromptAccepted: true }
+        : {}),
       operationId: normalizeText(identity.operationId),
       retryable: source.retryable === true,
       threadId: normalizeText(identity.threadId),
@@ -10534,6 +10550,7 @@ function createCodexTerminalController({
         } catch (error) {
           throw codexAppServerRenewalErrorWithIdentity(error, {
             clientMessageId,
+            handoverPromptAccepted: true,
             operationId,
             threadId,
             turnId
@@ -10551,6 +10568,7 @@ function createCodexTerminalController({
         const pending = watcher.wait();
         void pending.catch(() => null);
         let delivery = null;
+        let handoverPromptAccepted = false;
         let status = "";
         try {
           delivery = await sendCodexAppServerPromptForSession({
@@ -10574,6 +10592,7 @@ function createCodexTerminalController({
               "Codex accepted the successor handover without returning its exact turn id."
             );
           }
+          handoverPromptAccepted = true;
           await writeCodexAppServerRenewalMetadata(runtime, sessionId, {
             agent_renewal_seed_turn_id: turnId
           }, { renewalInternal: true });
@@ -10593,6 +10612,7 @@ function createCodexTerminalController({
           watcher.failNow(error);
           throw codexAppServerRenewalErrorWithIdentity(error, {
             clientMessageId,
+            handoverPromptAccepted,
             operationId,
             threadId,
             turnId
@@ -10613,6 +10633,7 @@ function createCodexTerminalController({
         };
         throw codexAppServerRenewalErrorWithIdentity(error, {
           clientMessageId,
+          handoverPromptAccepted: true,
           operationId,
           threadId,
           turnId: result.turnId || turnId

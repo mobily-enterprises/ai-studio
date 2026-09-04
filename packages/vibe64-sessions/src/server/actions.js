@@ -20,6 +20,7 @@ import {
   sessionListInputValidator,
   sessionPresenceActionInputValidator,
   sessionPreviewStateInputValidator,
+  sessionRenewalConfirmationActionInputValidator,
   sessionRenewalDraftGuardActionInputValidator,
   sessionRenewalDraftRequestActionInputValidator,
   sessionRenewalDraftUpdateActionInputValidator,
@@ -235,8 +236,9 @@ function createSessionActions({ sessions } = {}) {
       id: ACTION_CONFIRM_SESSION_RENEWAL,
       kind: "command",
       idempotency: "domain_native",
-      input: sessionRenewalDraftGuardActionInputValidator,
+      input: sessionRenewalConfirmationActionInputValidator,
       execute: (input, context) => sessions.confirmSessionRenewal(input.sessionId, {
+        assistantSelection: input.assistantSelection,
         expectedHash: input.expectedHash,
         expectedRevision: input.expectedRevision,
         operationKey: input.operationKey,

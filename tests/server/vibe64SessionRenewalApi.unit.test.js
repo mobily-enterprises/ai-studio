@@ -12,6 +12,8 @@ import {
 } from "../../packages/vibe64-sessions/src/server/actions.js";
 import {
   SESSION_RENEWAL_HANDOVER_MAX_CHARACTERS,
+  sessionRenewalConfirmationActionInputValidator,
+  sessionRenewalConfirmationInputValidator,
   sessionRenewalDraftGuardInputValidator,
   sessionRenewalDraftGuardActionInputValidator,
   sessionRenewalDraftRequestInputValidator,
@@ -41,6 +43,14 @@ const RENEWAL_ACTION_IDS = Object.freeze([
   ACTION_RETRY_SESSION_RENEWAL
 ]);
 const DRAFT_HASH = "a".repeat(64);
+const ASSISTANT_SELECTION = Object.freeze({
+  agentId: "build",
+  catalogRevision: `sha256:${"b".repeat(64)}`,
+  engineId: "opencode",
+  modelId: "glm-4.7-flash",
+  modelProviderId: "zai",
+  variantId: ""
+});
 
 function actionById(actions, id) {
   const action = actions.find((candidate) => candidate.id === id);
@@ -94,6 +104,16 @@ test("renewal inputs require durable operation and optimistic draft guards", () 
     "expectedRevision",
     "operationKey"
   ]);
+
+  const confirmation = sessionRenewalConfirmationActionInputValidator.schema.create({
+    assistantSelection: ASSISTANT_SELECTION,
+    expectedHash: DRAFT_HASH,
+    expectedRevision: 3,
+    operationKey: "renewal:session-1:one",
+    sessionId: "session-1"
+  });
+  assert.deepEqual(confirmation.errors, {});
+  assert.deepEqual(confirmation.validatedObject.assistantSelection, ASSISTANT_SELECTION);
 });
 
 test("renewal draft transport stays bounded without rejecting 20,000 astral code points", () => {
@@ -169,6 +189,7 @@ test("renewal actions use server action context identity and domain-native idemp
     }
   };
   const base = {
+    assistantSelection: ASSISTANT_SELECTION,
     expectedHash: DRAFT_HASH,
     expectedRevision: 2,
     operationKey: "renewal:session-1:one",
@@ -210,6 +231,7 @@ test("renewal actions use server action context identity and domain-native idemp
       vibe64User
     }],
     ["confirm", "session-1", {
+      assistantSelection: ASSISTANT_SELECTION,
       expectedHash: DRAFT_HASH,
       expectedRevision: 2,
       operationKey: "renewal:session-1:one",
@@ -294,13 +316,14 @@ test("renewal HTTP routes expose the six state transitions without accepting bod
         {
           actionId: ACTION_CONFIRM_SESSION_RENEWAL,
           body: {
+            assistantSelection: ASSISTANT_SELECTION,
             expectedHash: DRAFT_HASH,
             expectedRevision: 2,
             operationKey: "renewal:session-1:one",
             vibe64User: { username: "spoofed" }
           },
           bodyLimit: 32 * 1024,
-          bodyValidator: sessionRenewalDraftGuardInputValidator,
+          bodyValidator: sessionRenewalConfirmationInputValidator,
           method: "POST",
           suffix: "/renewal/confirm"
         },

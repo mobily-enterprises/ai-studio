@@ -1519,13 +1519,21 @@ function assertCodexSessionRenewalThreadSnapshot(threadSnapshot = null, {
   return threadSnapshot;
 }
 
-function codexSessionRenewalThreadIsUnmaterialized(error = null, threadId = "") {
+function codexSessionRenewalThreadNeedsStatusRead(error = null, threadId = "") {
   const normalizedThreadId = normalizeAgentText(threadId);
   return Boolean(
     normalizedThreadId &&
-    codexAppServerRequestIsInvalid(error, "thread/read") &&
-    normalizeAgentText(error?.message) ===
-      `thread ${normalizedThreadId} ${CODEX_SESSION_RENEWAL_UNMATERIALIZED_THREAD_SUFFIX}`
+    (
+      (
+        codexAppServerRequestIsInvalid(error, "thread/read") &&
+        normalizeAgentText(error?.message) ===
+          `thread ${normalizedThreadId} ${CODEX_SESSION_RENEWAL_UNMATERIALIZED_THREAD_SUFFIX}`
+      ) ||
+      (
+        Number(error?.code) === -32601 &&
+        normalizeAgentText(error?.method) === "thread/read"
+      )
+    )
   );
 }
 
@@ -1541,7 +1549,7 @@ async function readCodexSessionRenewalSuccessorThreadSnapshot({
     );
   } catch (error) {
     if (
-      !codexSessionRenewalThreadIsUnmaterialized(error, threadId) ||
+      !codexSessionRenewalThreadNeedsStatusRead(error, threadId) ||
       typeof provider?.readThreadStatus !== "function"
     ) {
       throw error;

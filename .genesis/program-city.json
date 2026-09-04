@@ -422,21 +422,25 @@
       "implementationMap": "",
       "name": "workspaces",
       "path": "genesis/program/sessions/workspaces.md",
-      "publicContract": "People can create, select, inspect, and archive sessions. A new session receives\nits own Git source and stable identity. Its conversation, source location,\nagent activity, workspace preparation, and repository status remain available\nacross UI refreshes. Archiving stops active work, removes its active workspace,\nand preserves the read-only history needed to recover its conversation and\nunderstand what happened. Session History reads lightweight archive indexes and\nshows the most recently archived session first.\nRepository status uses realtime changes as its primary signal and a bounded\nfreshness check as fallback. The fallback does no work while the page is hidden\nand refreshes immediately when the person returns. Session-renewal recovery\nalso slows its checks when maintenance needs operator attention rather than\nretrying continuously.",
+      "publicContract": "People can create, select, inspect, and archive sessions. A new session receives\nits own Git source and stable identity. Its conversation, source location,\nagent activity, workspace preparation, and repository status remain available\nacross UI refreshes. Archiving stops active work, removes its active workspace,\nand preserves the read-only history needed to recover its conversation and\nunderstand what happened. Session History reads lightweight archive indexes and\nshows the most recently archived session first.\nRenewal creates a fresh native assistant conversation. Its review step defaults\nto the current session's AI but can select another connected engine, provider,\nmodel, or thinking option. Confirmation resolves the live choice before the old\nsession is stopped, then stores that canonical selection in the durable renewal\nrecord. Successor creation and every retry read that stored value rather than\ncopying provider-specific metadata from the predecessor. If the predecessor's\nmodel fails while preparing the draft, renewal presents the canonical editable\nhandover template so the person can still leave that provider. The fresh\nprovider history is the handover boundary: after it accepts the exact handover\nprompt as its first turn, Vibe64 archives the predecessor and exposes the\nsuccessor even when authentication, quota, transport, or model execution\nprevents an assistant reply. A failure before prompt admission, a reused\nconversation, a changed source, or an unusable workspace still leaves the\npredecessor available.\nRepository status uses realtime changes as its primary signal and a bounded\nfreshness check as fallback. The fallback does no work while the page is hidden\nand refreshes immediately when the person returns. Session-renewal recovery\nalso slows its checks when maintenance needs operator attention rather than\nretrying continuously.",
       "sourceFileIds": [
         "file:packages/vibe64-sessions/src/server/service.js",
+        "file:packages/vibe64-sessions/src/server/sessionRenewal.js",
         "file:packages/vibe64-runtime/src/server/runtime.js",
         "file:packages/vibe64-runtime/src/server/sessionStore.js",
         "file:packages/vibe64-terminals/src/server/sessionSource.js",
+        "file:src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue",
         "file:src/composables/useArchivedVibe64Sessions.js",
         "file:src/composables/useVibe64SessionRenewal.js",
         "file:src/composables/useVibe64SessionRepositoryStatusRegistry.js"
       ],
       "sources": [
         "packages/vibe64-sessions/src/server/service.js",
+        "packages/vibe64-sessions/src/server/sessionRenewal.js",
         "packages/vibe64-runtime/src/server/runtime.js",
         "packages/vibe64-runtime/src/server/sessionStore.js",
         "packages/vibe64-terminals/src/server/sessionSource.js",
+        "src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue",
         "src/composables/useArchivedVibe64Sessions.js",
         "src/composables/useVibe64SessionRenewal.js",
         "src/composables/useVibe64SessionRepositoryStatusRegistry.js"
@@ -1227,6 +1231,11 @@
     {
       "fromId": "operation:sessions/workspaces",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-sessions/src/server/sessionRenewal.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-runtime/src/server/runtime.js"
     },
     {
@@ -1238,6 +1247,11 @@
       "fromId": "operation:sessions/workspaces",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/sessionSource.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue"
     },
     {
       "fromId": "operation:sessions/workspaces",
@@ -1370,7 +1384,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:f83ed46ee86ead885cdc98a41003b6bb7a5d21c5665ade29bbdf44db5b602dd1",
+  "programHash": "sha256:62b14d079f5a9ad7e59b20fe046e4bf283ee3cf58621e06e2c853e5fb4270e14",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

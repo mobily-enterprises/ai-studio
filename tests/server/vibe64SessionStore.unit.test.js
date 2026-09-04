@@ -1084,7 +1084,7 @@ test("renewal handoff and private preparation preserve the predecessor projectio
         sourceSessionId: fixture.sourceSessionId,
         successorSessionId: fixture.successorSessionId
       }),
-      { code: "vibe64_session_renewal_acknowledgement_required" }
+      { code: "vibe64_session_renewal_handover_required" }
     );
     await store.transitionRenewalSuccessor({
       acknowledgedAt: "2026-08-24T01:03:00.000Z",
@@ -1100,6 +1100,10 @@ test("renewal handoff and private preparation preserve the predecessor projectio
     assert.equal(successor.status, VIBE64_SESSION_STATUS.RENEWAL_PENDING);
     assert.equal(source.metadata.renewed_to, undefined);
     assert.equal(successor.metadata.renewed_from, fixture.sourceSessionId);
+    assert.equal(
+      successor.metadata.renewal_handover_delivered_at,
+      "2026-08-24T01:03:00.000Z"
+    );
     assert.equal(source.metadata.renewal_actor_id, undefined);
     assert.equal(source.metadata.renewal_acknowledged_at, undefined);
     assert.equal(source.metadata.renewed_at, undefined);
@@ -1166,6 +1170,29 @@ test("renewal handoff and private preparation preserve the predecessor projectio
   });
 });
 
+test("renewal handoff can complete after delivery without a model acknowledgement", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const store = createStore(targetRoot, {
+      projectSessionSourceRoot: targetRoot
+    });
+    const fixture = await createRenewalFixture(store);
+
+    await store.transitionRenewalSuccessor({
+      handoverDeliveredAt: "2026-08-24T01:03:00.000Z",
+      renewalId: fixture.renewalId,
+      sourceSessionId: fixture.sourceSessionId,
+      successorSessionId: fixture.successorSessionId
+    });
+
+    const successor = await store.readSessionForRenewal(fixture.successorSessionId);
+    assert.equal(
+      successor.metadata.renewal_handover_delivered_at,
+      "2026-08-24T01:03:00.000Z"
+    );
+    assert.equal(successor.metadata.renewal_acknowledged_at, undefined);
+  });
+});
+
 test("renewal archive commit resumes every reachable closing-tree interruption", async (t) => {
   const metadataNames = [
     "renewal_acknowledged_at",
@@ -1173,6 +1200,7 @@ test("renewal archive commit resumes every reachable closing-tree interruption",
     "renewal_actor_id",
     "renewal_archived_at",
     "renewal_confirmed_at",
+    "renewal_handover_delivered_at",
     "renewal_id",
     "renewal_started_at",
     "renewal_successor_created_at",
@@ -1411,6 +1439,7 @@ test("renewed session archives retain bounded handoff provenance", async () => {
       renewal_actor_id: "ada-owner",
       renewal_archived_at: prepared.index.metadata.renewal_archived_at,
       renewal_confirmed_at: "2026-08-24T01:01:00.000Z",
+      renewal_handover_delivered_at: "2026-08-24T01:03:00.000Z",
       renewal_id: fixture.renewalId,
       renewal_quiesced_at: "2026-08-24T01:00:30.000Z",
       renewal_quiesced_id: fixture.renewalId,

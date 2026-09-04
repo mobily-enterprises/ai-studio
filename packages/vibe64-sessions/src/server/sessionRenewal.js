@@ -10,6 +10,10 @@ import {
   runVibe64RenewalAgentWriteExclusive
 } from "@local/vibe64-runtime/server/agentWriteLock";
 import {
+  VIBE64_ASSISTANT_SELECTION_METADATA,
+  serializeVibe64AssistantSelection
+} from "@local/vibe64-runtime/shared";
+import {
   VIBE64_SESSION_STATUS,
   vibe64AgentRunStateIsActive
 } from "@local/vibe64-runtime/server/sessionStore";
@@ -34,16 +38,19 @@ const SESSION_RENEWAL_THREAD_UNREADABLE_CODE =
   "vibe64_session_renewal_thread_unreadable";
 const SESSION_RENEWAL_MANUAL_DRAFT_CODES = new Set([
   SESSION_RENEWAL_THREAD_UNREADABLE_CODE,
+  "vibe64_codex_app_server_start_failed",
+  "vibe64_opencode_start_failed",
+  "vibe64_opencode_start_timeout",
   "vibe64_session_renewal_handover_invalid",
-  "vibe64_session_renewal_handover_source_mismatch"
-]);
-const SESSION_RENEWAL_DISCARD_SUCCESSOR_CODES = new Set([
-  "vibe64_session_renewal_acknowledgement_invalid",
-  "vibe64_session_renewal_fresh_thread_required",
-  "vibe64_session_renewal_handover_invalid",
+  "vibe64_session_renewal_handover_source_mismatch",
+  "vibe64_session_renewal_provider_failed",
   "vibe64_session_renewal_turn_failed",
   "vibe64_session_renewal_turn_identity_missing",
   "vibe64_session_renewal_turn_unreadable"
+]);
+const SESSION_RENEWAL_DISCARD_SUCCESSOR_CODES = new Set([
+  "vibe64_session_renewal_fresh_thread_required",
+  "vibe64_session_renewal_handover_invalid"
 ]);
 const SESSION_RENEWAL_SUCCESSOR_SOURCE_INVALID_CODE =
   "vibe64_session_renewal_successor_source_invalid";
@@ -51,12 +58,6 @@ const SESSION_RENEWAL_SUCCESSOR_REPLACEMENT_LIMIT_CODE =
   "vibe64_session_renewal_successor_replacement_limit_reached";
 const SESSION_RENEWAL_WORKFLOW_LOCK_RETRY_MS = 1_000;
 const SESSION_RENEWAL_COMPLETION_RETRY_MAX_MS = 30_000;
-const SESSION_RENEWAL_AGENT_SETTINGS_METADATA = Object.freeze([
-  "assistant_selection",
-  "agent_settings_model",
-  "agent_settings_provider",
-  "agent_settings_thinking"
-]);
 const SESSION_RENEWAL_SUCCESSOR_PROCESS_EXIT_PROOF_RELEASE_ARTIFACT =
   "renewal/successor-process-exit-proof-release.json";
 const SESSION_RENEWAL_SUCCESSOR_PROCESS_EXIT_PROOF_RELEASE_KIND =
@@ -196,13 +197,12 @@ function sessionHasActiveAgentRun(session = {}) {
     .some((run) => vibe64AgentRunStateIsActive(run?.state));
 }
 
-function renewalAgentSettingsMetadata(session = {}) {
-  const metadata = session?.metadata && typeof session.metadata === "object"
-    ? session.metadata
-    : {};
-  return Object.fromEntries(SESSION_RENEWAL_AGENT_SETTINGS_METADATA
-    .map((name) => [name, normalizeText(metadata[name])])
-    .filter(([, value]) => Boolean(value)));
+function renewalAssistantSelectionMetadata(state = {}) {
+  return {
+    [VIBE64_ASSISTANT_SELECTION_METADATA]: serializeVibe64AssistantSelection(
+      state.successor?.assistantSelection
+    )
+  };
 }
 
 function assertWorkspaceIdle(session = {}, setupRunner = null) {
@@ -389,6 +389,7 @@ function createSessionRenewalController({
   project,
   publishSessionChanged = async () => null,
   resolveRenewalActor = null,
+  resolveSuccessorAssistantSelection = null,
   setTimeoutFn = setTimeout,
   setupRunner,
   terminals,
@@ -396,6 +397,12 @@ function createSessionRenewalController({
 } = {}) {
   if (!project || !terminals || !setupRunner) {
     throw new TypeError("Session renewal requires project, terminal, and setup services.");
+  }
+  if (
+    resolveSuccessorAssistantSelection !== null &&
+    typeof resolveSuccessorAssistantSelection !== "function"
+  ) {
+    throw new TypeError("Session renewal assistant selection resolver must be a function or null.");
   }
   const activeOperations = new Map();
   const activeMutationEntries = new Set();
@@ -799,6 +806,7 @@ function createSessionRenewalController({
       ...(successorSourceInvalid
         ? {
             successor: {
+              assistantSelection: current.successor?.assistantSelection,
               attempt: Math.max(1, Number(current.successor?.attempt) || 1) + 1,
               replacementCeiling: Math.max(
                 2,
@@ -1009,6 +1017,7 @@ function createSessionRenewalController({
       acknowledgedAt: state.successor.acknowledgedAt,
       actorDisplayName: transitionActor.name,
       actorId: transitionActor.id,
+      handoverDeliveredAt: state.successor.handoverDeliveredAt,
       renewalId: state.renewalId,
       sourceSessionId,
       successorSessionId
@@ -1718,7 +1727,8 @@ function createSessionRenewalController({
     }
     try {
       return await advanceConfirmedRenewal(runtime, state, input);
-    } catch (error) {
+    } catch (caughtError) {
+      let error = caughtError;
       if (!workflowAdmissionOpen) {
         throw error;
       }
@@ -1738,6 +1748,42 @@ function createSessionRenewalController({
           return failed;
         }
         return resumeConfirmedRenewal(sessionId, input);
+      }
+      if (
+        current?.stage === SESSION_RENEWAL_STAGE.SUCCESSOR_SEEDING &&
+        error?.details?.handoverPromptAccepted === true
+      ) {
+        try {
+          const successor = await readInternalSession(
+            runtime,
+            current.successor.sessionId
+          );
+          await terminals.closeRenewalSuccessorSessionTerminals(successor, {
+            renewalId: current.renewalId,
+            runtime
+          });
+          await assertSuccessorCanonicalState(runtime, current, {
+            phase: "handover_delivery"
+          });
+          const continued = await mutateSessionRenewalState(
+            runtime,
+            sessionId,
+            (latest) => statePatch(latest, {
+              error: null,
+              stage: SESSION_RENEWAL_STAGE.OLD_ARCHIVING,
+              successor: {
+                ...latest.successor,
+                handoverDeliveredAt: timestamp(),
+                handoverError: renewalFailure(error),
+                threadId: normalizeText(error?.details?.threadId),
+                turnId: normalizeText(error?.details?.turnId)
+              }
+            })
+          );
+          return advanceConfirmedRenewal(runtime, continued, input);
+        } catch (continuationError) {
+          error = continuationError;
+        }
       }
       const failed = await fail(runtime, sessionId, error);
       if (failed?.status === SESSION_RENEWAL_STATUS.RUNNING) {
@@ -1790,7 +1836,11 @@ function createSessionRenewalController({
         error: null,
         stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
         status: SESSION_RENEWAL_STATUS.RUNNING,
-        successor: { attempt, replacementCeiling }
+        successor: {
+          assistantSelection: current.successor?.assistantSelection,
+          attempt,
+          replacementCeiling
+        }
       }));
       return advanceConfirmedRenewal(runtime, state, input);
     }
@@ -1873,13 +1923,12 @@ function createSessionRenewalController({
         throw new TypeError("The session runtime does not support hidden renewal successors.");
       }
       const transitionActor = renewalTransitionActor(state);
-      const predecessor = await readInternalSession(runtime, sessionId);
       assertWorkflowAdmissionOpen();
       const successor = await runtime.createRenewalSession({
         actorDisplayName: transitionActor.name,
         actorId: transitionActor.id,
         confirmedAt: state.approved.updatedAt,
-        metadata: renewalAgentSettingsMetadata(predecessor),
+        metadata: renewalAssistantSelectionMetadata(state),
         renewalId: state.renewalId,
         renewedFrom: sessionId,
         sessionId: nextSessionId,
@@ -2324,6 +2373,18 @@ function createSessionRenewalController({
           );
         }
         const idleSession = await assertPredecessorIdle(runtime, sessionId);
+        if (typeof resolveSuccessorAssistantSelection !== "function") {
+          throw new TypeError(
+            "Session renewal requires an assistant selection resolver before confirmation."
+          );
+        }
+        const successorAssistantSelection = await resolveSuccessorAssistantSelection(
+          input.assistantSelection,
+          {
+            session: idleSession,
+            vibe64User: input.vibe64User || null
+          }
+        );
         let confirmed = null;
         let durablyQuiesced = false;
         await freezePredecessorTerminalAdmission(current);
@@ -2368,6 +2429,7 @@ function createSessionRenewalController({
               stage: SESSION_RENEWAL_STAGE.OLD_QUIESCING,
               status: SESSION_RENEWAL_STATUS.RUNNING,
               successor: {
+                assistantSelection: successorAssistantSelection,
                 attempt: 1,
                 replacementCeiling: 2
               }

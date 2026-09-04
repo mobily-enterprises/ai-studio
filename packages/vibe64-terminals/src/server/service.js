@@ -1074,7 +1074,8 @@ function createService({
     throw error;
   }
 
-  function freezeSessionTerminalAdmissionForRenewal(sessionId = "", options = {}) {
+  async function freezeSessionTerminalAdmissionForRenewal(sessionId = "", options = {}) {
+    await sessionPromptHints.cancelSessionPromptHintsForSession(sessionId);
     const namespaces = renewalTerminalAdmissionNamespaces(sessionId);
     const owner = renewalTerminalAdmissionOwner(options.renewalId);
     const frozen = [];

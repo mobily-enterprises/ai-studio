@@ -168,7 +168,7 @@ test("plain runtime uses Genesis onboarding for the first user turn, then ordina
   });
 });
 
-test("an acknowledged renewal seed keeps the successor's first visible prompt in work mode", async () => {
+test("a delivered renewal handover keeps the successor's first visible prompt in work mode", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = new Vibe64SessionRuntime({
       promptRenderer: renderTestGenesisPrompt,
@@ -177,6 +177,7 @@ test("an acknowledged renewal seed keeps the successor's first visible prompt in
     });
     await Promise.all([
       mkdir(sourcePath(targetRoot, "renewal-seeded"), { recursive: true }),
+      mkdir(sourcePath(targetRoot, "renewal-delivered"), { recursive: true }),
       mkdir(sourcePath(targetRoot, "renewal-partial"), { recursive: true })
     ]);
     const renewalMetadata = {
@@ -189,6 +190,16 @@ test("an acknowledged renewal seed keeps the successor's first visible prompt in
       renewed_from: "renewal-source",
       renewal_id: "renewal-one"
     };
+    await runtime.store.createSession({
+      metadata: {
+        ...sourceMetadata(targetRoot, "renewal-delivered"),
+        renewal_handover_delivered_at: "2026-08-24T01:03:00.000Z",
+        renewed_from: "renewal-source",
+        renewal_id: "renewal-delivered"
+      },
+      runtimeKind: "genesis",
+      sessionId: "renewal-delivered"
+    });
     await runtime.store.createSession({
       metadata: {
         ...sourceMetadata(targetRoot, "renewal-seeded"),
@@ -215,8 +226,13 @@ test("an acknowledged renewal seed keeps the successor's first visible prompt in
       request: "Continue from the approved handover.",
       task: "work"
     });
+    const deliveredPrompt = await runtime.renderPrompt("renewal-delivered", {
+      request: "Continue after the provider is available.",
+      task: "work"
+    });
 
     assert.equal(seededPrompt.context.task, "work");
+    assert.equal(deliveredPrompt.context.task, "work");
     assert.equal(partialPrompt.context.task, "start");
   });
 });

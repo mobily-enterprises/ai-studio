@@ -64,6 +64,15 @@ const renewalDraftFields = {
   }
 };
 
+const renewalConfirmationFields = {
+  ...renewalDraftGuardFields,
+  assistantSelection: {
+    type: "object",
+    additionalProperties: true,
+    required: false
+  }
+};
+
 function patchSchema(fields) {
   return deepFreeze({
     schema: createSchema(fields),
@@ -448,6 +457,18 @@ const sessionRenewalDraftGuardActionInputValidator = requiredInputSchema({
   }
 });
 
+const sessionRenewalConfirmationInputValidator = requiredInputSchema(
+  renewalConfirmationFields
+);
+const sessionRenewalConfirmationActionInputValidator = requiredInputSchema({
+  ...renewalConfirmationFields,
+  sessionId: {
+    type: "string",
+    noTrim: false,
+    required: true
+  }
+});
+
 const sessionRenewalRetryInputValidator = requiredInputSchema(renewalOperationFields);
 const sessionRenewalRetryActionInputValidator = requiredInputSchema({
   ...renewalOperationFields,
@@ -565,6 +586,8 @@ export {
   sessionCreateInputValidator,
   sessionIdInputValidator,
   sessionInspectInputValidator,
+  sessionRenewalConfirmationActionInputValidator,
+  sessionRenewalConfirmationInputValidator,
   sessionRenewalDraftGuardActionInputValidator,
   sessionRenewalDraftGuardInputValidator,
   sessionRenewalDraftRequestActionInputValidator,

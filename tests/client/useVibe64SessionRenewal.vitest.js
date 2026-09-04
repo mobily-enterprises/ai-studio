@@ -55,6 +55,14 @@ const DRAFT_HASH = "a".repeat(64);
 const SAVED_HASH = "b".repeat(64);
 const VIEWER_SCOPE = `viewer-v1-${"1".repeat(32)}`;
 const SECOND_VIEWER_SCOPE = `viewer-v1-${"2".repeat(32)}`;
+const ASSISTANT_SELECTION = Object.freeze({
+  agentId: "build",
+  catalogRevision: `sha256:${"c".repeat(64)}`,
+  engineId: "opencode",
+  modelId: "glm-4.7-flash",
+  modelProviderId: "zai",
+  variantId: ""
+});
 
 function memoryStorage() {
   const values = new Map();
@@ -94,6 +102,7 @@ function mountRenewal(overrides = {}) {
   const refreshSessionData = overrides.refreshSessionData || vi.fn(async () => null);
   const selectSession = overrides.selectSession || vi.fn();
   const selectedSession = overrides.selectedSession || ref({
+    assistantSelection: ASSISTANT_SELECTION,
     renewalAdvisory: {
       reason: "Consider renewal.",
       recommended: true,
@@ -559,7 +568,7 @@ describe("useVibe64SessionRenewal", () => {
     const { controller, scope } = mountRenewal();
     controller.draftText.value = "Reviewed handover";
 
-    await controller.confirm();
+    await controller.confirm(ASSISTANT_SELECTION);
 
     expect(renewalHarness.patchRun).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
@@ -570,6 +579,7 @@ describe("useVibe64SessionRenewal", () => {
     }));
     expect(renewalHarness.postRun).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
+        assistantSelection: ASSISTANT_SELECTION,
         expectedHash: SAVED_HASH,
         expectedRevision: 2
       }),

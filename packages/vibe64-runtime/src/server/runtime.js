@@ -156,11 +156,11 @@ function sessionSourceRecoveryWasSaved(session = {}) {
   return normalizeText(session?.metadata?.source_recovery_saved).toLowerCase() === "yes";
 }
 
-function sessionHasAcknowledgedRenewalSeed(session = {}) {
+function sessionHasRenewalHandover(session = {}) {
   const metadata = session?.metadata && typeof session.metadata === "object"
     ? session.metadata
     : {};
-  return normalizeText(metadata.agent_briefing_delivered).toLowerCase() === "yes" &&
+  const acknowledged = normalizeText(metadata.agent_briefing_delivered).toLowerCase() === "yes" &&
     Boolean(normalizeText(metadata.agent_renewal_seed_acknowledged_at)) &&
     SESSION_RENEWAL_HANDOVER_HASH_PATTERN.test(
       normalizeText(metadata.agent_renewal_seed_handover_hash)
@@ -170,6 +170,10 @@ function sessionHasAcknowledgedRenewalSeed(session = {}) {
     Boolean(normalizeText(metadata.agent_renewal_seed_turn_id)) &&
     Boolean(normalizeText(metadata.renewal_id)) &&
     Boolean(normalizeText(metadata.renewed_from));
+  const delivered = Boolean(normalizeText(metadata.renewal_handover_delivered_at)) &&
+    Boolean(normalizeText(metadata.renewal_id)) &&
+    Boolean(normalizeText(metadata.renewed_from));
+  return acknowledged || delivered;
 }
 
 async function sessionIsListable(session = {}) {
@@ -545,7 +549,7 @@ class Vibe64SessionRuntime {
     if (genesisTask === "work") {
       const conversation = await this.store.readConversationLog(sessionId);
       const hasUserMessage = conversation.some((turn) => Boolean(turn?.user));
-      if (!hasUserMessage && !sessionHasAcknowledgedRenewalSeed(session)) {
+      if (!hasUserMessage && !sessionHasRenewalHandover(session)) {
         genesisTask = "start";
       }
     }

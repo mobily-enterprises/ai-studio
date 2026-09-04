@@ -106,8 +106,8 @@
           <v-sheet class="studio-session-renewal__assurance text-body-medium" color="surface-variant" rounded="lg">
             <v-icon color="primary" :icon="mdiArchiveCheckOutline" size="22" />
             <span>
-              <strong class="font-weight-medium">Your old session is kept.</strong>
-              It is archived only after the fresh assistant confirms that it received the handover.
+              <strong class="font-weight-medium">Your old session is kept until the handover is delivered.</strong>
+              Once it reaches the fresh assistant conversation, renewal completes even if the model cannot answer.
             </span>
           </v-sheet>
           <p class="studio-session-renewal__supporting text-body-small">
@@ -244,8 +244,15 @@
           >
             Unsaved edits are kept in this browser tab if you close this window or switch sessions.
           </p>
+          <Vibe64RenewalAssistantSelector
+            :active="renewal.open && renewal.phase === 'review'"
+            :disabled="dialogBusy"
+            :initial-selection="renewal.assistantSelection"
+            @update:ready="assistantSelectionReady = $event"
+            @update:selection="successorAssistantSelection = $event"
+          />
           <p class="studio-session-renewal__supporting text-body-small">
-            Renewing will stop this session’s tools, create and prepare a fresh session, verify the handover, then archive this one.
+            Renewing will stop this session’s tools, create and prepare a fresh session, deliver the handover, then archive this one.
           </p>
         </template>
 
@@ -372,12 +379,12 @@
             :aria-busy="renewal.pendingAction === 'confirm' ? 'true' : undefined"
             class="studio-session-renewal__action studio-session-renewal__action--primary"
             color="primary"
-            :disabled="!renewal.canConfirm"
+            :disabled="!canConfirmRenewal"
             height="48"
             :prepend-icon="mdiAutorenew"
             type="button"
             variant="flat"
-            @click="renewal.confirm"
+            @click="confirmRenewal"
           >
             {{ renewal.pendingAction === "confirm" ? renewal.actionLabel : "Renew session" }}
           </v-btn>
@@ -431,7 +438,7 @@
 </template>
 
 <script setup>
-import { computed, useId } from "vue";
+import { computed, ref, useId } from "vue";
 import { useDisplay } from "vuetify";
 import {
   mdiArchiveCheckOutline,
@@ -446,6 +453,7 @@ import {
   mdiRefresh
 } from "@mdi/js";
 import StudioErrorNotice from "@/components/studio/StudioErrorNotice.vue";
+import Vibe64RenewalAssistantSelector from "@/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue";
 import {
   sessionRenewalFailureSupportingMessage
 } from "@/lib/vibe64SessionRenewalViewModel.js";
@@ -459,6 +467,8 @@ const props = defineProps({
 
 const { smAndDown } = useDisplay();
 const renewalTitleId = `vibe64-session-renewal-title-${useId()}`;
+const assistantSelectionReady = ref(false);
+const successorAssistantSelection = ref(null);
 const dialogBusy = computed(() => Boolean(
   props.renewal.successorSelectionPending || (
     props.renewal.busy && props.renewal.phase !== "progress"
@@ -474,6 +484,11 @@ const renewalProgress = computed(() => {
   ), 0);
   return Math.round((completed / steps.length) * 100);
 });
+const canConfirmRenewal = computed(() => Boolean(
+  props.renewal.canConfirm &&
+  assistantSelectionReady.value &&
+  successorAssistantSelection.value
+));
 const manualDraft = computed(() => props.renewal.renewal?.draft?.origin === "manual");
 const failedSupportingMessage = computed(() => (
   sessionRenewalFailureSupportingMessage(props.renewal.renewal)
@@ -505,6 +520,12 @@ function stepStateLabel(state = "") {
 function closeFromModel(value) {
   if (!value && !dialogBusy.value) {
     props.renewal.close?.();
+  }
+}
+
+function confirmRenewal() {
+  if (canConfirmRenewal.value) {
+    props.renewal.confirm?.(successorAssistantSelection.value);
   }
 }
 </script>

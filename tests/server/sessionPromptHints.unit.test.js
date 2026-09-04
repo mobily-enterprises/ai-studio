@@ -1660,7 +1660,7 @@ test("session-wide Send cancellation covers preparing requests only in its canon
   assert.equal(fixture.calls.resolve.length, 1);
 });
 
-test("internal session cancellation gives a real Send priority over optional hint generation", async () => {
+test("internal session cancellation settles optional hint generation", async () => {
   const started = deferred();
   const interrupted = deferred();
   const fixture = createFixture({
@@ -1696,6 +1696,7 @@ test("internal session cancellation gives a real Send priority over optional hin
   assert.equal(fixture.calls.interrupt.length, 1);
   interrupted.resolve();
   await cancellation;
+  assert.equal(fixture.calls.delete.length, 1);
 
   const result = await generation;
   assert.equal(result.status, "cancelled");

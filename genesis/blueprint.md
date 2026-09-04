@@ -41,6 +41,19 @@ instead of silently selecting another listed option. Vibe64 also respects each
 AI's declared response capacity rather than assuming every model can produce
 the same size answer.
 
+Renewing a session keeps its current AI by default, while letting the person
+choose any other connected assistant application, provider, model, and thinking
+option for the fresh session. Vibe64 validates that choice when renewal starts
+and records it with the handover, so recovery and retries create the successor
+with the same choice. If the old model cannot prepare the draft, the person can
+complete the canonical handover template instead. Once the approved handover is
+accepted as the first turn in that fresh assistant conversation, renewal
+completes even if the model cannot answer it.
+The new session and its handover remain available for the person to repair an
+expired login, quota, or provider problem and continue. Renewal stops only when
+Vibe64 cannot establish the fresh conversation, its handover, or its saved
+source safely.
+
 Every project has exactly one source authority. For a GitHub-connected project,
 the configured GitHub branch is authoritative. For a hosted Vibe64-only
 project, Vibe64's own repository is authoritative. For a standalone local

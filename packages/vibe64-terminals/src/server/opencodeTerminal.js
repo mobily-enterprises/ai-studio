@@ -1687,7 +1687,8 @@ function createOpenCodeTerminalController({
       const needsOpeningPrompt = Boolean(
         genesisTask || (
           !conversation?.pagination?.totalTurnCount &&
-          text(context.session?.metadata?.agent_briefing_delivered) !== "yes"
+          text(context.session?.metadata?.agent_briefing_delivered) !== "yes" &&
+          !text(context.session?.metadata?.renewal_handover_delivered_at)
         )
       );
       const rendered = needsOpeningPrompt
@@ -1970,22 +1971,54 @@ function createOpenCodeTerminalController({
       });
     }
     if (!result?.complete) {
-      const completion = await waitForOpenCodeMessages(
-        target.server.client,
-        target.upstreamSessionId,
-        inputMessageId,
-        {
-        signal: AbortSignal.timeout(OPENCODE_RENEWAL_TIMEOUT_MS)
+      try {
+        const completion = await waitForOpenCodeMessages(
+          target.server.client,
+          target.upstreamSessionId,
+          inputMessageId,
+          {
+            signal: AbortSignal.timeout(OPENCODE_RENEWAL_TIMEOUT_MS)
+          }
+        );
+        messages = completion.messages;
+        result = completion.result;
+      } catch (error) {
+        let handoverPromptAccepted = Boolean(result);
+        if (!handoverPromptAccepted && admitted) {
+          try {
+            handoverPromptAccepted = Boolean(openCodeMessageResultForInput(
+              await target.server.client.messages(target.upstreamSessionId, {
+                limit: 100,
+                order: "desc"
+              }),
+              inputMessageId
+            ));
+          } catch {
+            // The exact provider history remains the admission proof. If it
+            // cannot be read, renewal must leave the predecessor available.
+          }
         }
-      );
-      messages = completion.messages;
-      result = completion.result;
+        throw openCodeError(
+          "vibe64_session_renewal_turn_failed",
+          text(error?.message) || "OpenCode did not finish the session renewal turn.",
+          {
+            clientMessageId,
+            handoverPromptAccepted,
+            threadId: target.upstreamSessionId
+          },
+          502
+        );
+      }
     }
     if (!result?.complete || (!result.text && !result.error)) {
       throw openCodeError(
         "vibe64_session_renewal_turn_unreadable",
         "The exact OpenCode renewal turn did not produce a readable result.",
-        { clientMessageId, threadId: target.upstreamSessionId },
+        {
+          clientMessageId,
+          handoverPromptAccepted: true,
+          threadId: target.upstreamSessionId
+        },
         502
       );
     }
@@ -1993,7 +2026,12 @@ function createOpenCodeTerminalController({
       throw openCodeError(
         "vibe64_session_renewal_turn_failed",
         result.error,
-        { clientMessageId, threadId: target.upstreamSessionId, turnId: result.turnId },
+        {
+          clientMessageId,
+          handoverPromptAccepted: true,
+          threadId: target.upstreamSessionId,
+          turnId: result.turnId
+        },
         502
       );
     }
@@ -2087,10 +2125,22 @@ function createOpenCodeTerminalController({
       clientMessageId,
       prompt: sessionRenewalSeedPrompt(approved)
     });
-    const acknowledgement = parseSessionRenewalAcknowledgement(result.text, {
-      handoverHash: approved.handoverHash,
-      source: approved.source
-    });
+    let acknowledgement = null;
+    try {
+      acknowledgement = parseSessionRenewalAcknowledgement(result.text, {
+        handoverHash: approved.handoverHash,
+        source: approved.source
+      });
+    } catch (error) {
+      error.details = {
+        ...(record(error.details)),
+        clientMessageId,
+        handoverPromptAccepted: true,
+        threadId: result.threadId,
+        turnId: result.turnId
+      };
+      throw error;
+    }
     const acknowledgedAt = new Date().toISOString();
     await writeSessionMetadata(context, {
       agent_briefing_delivered: "yes",

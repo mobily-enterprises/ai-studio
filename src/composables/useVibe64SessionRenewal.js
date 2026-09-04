@@ -636,7 +636,7 @@ function useVibe64SessionRenewal({
     }
   }
 
-  async function confirm() {
+  async function confirm(successorAssistantSelection = null) {
     if (!canConfirm.value) {
       return null;
     }
@@ -648,7 +648,12 @@ function useVibe64SessionRenewal({
     }
     try {
       return await runAction("confirm", "Renewing…", () => postCommand.run({
-        body: draftGuard(),
+        body: {
+          ...draftGuard(),
+          ...(successorAssistantSelection
+            ? { assistantSelection: successorAssistantSelection }
+            : {})
+        },
         path: `${renewalPath.value}/confirm`
       }));
     } catch (error) {
@@ -917,6 +922,7 @@ function useVibe64SessionRenewal({
   return {
     actionPresentation,
     actionLabel,
+    assistantSelection: computed(() => session.value?.assistantSelection || null),
     acceptLatestDraft,
     advisory,
     advisoryPresentation,

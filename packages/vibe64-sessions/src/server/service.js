@@ -351,6 +351,7 @@ function createService({
     project,
     publishSessionChanged,
     resolveRenewalActor,
+    resolveSuccessorAssistantSelection,
     setupRunner,
     terminals
   });
@@ -372,6 +373,33 @@ function createService({
       throw new TypeError("This Vibe64 host cannot resolve assistant selections.");
     }
     return legacyCodexAssistantSelection();
+  }
+
+  async function resolveSuccessorAssistantSelection(input = {}, {
+    session = null,
+    vibe64User = null
+  } = {}) {
+    const requested = record(input);
+    const explicitlySelected = Object.keys(requested).length > 0;
+    const current = explicitlySelected
+      ? requested
+      : vibe64AssistantSelectionFromMetadata(session?.metadata);
+    const selection = await resolveAssistantSelection(
+      explicitlySelected
+        ? current
+        : {
+            agentId: current.agentId,
+            engineId: current.engineId,
+            modelId: current.modelId,
+            modelProviderId: current.modelProviderId,
+            variantId: current.variantId
+          },
+      vibe64User
+    );
+    await terminals.requireAssistantSelectionAccess(selection, {
+      vibe64User
+    });
+    return selection;
   }
 
   async function sessionsOccupyingPolicySlots(runtime, openSessions = null) {

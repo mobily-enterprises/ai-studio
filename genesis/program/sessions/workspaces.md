@@ -6,9 +6,11 @@ the canonical project and from other sessions.
 ## Sources
 
 - `packages/vibe64-sessions/src/server/service.js`
+- `packages/vibe64-sessions/src/server/sessionRenewal.js`
 - `packages/vibe64-runtime/src/server/runtime.js`
 - `packages/vibe64-runtime/src/server/sessionStore.js`
 - `packages/vibe64-terminals/src/server/sessionSource.js`
+- `src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue`
 - `src/composables/useArchivedVibe64Sessions.js`
 - `src/composables/useVibe64SessionRenewal.js`
 - `src/composables/useVibe64SessionRepositoryStatusRegistry.js`
@@ -22,6 +24,21 @@ across UI refreshes. Archiving stops active work, removes its active workspace,
 and preserves the read-only history needed to recover its conversation and
 understand what happened. Session History reads lightweight archive indexes and
 shows the most recently archived session first.
+
+Renewal creates a fresh native assistant conversation. Its review step defaults
+to the current session's AI but can select another connected engine, provider,
+model, or thinking option. Confirmation resolves the live choice before the old
+session is stopped, then stores that canonical selection in the durable renewal
+record. Successor creation and every retry read that stored value rather than
+copying provider-specific metadata from the predecessor. If the predecessor's
+model fails while preparing the draft, renewal presents the canonical editable
+handover template so the person can still leave that provider. The fresh
+provider history is the handover boundary: after it accepts the exact handover
+prompt as its first turn, Vibe64 archives the predecessor and exposes the
+successor even when authentication, quota, transport, or model execution
+prevents an assistant reply. A failure before prompt admission, a reused
+conversation, a changed source, or an unusable workspace still leaves the
+predecessor available.
 
 Repository status uses realtime changes as its primary signal and a bounded
 freshness check as fallback. The fallback does no work while the page is hidden

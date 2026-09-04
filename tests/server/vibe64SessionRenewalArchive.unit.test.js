@@ -826,6 +826,7 @@ test("renewal archive publication resumes after every closing-tree write boundar
     "renewal_actor_id",
     "renewal_archived_at",
     "renewal_confirmed_at",
+    "renewal_handover_delivered_at",
     "renewal_id",
     "renewal_started_at",
     "renewal_successor_created_at",

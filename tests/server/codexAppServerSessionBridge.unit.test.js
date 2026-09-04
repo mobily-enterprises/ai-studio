@@ -1912,6 +1912,56 @@ test("session renewal accepts the exact pre-message thread/read state after veri
   assert.equal(result.threadSnapshot.raw.cwd, "/repo/worktree");
 });
 
+test("session renewal verifies thread status when Codex cannot list turns before the first message", async () => {
+  const runtime = fakeRuntime();
+  const calls = [];
+  const provider = {
+    ...renewalThreadInventory(),
+    async ensureRuntime() {
+      return appServerRuntime();
+    },
+    async readThread(threadId) {
+      calls.push(["readThread", threadId]);
+      const error = new Error("list_turns is not supported yet");
+      error.code = -32601;
+      error.method = "thread/read";
+      throw error;
+    },
+    async readThreadStatus(threadId) {
+      calls.push(["readThreadStatus", threadId]);
+      return {
+        id: threadId,
+        raw: { cwd: "/repo/worktree", id: threadId }
+      };
+    },
+    async resumeThread(threadId) {
+      calls.push(["resumeThread", threadId]);
+      return { id: threadId };
+    },
+    async startThread() {
+      calls.push(["startThread"]);
+      return { id: "new-successor-thread" };
+    }
+  };
+
+  const result = await startFreshCodexAppServerThreadForSession({
+    forbiddenThreadId: "old-main-thread",
+    operationId: "renewal:turn-list-unavailable",
+    provider,
+    runtime,
+    session: { metadata: {}, sessionId: "session-successor" },
+    workdir: "/repo/worktree"
+  });
+
+  assert.equal(result.threadId, "new-successor-thread");
+  assert.deepEqual(calls, [
+    ["startThread"],
+    ["readThread", "new-successor-thread"],
+    ["readThreadStatus", "new-successor-thread"]
+  ]);
+  assert.equal(result.threadSnapshot.raw.cwd, "/repo/worktree");
+});
+
 test("session renewal rejects every other invalid pre-message thread/read response", async () => {
   let statusReads = 0;
   const provider = {

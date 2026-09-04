@@ -65,6 +65,7 @@ const SESSION_ARCHIVE_INDEX_METADATA_NAMES = Object.freeze([
   "renewal_archived_at",
   "renewal_confirmed_at",
   "renewal_finalized_at",
+  "renewal_handover_delivered_at",
   "renewal_id",
   "renewal_quiesced_at",
   "renewal_quiesced_id",
@@ -2906,6 +2907,9 @@ function createVibe64SessionStore({
           renewal_actor_id: normalizeText(successorMetadata.renewal_actor_id),
           renewal_archived_at: archivedAt,
           renewal_confirmed_at: normalizeText(successorMetadata.renewal_confirmed_at),
+          renewal_handover_delivered_at: normalizeText(
+            successorMetadata.renewal_handover_delivered_at
+          ),
           renewal_id: normalizedRenewalId,
           renewal_started_at: normalizeText(successorMetadata.renewal_started_at),
           renewal_successor_created_at: normalizeText(successorMetadata.renewal_successor_created_at),
@@ -3348,6 +3352,9 @@ function createVibe64SessionStore({
               renewal_actor_id: normalizeText(preparedSession.metadata.renewal_actor_id),
               renewal_archived_at: normalizeText(preparedSession.metadata.renewal_archived_at),
               renewal_confirmed_at: normalizeText(preparedSession.metadata.renewal_confirmed_at),
+              renewal_handover_delivered_at: normalizeText(
+                preparedSession.metadata.renewal_handover_delivered_at
+              ),
               renewal_id: normalizedRenewalId,
               renewal_started_at: normalizeText(preparedSession.metadata.renewal_started_at),
               renewal_successor_created_at: normalizeText(preparedSession.metadata.renewal_successor_created_at),
@@ -4155,6 +4162,7 @@ function createVibe64SessionStore({
     acknowledgedAt = "",
     actorDisplayName = "",
     actorId = "",
+    handoverDeliveredAt = "",
     renewedAt = "",
     renewalId = "",
     sourceSessionId = "",
@@ -4169,13 +4177,20 @@ function createVibe64SessionStore({
         "vibe64_session_renewal_same_session"
       );
     }
-    if (!normalizeText(acknowledgedAt)) {
+    const acknowledgedTimestamp = normalizeText(acknowledgedAt);
+    const deliveredTimestamp = normalizeText(handoverDeliveredAt);
+    if (!acknowledgedTimestamp && !deliveredTimestamp) {
       throw vibe64Error(
-        "A renewed session cannot become active before the fresh agent thread acknowledges its handover.",
-        "vibe64_session_renewal_acknowledgement_required"
+        "A renewed session cannot become active before its handover reaches the fresh agent thread.",
+        "vibe64_session_renewal_handover_required"
       );
     }
-    const normalizedAcknowledgedAt = toDate(acknowledgedAt).toISOString();
+    const normalizedAcknowledgedAt = acknowledgedTimestamp
+      ? toDate(acknowledgedTimestamp).toISOString()
+      : "";
+    const normalizedHandoverDeliveredAt = toDate(
+      deliveredTimestamp || normalizedAcknowledgedAt
+    ).toISOString();
     const normalizedRenewedAt = renewedAt
       ? toDate(renewedAt).toISOString()
       : now().toISOString();
@@ -4228,12 +4243,19 @@ function createVibe64SessionStore({
           }
 
           const sharedMetadata = {
-            renewal_acknowledged_at: normalizeText(
-              successorMetadata.renewal_acknowledged_at
-            ) || normalizedAcknowledgedAt,
+            ...(normalizedAcknowledgedAt
+              ? {
+                  renewal_acknowledged_at: normalizeText(
+                    successorMetadata.renewal_acknowledged_at
+                  ) || normalizedAcknowledgedAt
+                }
+              : {}),
             renewal_actor_display_name: transitionActorDisplayName,
             renewal_actor_id: transitionActorId,
             renewal_confirmed_at: normalizeText(successorMetadata.renewal_confirmed_at),
+            renewal_handover_delivered_at: normalizeText(
+              successorMetadata.renewal_handover_delivered_at
+            ) || normalizedHandoverDeliveredAt,
             renewal_id: normalizedRenewalId,
             renewal_started_at: normalizeText(successorMetadata.renewal_started_at),
             renewal_successor_created_at: normalizeText(successorMetadata.renewal_successor_created_at),

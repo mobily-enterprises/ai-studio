@@ -43,6 +43,7 @@ import {
   assistantSelectionUpdateInputValidator,
   messageSuggestionDecisionInputValidator,
   sessionRenewalDraftGuardInputValidator,
+  sessionRenewalConfirmationInputValidator,
   sessionRenewalDraftRequestInputValidator,
   sessionRenewalDraftUpdateInputValidator,
   sessionRenewalRetryInputValidator,
@@ -217,7 +218,7 @@ function registerRoutes(http, {
 
   routes.actionRoute("POST", "/sessions/:sessionId/renewal/confirm", {
     actionId: ACTION_CONFIRM_SESSION_RENEWAL,
-    body: sessionRenewalDraftGuardInputValidator,
+    body: sessionRenewalConfirmationInputValidator,
     bodyLimit: 32 * 1024,
     buildInput: (request) => ({
       ...withoutVibe64User(routes.requestBody(request)),
