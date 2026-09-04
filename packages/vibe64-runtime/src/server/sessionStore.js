@@ -1388,8 +1388,7 @@ function createVibe64SessionStore({
   }
 
   function sessionArchiveIndexFromSummary(summary = {}, {
-    sessionId = "",
-    status = ""
+    sessionId = ""
   } = {}) {
     const manifest = isPlainObject(summary.manifest) ? summary.manifest : {};
     const createdAt = normalizeText(summary.createdAt || manifest.createdAt);
@@ -1407,7 +1406,7 @@ function createVibe64SessionStore({
       sessionId: assertValidVibe64SessionId(sessionId || summary.sessionId),
       sessionName: normalizeText(summary.sessionName),
       sessionRoot: "",
-      status: assertVibe64SessionStatus(status || summary.status),
+      status: VIBE64_SESSION_STATUS.ARCHIVED,
       updatedAt
     };
   }
@@ -1437,11 +1436,9 @@ function createVibe64SessionStore({
     archivedAt = "",
     metadataPath = "",
     sessionId = "",
-    status = "",
     summary = {}
   } = {}) {
     const normalizedSessionId = assertValidVibe64SessionId(sessionId);
-    const normalizedStatus = assertVibe64SessionStatus(status);
     const archiveFileName = path.basename(archivePath);
     const metadataFileName = path.basename(metadataPath);
     return {
@@ -1451,8 +1448,7 @@ function createVibe64SessionStore({
       },
       archivedAt: normalizeText(archivedAt),
       index: sessionArchiveIndexFromSummary(summary, {
-        sessionId: normalizedSessionId,
-        status: normalizedStatus
+        sessionId: normalizedSessionId
       }),
       kind: SESSION_ARCHIVE_KIND,
       metadata: {
@@ -1461,7 +1457,7 @@ function createVibe64SessionStore({
       },
       schemaVersion: VIBE64_SESSION_ARCHIVE_SCHEMA_VERSION,
       sessionId: normalizedSessionId,
-      status: normalizedStatus
+      status: VIBE64_SESSION_STATUS.ARCHIVED
     };
   }
 
@@ -2930,7 +2926,6 @@ function createVibe64SessionStore({
         archivedAt,
         metadataPath: finalMetadataPath,
         sessionId: normalizedSourceSessionId,
-        status: VIBE64_SESSION_STATUS.ARCHIVED,
         summary
       });
       const tarResult = await runCommand("tar", [
@@ -3537,7 +3532,6 @@ function createVibe64SessionStore({
       archivedAt,
       metadataPath: finalMetadataPath,
       sessionId: sessionPaths.sessionId,
-      status,
       summary
     });
     let archiveFinalized = false;
