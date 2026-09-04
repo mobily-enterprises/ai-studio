@@ -20,6 +20,7 @@ import {
   inspectSessionChangeDiff as inspectManagedSessionChangeDiff,
   inspectSessionChanges as inspectManagedSessionChanges,
   inspectSessionWork as inspectManagedSessionWork,
+  prepareSessionWorkSaveMessage as prepareManagedSessionWorkSaveMessage,
   recoverSessionWorkSave as recoverManagedSessionWorkSave,
   recoverSessionWorkUpdate as recoverManagedSessionWorkUpdate,
   saveSessionWork as saveManagedSessionWork,
@@ -1608,17 +1609,21 @@ function createService({
           "session-save"
         );
         const project = await projectService.readCurrentProject();
-        await input.onProgress?.({
-          kind: "message",
-          message: "Writing a concise name for this work.",
-          stage: "message-writing"
-        });
-        const changes = await inspectManagedSessionChanges({
+        const saveMessageInput = await prepareManagedSessionWorkSaveMessage({
           commandOptions: execution.commandOptions,
+          derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
           limit: 40,
+          operationId: input.operationId,
           project,
           runCommand: execution.runCommand,
           session
+        });
+        await input.onProgress?.({
+          checkpointCommit: saveMessageInput.checkpoint.checkpointCommit,
+          checkpointTree: saveMessageInput.checkpoint.checkpointTree,
+          kind: "message",
+          message: "Writing a concise name for this work.",
+          stage: "message-writing"
         });
         const agentContext = {
           runtime,
@@ -1628,7 +1633,7 @@ function createService({
         const providerDescription = await sessionAgent.describeProvider(agentContext);
         const commitTitle = await generateSessionSaveCommitMessage({
           agentContext,
-          changes,
+          changes: saveMessageInput.changes,
           deleteThread: (threadInput, options) => sessionAgent.deleteDetachedChatThread(
             normalizedSessionId,
             threadInput,
@@ -1648,27 +1653,29 @@ function createService({
           stage: "message-ready"
         });
         const saved = await saveManagedSessionWork({
+          checkpoint: saveMessageInput.checkpoint,
           commandOptions: execution.commandOptions,
           derivedArtifactPaths: GENESIS_DERIVED_ARTIFACT_PATHS,
-          expectedMessageTree: changes.worktreeTree,
           identity: execution.identity,
           message: commitTitle.subject,
+          onCacheMaintenance(cacheMaintenance = {}) {
+            if (cacheMaintenance.retryable !== true) {
+              return;
+            }
+            logOperationalEvent(logger, "warn", {
+              code: cacheMaintenance.code,
+              component: "vibe64.session_save",
+              event: "vibe64.session_save.cache_maintenance_failed",
+              operationId: input.operationId,
+              reason: cacheMaintenance.reason,
+              sessionId: normalizedSessionId
+            }, cacheMaintenance.message || "Vibe64 Save cache maintenance failed.");
+          },
           onProgress: input.onProgress,
           operationId: input.operationId,
           project,
           runCommand: execution.runCommand,
           runProjectSourceExclusive: projectService.runProjectSourceExclusive.bind(projectService),
-          listSiblingSessions: async () => {
-            const sessions = typeof runtime.listSessions === "function"
-              ? await runtime.listSessions({ statusGroup: "open" })
-              : await runtime.listSessionSummaries({ statusGroup: "open" });
-            return sessions.filter((sibling) => {
-              const siblingId = sessionRecordId(sibling);
-              return siblingId &&
-                siblingId !== normalizedSessionId &&
-                terminalWorktreePath(sibling);
-            });
-          },
           session
         });
         return {

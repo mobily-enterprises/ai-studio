@@ -30,6 +30,9 @@ import {
 import {
   databaseEnv
 } from "../../packages/vibe64-execution/src/server/env/databaseEnv.js";
+import {
+  githubGitAuthScript
+} from "../../packages/vibe64-execution/src/server/env/githubGitAuthShell.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1279,6 +1282,29 @@ test("execution gateway owns token-backed GitHub git transport without gh helper
   assert.ok(entries.some((entry) => entry.key === "credential.https://github.com.helper" && entry.value.includes("VIBE64_GIT_AUTH_TOKEN")));
   assert.equal(entries.some((entry) => String(entry.value || "").includes("gh auth git-credential")), false);
   assert.ok(entries.some((entry) => entry.key === "safe.directory" && entry.value === "/var/lib/vibe64/sas/projects/compas-next"));
+});
+
+test("GitHub auth shell preserves an injected token without requiring askpass", async () => {
+  const result = await runVibe64Command({
+    args: [
+      "-lc",
+      [
+        "set -euo pipefail",
+        githubGitAuthScript(),
+        "gh() { return 1; }",
+        "vibe64_enable_github_git_auth_for_url https://github.com/vibe64/example.git",
+        "test \"$VIBE64_GIT_AUTH_TOKEN\" = github-token",
+        "test -z \"${GIT_ASKPASS:-}\""
+      ].join("\n")
+    ],
+    command: "bash",
+    gitAuthToken: "github-token",
+    gitTransport: "github-token",
+    purpose: "github",
+    runtimes: ["git"]
+  });
+
+  assert.equal(result.ok, true, result.output);
 });
 
 test("execution gateway rejects token-backed GitHub git transport without a token", async () => {

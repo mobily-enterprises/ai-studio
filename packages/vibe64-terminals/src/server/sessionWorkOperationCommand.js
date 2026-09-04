@@ -5,7 +5,9 @@ import {
   inspectSessionChangeDiffDirect,
   inspectSessionChangesDirect,
   inspectSessionWorkDirect,
-  runSessionWorkSaveStageDirect
+  prepareSessionWorkSaveMessageDirect,
+  refreshSessionWorkSaveCacheDirect,
+  saveSessionWorkDirect
 } from "./sessionWorkSave.js";
 
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -13,10 +15,13 @@ const OPERATION_IMPLEMENTATIONS = {
   "change-diff": inspectSessionChangeDiffDirect,
   "changes": inspectSessionChangesDirect,
   "check-updates": checkSessionUpdatesDirect,
-  "save-stage": (input) => runSessionWorkSaveStageDirect({
+  "save": (input) => saveSessionWorkDirect({
     ...input,
+    deferCacheMaintenance: true,
     refreshDerivedArtifacts: refreshGenesisCities
   }),
+  "save-maintenance": refreshSessionWorkSaveCacheDirect,
+  "save-message": prepareSessionWorkSaveMessageDirect,
   "work": inspectSessionWorkDirect
 };
 

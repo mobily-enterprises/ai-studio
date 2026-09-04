@@ -12,6 +12,7 @@ import {
   inspectSessionChangeDiff,
   inspectSessionChanges,
   inspectSessionWork,
+  prepareSessionWorkSaveMessage,
   recoverSessionWorkUpdate,
   recoverSessionWorkSave,
   saveSessionWork as saveManagedSessionWorkImplementation,
@@ -161,7 +162,7 @@ function managedGitProject(root, canonicalRepositoryPath) {
   };
 }
 
-test("Save admits four durable managed stages instead of one job per Git command", async () => {
+test("Save uses two foreground managed jobs and defers disposable cache maintenance", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-stages-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -171,14 +172,31 @@ test("Save admits four durable managed stages instead of one job per Git command
     const progressStages = [];
     await writeFile(path.join(session.sourcePath, "saved.txt"), "saved\n", "utf8");
 
+    const saveMessageInput = await prepareSessionWorkSaveMessage({
+      derivedArtifactPaths: [],
+      limit: 40,
+      operationId: "save-managed-stages",
+      project,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
+      session
+    });
+    let finishMaintenance;
+    const maintenanceFinished = new Promise((resolve) => {
+      finishMaintenance = resolve;
+    });
+
     const result = await saveManagedSessionWorkImplementation({
+      checkpoint: saveMessageInput.checkpoint,
       derivedArtifactPaths: [],
       identity: {
         email: "vibe64@example.test",
         name: "Vibe64 Test"
       },
-      listSiblingSessions: async () => [],
       message: "Save through bounded managed stages",
+      onCacheMaintenance: finishMaintenance,
       onProgress: async ({ stage }) => {
         progressStages.push(stage);
       },
@@ -190,26 +208,57 @@ test("Save admits four durable managed stages instead of one job per Git command
       },
       session
     });
+    const cacheMaintenance = await maintenanceFinished;
 
     const payloads = requests.map((request) => JSON.parse(String(request.input || "{}")));
     assert.equal(result.status, "saved");
+    assert.equal(result.cacheMaintenance.status, "deferred");
+    assert.equal(cacheMaintenance.status, "current", JSON.stringify(cacheMaintenance));
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
-    assert.equal(requests.length, 4);
+    assert.equal(requests.length, 3);
     assert.ok(requests.every((request) => request.command === "node"));
     assert.deepEqual(payloads.map((payload) => payload.operation), [
-      "save-stage",
-      "save-stage",
-      "save-stage",
-      "save-stage"
+      "save-message",
+      "save",
+      "save-maintenance"
     ]);
-    assert.deepEqual(payloads.map((payload) => payload.input.stage), [
-      "checkpoint",
-      "prepare",
-      "publish",
-      "finalize"
-    ]);
-    assert.ok(progressStages.indexOf("prepared") < progressStages.indexOf("publishing"));
-    assert.ok(progressStages.indexOf("published") < progressStages.indexOf("reconciling"));
+    assert.deepEqual(progressStages, ["publishing"]);
+    assert.deepEqual(saveMessageInput.changes.files.map((file) => file.path), ["saved.txt"]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("managed Save publishes its named checkpoint and preserves work added during naming", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-naming-race-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "named checkpoint\n", "utf8");
+    const saveMessageInput = await prepareSessionWorkSaveMessage({
+      operationId: "save-naming-race",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "later work\n", "utf8");
+
+    const result = await saveManagedSessionWorkImplementation({
+      checkpoint: saveMessageInput.checkpoint,
+      message: "Save the named work",
+      operationId: "save-naming-race",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+    assert.equal(result.status, "saved");
+    assert.equal(result.reconciled, true);
+    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
+    assert.equal(await git(fixture.remote, ["show", "main:shared.txt"]), "named checkpoint");
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), result.saveCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), "later work\n");
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /shared\.txt/u);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -922,8 +971,8 @@ test("a GitHub mirror failure remains a visible retryable warning after successf
     assert.equal(first.cacheMaintenance.reason, "refresh_failed");
     assert.equal(first.cacheMaintenance.code, "vibe64_test_cache_refresh_failed");
     assert.match(first.cacheMaintenance.message, /work was saved/u);
-    assert.equal(progress.at(-2).kind, "cache-warning");
-    assert.equal(progress.at(-2).cacheMaintenance.status, "retryable");
+    assert.equal(progress.at(-1).kind, "cache-warning");
+    assert.equal(progress.at(-1).cacheMaintenance.status, "retryable");
 
     session.metadata.base_commit = first.saveCommit;
     session.metadata.canonical_commit = first.saveCommit;
@@ -1193,7 +1242,7 @@ test("concurrent GitHub Saves serialize, then the losing session updates and sav
   }
 });
 
-test("Save reports published_needs_reconcile when the worktree changes after its checkpoint", async () => {
+test("Save advances the session baseline while preserving work added during publication", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
@@ -1214,10 +1263,12 @@ test("Save reports published_needs_reconcile when the worktree changes after its
       session
     });
 
-    assert.equal(result.status, "published_needs_reconcile");
-    assert.equal(result.reconciled, false);
+    assert.equal(result.status, "saved");
+    assert.equal(result.reconciled, true);
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), result.saveCommit);
     assert.equal(await readFile(path.join(session.sourcePath, "late.txt"), "utf8"), "late\n");
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /late\.txt/u);
     await assert.rejects(readFile(path.join(fixture.seed, "late.txt"), "utf8"));
   } finally {
     await rm(root, { force: true, recursive: true });
@@ -1372,42 +1423,32 @@ test("explicit Update reports a real three-way conflict without changing canonic
   }
 });
 
-test("Save warns about same-file sibling work without blocking canonical Save", async () => {
+test("Save does not inspect sibling work before canonical publication", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
-    await writeFile(path.join(fixture.seed, "mergeable.txt"), "first\nsecond\nthird\nfourth\n", "utf8");
-    await git(fixture.seed, ["add", "mergeable.txt"]);
-    await git(fixture.seed, ["commit", "-m", "add mergeable file"]);
-    await git(fixture.seed, ["push", "origin", "main"]);
-    fixture.baseCommit = await git(fixture.seed, ["rev-parse", "HEAD"]);
     const session = await sessionForRemote(root, fixture);
     const sibling = await sessionForRemote(root, fixture, "session-2");
-    await writeFile(path.join(session.sourcePath, "mergeable.txt"), "current\nsecond\nthird\nfourth\n", "utf8");
-    await writeFile(path.join(sibling.sourcePath, "mergeable.txt"), "first\nsecond\nthird\nsibling\n", "utf8");
+    await writeFile(path.join(session.sourcePath, "shared.txt"), "current\n", "utf8");
+    await writeFile(path.join(sibling.sourcePath, "shared.txt"), "sibling\n", "utf8");
+    let inspectedSibling = false;
 
     const project = githubProject(root, fixture.remote);
     const result = await saveSessionWork({
-      operationId: "save-sibling-clean-overlap",
+      operationId: "save-without-sibling-scan",
       project,
       runCommand: commandRunner,
       session,
-      siblingWork: async () => [await inspectSessionWork({
-        project,
-        runCommand: commandRunner,
-        session: sibling
-      })]
+      siblingWork: async () => {
+        inspectedSibling = true;
+        return [];
+      }
     });
 
     assert.equal(result.status, "saved");
-    assert.equal(result.siblingAdvisoryCount, 1);
-    assert.deepEqual(result.siblingAdvisories, [{
-      paths: ["mergeable.txt"],
-      pathsTruncated: false,
-      sessionId: "session-2"
-    }]);
+    assert.equal(inspectedSibling, false);
     assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
-    assert.equal(await readFile(path.join(session.sourcePath, "mergeable.txt"), "utf8"), "current\nsecond\nthird\nfourth\n");
+    assert.equal(await readFile(path.join(sibling.sourcePath, "shared.txt"), "utf8"), "sibling\n");
     assert.equal(
       await git(session.sourcePath, ["for-each-ref", "--format=%(refname)", "refs/vibe64/save"]),
       ""
@@ -1421,57 +1462,19 @@ test("Save warns about same-file sibling work without blocking canonical Save", 
   }
 });
 
-test("Save warns about conflicting sibling edits without treating them as canonical conflicts", async () => {
+test("Save regenerates Genesis-derived artifacts from captured authored work", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
     const fixture = await createRemoteFixture(root);
     const session = await sessionForRemote(root, fixture);
-    const sibling = await sessionForRemote(root, fixture, "session-2");
-    await writeFile(path.join(session.sourcePath, "shared.txt"), "current\n", "utf8");
-    await writeFile(path.join(sibling.sourcePath, "shared.txt"), "sibling\n", "utf8");
-    const project = githubProject(root, fixture.remote);
-
-    const result = await saveSessionWork({
-      operationId: "save-sibling-conflict",
-      project,
-      runCommand: commandRunner,
-      session,
-      siblingWork: async () => [await inspectSessionWork({
-        project,
-        runCommand: commandRunner,
-        session: sibling
-      })]
-    });
-    assert.equal(result.status, "saved");
-    assert.equal(result.siblingAdvisoryCount, 1);
-    assert.deepEqual(result.siblingAdvisories, [{
-      paths: ["shared.txt"],
-      pathsTruncated: false,
-      sessionId: "session-2"
-    }]);
-    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), result.saveCommit);
-  } finally {
-    await rm(root, { force: true, recursive: true });
-  }
-});
-
-test("Save ignores sibling overlap that exists only in Genesis-derived artifacts", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
-  try {
-    const fixture = await createRemoteFixture(root);
-    const session = await sessionForRemote(root, fixture);
-    const sibling = await sessionForRemote(root, fixture, "session-2");
-    for (const worktreePath of [session.sourcePath, sibling.sourcePath]) {
-      await mkdir(path.join(worktreePath, ".genesis"), { recursive: true });
-    }
+    await mkdir(path.join(session.sourcePath, ".genesis"), { recursive: true });
     await writeFile(path.join(session.sourcePath, "authored.txt"), "authored\n", "utf8");
     await writeFile(path.join(session.sourcePath, ".genesis", "machine-city.json"), "{\"session\":true}\n", "utf8");
-    await writeFile(path.join(sibling.sourcePath, ".genesis", "machine-city.json"), "{\"sibling\":true}\n", "utf8");
     const project = githubProject(root, fixture.remote);
 
     const result = await saveSessionWork({
       derivedArtifactPaths: [".genesis/machine-city.json", ".genesis/program-city.json"],
-      operationId: "save-derived-sibling-overlap",
+      operationId: "save-derived-artifact",
       project,
       refreshDerivedArtifacts: async ({ projectRoot }) => {
         await mkdir(path.join(projectRoot, ".genesis"), { recursive: true });
@@ -1488,17 +1491,10 @@ test("Save ignores sibling overlap that exists only in Genesis-derived artifacts
         );
       },
       runCommand: commandRunner,
-      session,
-      siblingWork: async () => [await inspectSessionWork({
-        project,
-        runCommand: commandRunner,
-        session: sibling
-      })]
+      session
     });
 
     assert.equal(result.status, "saved");
-    assert.equal(result.siblingAdvisoryCount, 0);
-    assert.deepEqual(result.siblingAdvisories, []);
     assert.deepEqual(result.changedPaths, ["authored.txt"]);
     assert.equal(
       await git(fixture.remote, ["show", "main:.genesis/machine-city.json"]),
@@ -1916,6 +1912,40 @@ test("local-source interrupted Save recovery verifies the clean baseline before 
   }
 });
 
+test("restart recovery recognizes a transaction that already reconciled before its result was stored", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-recovery-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    await writeFile(path.join(session.sourcePath, "reconciled.txt"), "reconciled\n", "utf8");
+    const saved = await saveSessionWork({
+      deferCacheMaintenance: true,
+      operationId: "save-recover-reconciled",
+      project,
+      runCommand: commandRunner,
+      session
+    });
+
+    const recovered = await recoverSessionWorkSave({
+      project,
+      recovery: {
+        operationId: "save-recover-reconciled"
+      },
+      runCommand: commandRunner,
+      session
+    });
+
+    assert.equal(recovered.reconciled, true);
+    assert.equal(recovered.saveCommit, saved.saveCommit);
+    assert.equal(recovered.status, "saved");
+    assert.equal(await git(session.sourcePath, ["status", "--porcelain"]), "");
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), saved.saveCommit);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("interrupted Save recovery verifies published authority and reconciles without republishing", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {
@@ -1936,26 +1966,29 @@ test("interrupted Save recovery verifies published authority and reconciles with
       runCommand: commandRunner,
       session
     }), /simulated service restart/u);
-    assert.equal(await git(fixture.remote, ["rev-parse", "refs/heads/main"]), recovery.proposedCommit);
-    assert.notEqual(await git(session.sourcePath, ["rev-parse", "HEAD"]), recovery.proposedCommit);
+    const publishedCommit = await git(fixture.remote, ["rev-parse", "refs/heads/main"]);
+    assert.equal(publishedCommit, recovery.proposedCommit);
+    assert.notEqual(await git(session.sourcePath, ["rev-parse", "HEAD"]), publishedCommit);
 
     const result = await recoverSessionWorkSave({
       project,
-      recovery,
+      recovery: {
+        operationId: "save-recover-published"
+      },
       runCommand: commandRunner,
       session
     });
 
     assert.equal(result.recovered, true);
     assert.equal(result.reconciled, true);
-    assert.equal(result.saveCommit, recovery.proposedCommit);
+    assert.equal(result.saveCommit, publishedCommit);
     assert.equal(result.cacheMaintenance.status, "current");
-    assert.equal(result.cacheMaintenance.mirrorCommit, recovery.proposedCommit);
+    assert.equal(result.cacheMaintenance.mirrorCommit, publishedCommit);
     assert.equal(
       await git(root, ["--git-dir", project.githubMirrorPath, "rev-parse", "refs/heads/main"]),
-      recovery.proposedCommit
+      publishedCommit
     );
-    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), recovery.proposedCommit);
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), publishedCommit);
     assert.equal(await readFile(path.join(session.sourcePath, "recovered.txt"), "utf8"), "recovered\n");
   } finally {
     await rm(root, { force: true, recursive: true });
@@ -1968,11 +2001,9 @@ test("interrupted Save recovery never republishes when authority is still unchan
     const fixture = await createRemoteFixture(root);
     const session = await sessionForRemote(root, fixture);
     await writeFile(path.join(session.sourcePath, "not-published.txt"), "local\n", "utf8");
-    let recovery = {};
     await assert.rejects(saveSessionWork({
       operationId: "save-recover-unpublished",
       onProgress: async (progress) => {
-        recovery = { ...recovery, ...progress };
         if (progress.stage === "publishing") {
           throw new Error("simulated service restart");
         }
@@ -1984,7 +2015,9 @@ test("interrupted Save recovery never republishes when authority is still unchan
 
     await assert.rejects(recoverSessionWorkSave({
       project: githubProject(root, fixture.remote),
-      recovery,
+      recovery: {
+        operationId: "save-recover-unpublished"
+      },
       runCommand: commandRunner,
       session
     }), (error) => {

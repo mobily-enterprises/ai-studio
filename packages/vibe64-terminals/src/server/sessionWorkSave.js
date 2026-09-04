@@ -14,6 +14,7 @@ import {
   repositoryUpdateStrategy
 } from "@local/vibe64-core/shared";
 import {
+  checkpointRefs,
   createGitTurnCheckpoint,
   githubMirrorRefreshInvocation,
   runVibe64Command,
@@ -30,8 +31,6 @@ const MAX_CHANGE_FILE_LIMIT = 500;
 const DEFAULT_CHANGE_DIFF_LINE_LIMIT = 800;
 const MAX_CHANGE_DIFF_LINE_LIMIT = 5000;
 const INCOMING_VERSION_LIMIT = 5;
-const SIBLING_ADVISORY_DETAIL_LIMIT = 4;
-const SIBLING_ADVISORY_PATH_LIMIT = 20;
 const SESSION_WORK_COMMAND_SCOPE = Symbol("vibe64-session-work-command-scope");
 const SESSION_WORK_OPERATION_COMMAND_PATH = fileURLToPath(new URL(
   "./sessionWorkOperationCommand.js",
@@ -206,7 +205,10 @@ function sessionWorkOperationProject(context, project = {}) {
   const projectSlug = text(project.slug || project.projectSlug);
   return {
     ...(context.mode === PROJECT_REPOSITORY_MODE_GITHUB
-      ? { githubRepository: { cloneUrl: context.remoteUrl } }
+      ? {
+          githubMirrorPath: text(project.githubMirrorPath),
+          githubRepository: { cloneUrl: context.remoteUrl }
+        }
       : {}),
     ...(context.mode === PROJECT_REPOSITORY_MODE_MANAGED_GIT
       ? { canonicalRepositoryPath: context.remoteUrl }
@@ -640,11 +642,13 @@ async function sessionChangeDiff(runCommand, context, work, requestedPath, {
 async function inspectSessionChangesDirect({
   commandOptions = {},
   derivedArtifactPaths = [],
+  includeInitialDiff = true,
   limit = DEFAULT_CHANGE_FILE_LIMIT,
   offset = 0,
   project = {},
   runCommand = runVibe64Command,
-  session = {}
+  session = {},
+  worktreeTree = ""
 } = {}) {
   const context = repositoryContext(session, project);
   runCommand = scopedSessionWorkCommand(runCommand, context, project, {
@@ -655,7 +659,8 @@ async function inspectSessionChangesDirect({
     derivedArtifactPaths,
     project,
     runCommand,
-    session
+    session,
+    worktreeTree
   });
   const changedPathSet = new Set(work.changedPaths);
   const files = work.unsaved
@@ -667,7 +672,7 @@ async function inspectSessionChangesDirect({
   const boundedLimit = boundedInteger(limit, DEFAULT_CHANGE_FILE_LIMIT, MAX_CHANGE_FILE_LIMIT);
   const boundedOffset = Math.max(0, Number.parseInt(String(offset ?? ""), 10) || 0);
   const pageFiles = files.slice(boundedOffset, boundedOffset + boundedLimit);
-  const initialDiff = boundedOffset === 0 && pageFiles.length > 0
+  const initialDiff = includeInitialDiff && boundedOffset === 0 && pageFiles.length > 0
     ? await sessionChangeDiff(runCommand, context, work, pageFiles[0].path, {
         commandOptions,
         project
@@ -717,13 +722,14 @@ async function inspectSessionWorkDirect({
   derivedArtifactPaths = [],
   project = {},
   runCommand = runVibe64Command,
-  session = {}
+  session = {},
+  worktreeTree = ""
 } = {}) {
   const context = repositoryContext(session, project);
   runCommand = scopedSessionWorkCommand(runCommand, context, project, {
     label: "Inspecting session work"
   });
-  const tree = await writeGitWorktreeTree({
+  const tree = text(worktreeTree) || await writeGitWorktreeTree({
     baseCommit: "HEAD",
     project: commandProject(context, project),
     runCommand,
@@ -892,6 +898,17 @@ function saveRef(context, operationId, label) {
   return `refs/vibe64/save/${digest}/${label}`;
 }
 
+function preparedSaveRef(context, operationId) {
+  return saveRef(context, operationId, "prepared");
+}
+
+function saveCheckpointRef(context, operationId) {
+  return checkpointRefs({
+    outerTurnId: `save:${operationId}`,
+    sessionId: context.sessionId
+  }).turnRef;
+}
+
 function canonicalRef(context) {
   const digest = crypto.createHash("sha256")
     .update(context.branch)
@@ -908,6 +925,12 @@ async function deleteOperationRef(runCommand, context, ref, options = {}) {
     ...options,
     required: false
   });
+}
+
+async function rememberPreparedSaveCommit(runCommand, context, operationId, commit, options = {}) {
+  const ref = preparedSaveRef(context, operationId);
+  await git(runCommand, context, ["update-ref", ref, commit], options);
+  return ref;
 }
 
 async function rememberCanonicalCommit(runCommand, context, commit, options = {}) {
@@ -2092,34 +2115,60 @@ async function reconcileSession(runCommand, context, {
   checkpointTree,
   commandOptions,
   project,
-  saveCommit
+  saveCommit,
+  sessionHead = ""
 }) {
-  const currentTree = await writeGitWorktreeTree({
-    baseCommit: "HEAD",
-    project: commandProject(context, project),
-    runCommand,
-    worktreePath: context.worktreePath
-  });
-  if (currentTree !== checkpointTree) {
+  const [currentTree, oldHead, saveTree] = await Promise.all([
+    writeGitWorktreeTree({
+      baseCommit: "HEAD",
+      project: commandProject(context, project),
+      runCommand,
+      worktreePath: context.worktreePath
+    }),
+    gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
+      commandOptions,
+      project
+    }),
+    commitTree(runCommand, context, saveCommit, {
+      commandOptions,
+      project
+    })
+  ]);
+  if (oldHead === saveCommit) {
+    return {
+      currentTree,
+      reconciled: true,
+      status: "saved"
+    };
+  }
+  if (sessionHead && oldHead !== sessionHead) {
     return {
       currentTree,
       reconciled: false,
       status: "published_needs_reconcile"
     };
   }
+  const preserveLaterWork = currentTree !== checkpointTree && currentTree !== saveTree;
   const oldIndexTree = await gitOutput(runCommand, context, ["write-tree"], {
     commandOptions,
     project
   });
-  const oldHead = await gitOutput(runCommand, context, ["rev-parse", "HEAD"], {
-    commandOptions,
-    project
-  });
   try {
-    await git(runCommand, context, ["read-tree", "--reset", "-u", saveCommit], {
-      commandOptions,
-      project
-    });
+    if (preserveLaterWork) {
+      await git(runCommand, context, ["read-tree", checkpointCommit], {
+        commandOptions,
+        project
+      });
+      await git(runCommand, context, ["read-tree", "-m", "-u", checkpointCommit, saveCommit], {
+        commandOptions,
+        project
+      });
+    } else {
+      await git(runCommand, context, ["read-tree", "--reset", "-u", saveCommit], {
+        commandOptions,
+        project
+      });
+    }
     await git(runCommand, context, ["update-ref", "HEAD", saveCommit, oldHead], {
       commandOptions,
       project
@@ -2130,11 +2179,13 @@ async function reconcileSession(runCommand, context, {
       status: "saved"
     };
   } catch (error) {
-    await git(runCommand, context, ["read-tree", "--reset", "-u", checkpointCommit], {
-      commandOptions,
-      project,
-      required: false
-    });
+    if (!preserveLaterWork) {
+      await git(runCommand, context, ["read-tree", "--reset", "-u", checkpointCommit], {
+        commandOptions,
+        project,
+        required: false
+      });
+    }
     await git(runCommand, context, ["read-tree", oldIndexTree], {
       commandOptions,
       project,
@@ -2151,7 +2202,6 @@ async function reconcileSession(runCommand, context, {
 
 async function captureSessionWorkSaveCheckpoint(runCommand, context, {
   commandOptions = {},
-  expectedMessageTree = "",
   operationId,
   project = {}
 } = {}) {
@@ -2165,20 +2215,106 @@ async function captureSessionWorkSaveCheckpoint(runCommand, context, {
     timestamp: new Date().toISOString(),
     worktreePath: context.worktreePath
   });
-  if (text(expectedMessageTree) && checkpoint.tree !== text(expectedMessageTree)) {
-    throw saveError(
-      "The session changed while Vibe64 was naming this work. Save was not started; try again.",
-      "vibe64_session_save_message_stale"
-    );
-  }
+  const sessionHead = await gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD^{commit}"], {
+    commandOptions,
+    project
+  });
   return {
     baseCommit: context.baseCommit,
     branch: context.branch,
     checkpointCommit: checkpoint.commit,
     checkpointTree: checkpoint.tree,
     mode: context.mode,
-    operationId
+    operationId,
+    sessionHead
   };
+}
+
+async function prepareSessionWorkSaveMessageDirect({
+  commandOptions = {},
+  derivedArtifactPaths = [],
+  limit = 40,
+  operationId = crypto.randomUUID(),
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Capturing work for Save",
+    operationId
+  });
+  const checkpoint = await captureSessionWorkSaveCheckpoint(runCommand, context, {
+    commandOptions,
+    operationId,
+    project
+  });
+  const changes = await inspectSessionChangesDirect({
+    commandOptions,
+    derivedArtifactPaths,
+    includeInitialDiff: false,
+    limit,
+    project,
+    runCommand,
+    session,
+    worktreeTree: checkpoint.checkpointTree
+  });
+  if (!changes.totalCount) {
+    throw saveError(
+      "This session has no work to save.",
+      "vibe64_session_save_no_changes"
+    );
+  }
+  return {
+    changes,
+    checkpoint
+  };
+}
+
+async function assertSessionWorkSaveCheckpoint(runCommand, context, checkpoint, {
+  commandOptions = {},
+  operationId,
+  project = {}
+} = {}) {
+  const checkpointCommit = text(checkpoint?.checkpointCommit);
+  const checkpointTree = text(checkpoint?.checkpointTree);
+  if (
+    !checkpointCommit ||
+    !checkpointTree ||
+    text(checkpoint?.operationId) !== text(operationId) ||
+    text(checkpoint?.baseCommit) !== context.baseCommit ||
+    text(checkpoint?.branch) !== context.branch ||
+    text(checkpoint?.mode) !== context.mode
+  ) {
+    throw saveError(
+      "Save cannot verify the captured worktree. Capture and name the work again.",
+      "vibe64_session_save_checkpoint_invalid"
+    );
+  }
+  const recordedTree = await commitTree(runCommand, context, checkpointCommit, {
+    commandOptions,
+    project
+  });
+  if (recordedTree !== checkpointTree) {
+    throw saveError(
+      "Save cannot verify the captured worktree. Capture and name the work again.",
+      "vibe64_session_save_checkpoint_invalid"
+    );
+  }
+  const checkpointSessionHead = text(checkpoint?.sessionHead);
+  const currentSessionHead = checkpointSessionHead
+    ? await gitOutput(runCommand, context, ["rev-parse", "--verify", "HEAD^{commit}"], {
+        commandOptions,
+        project
+      })
+    : "";
+  if (checkpointSessionHead && currentSessionHead !== checkpointSessionHead) {
+    throw saveError(
+      "The session history changed while Vibe64 was naming this work. Save was not started; try again.",
+      "vibe64_session_save_message_stale"
+    );
+  }
+  return checkpoint;
 }
 
 async function prepareSessionWorkSave(runCommand, context, {
@@ -2189,8 +2325,7 @@ async function prepareSessionWorkSave(runCommand, context, {
   message = "",
   operationId,
   project = {},
-  refreshDerivedArtifacts = null,
-  siblingWork = async () => []
+  refreshDerivedArtifacts = null
 } = {}) {
   const checkpointTree = text(checkpoint.checkpointTree);
   const [canonicalCommit, sessionHead] = await Promise.all([
@@ -2248,25 +2383,6 @@ async function prepareSessionWorkSave(runCommand, context, {
       "vibe64_session_save_no_changes"
     );
   }
-  const siblings = await siblingWork({
-    changedPaths,
-    context,
-    operationId
-  });
-  const changedPathSet = new Set(changedPaths);
-  const siblingCandidates = (Array.isArray(siblings) ? siblings : [])
-    .map((sibling) => ({
-      ...sibling,
-      overlappingPaths: (Array.isArray(sibling?.changedPaths) ? sibling.changedPaths : [])
-        .filter((filePath) => changedPathSet.has(filePath))
-        .sort((left, right) => left.localeCompare(right))
-    }))
-    .filter((sibling) => text(sibling?.sessionId) && sibling.overlappingPaths.length);
-  const siblingAdvisories = siblingCandidates.map((sibling) => ({
-    paths: sibling.overlappingPaths.slice(0, SIBLING_ADVISORY_PATH_LIMIT),
-    pathsTruncated: sibling.overlappingPaths.length > SIBLING_ADVISORY_PATH_LIMIT,
-    sessionId: sibling.sessionId
-  }));
   const author = {
     email: text(identity.email) || "vibe64@localhost",
     name: text(identity.name) || "Vibe64 Save"
@@ -2287,14 +2403,6 @@ async function prepareSessionWorkSave(runCommand, context, {
     refreshDerivedArtifacts,
     tree: sourceTree
   });
-  const virtualCommit = await createVirtualCommit(runCommand, context, {
-    baseCommit: comparison.changeBaseCommit,
-    commandOptions,
-    identity: author,
-    message: "Vibe64 session Save input",
-    project,
-    tree: mergedTree
-  });
   const saveCommit = await createSaveCommit(runCommand, context, {
     canonicalCommit,
     commandOptions,
@@ -2303,15 +2411,20 @@ async function prepareSessionWorkSave(runCommand, context, {
     message,
     project
   });
+  const preparedRef = await rememberPreparedSaveCommit(
+    runCommand,
+    context,
+    operationId,
+    saveCommit,
+    { commandOptions, project }
+  );
   return {
     canonicalCommit,
     changeBaseCommit: comparison.changeBaseCommit,
     changedPaths,
     mergedTree,
-    saveCommit,
-    siblingAdvisories: siblingAdvisories.slice(0, SIBLING_ADVISORY_DETAIL_LIMIT),
-    siblingAdvisoryCount: siblingAdvisories.length,
-    virtualCommit
+    preparedRef,
+    saveCommit
   };
 }
 
@@ -2329,120 +2442,6 @@ async function publishPreparedSessionWorkSave(runCommand, context, {
   );
 }
 
-async function finalizePublishedSessionWorkSave(runCommand, context, {
-  checkpoint = {},
-  commandOptions = {},
-  prepared = {},
-  project = {},
-  verifiedCommit = ""
-} = {}) {
-  const cacheMaintenance = await refreshVerifiedGithubMirror(
-    runCommand,
-    context,
-    text(verifiedCommit),
-    { commandOptions, project }
-  );
-  const reconciliation = await reconcileSession(runCommand, context, {
-    checkpointCommit: text(checkpoint.checkpointCommit),
-    checkpointTree: text(checkpoint.checkpointTree),
-    commandOptions,
-    project,
-    saveCommit: text(prepared.saveCommit)
-  });
-  return {
-    cacheMaintenance,
-    ...reconciliation
-  };
-}
-
-async function runSessionWorkSaveStageDirect({
-  checkpoint = {},
-  commandOptions = {},
-  derivedArtifactPaths = [],
-  expectedMessageTree = "",
-  identity = {},
-  message = "",
-  operationId = crypto.randomUUID(),
-  prepared = {},
-  project = {},
-  refreshDerivedArtifacts = null,
-  runCommand = runVibe64Command,
-  session = {},
-  siblingSessions = [],
-  stage = "",
-  verifiedCommit = ""
-} = {}) {
-  const context = repositoryContext(session, project);
-  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
-    label: "Saving session work",
-    operationId
-  });
-  if (stage === "checkpoint") {
-    return captureSessionWorkSaveCheckpoint(runCommand, context, {
-      commandOptions,
-      expectedMessageTree,
-      operationId,
-      project
-    });
-  }
-  if (stage === "prepare") {
-    const siblings = Array.isArray(siblingSessions) ? siblingSessions : [];
-    return prepareSessionWorkSave(runCommand, context, {
-      checkpoint,
-      commandOptions,
-      derivedArtifactPaths,
-      identity,
-      message,
-      operationId,
-      project,
-      refreshDerivedArtifacts,
-      siblingWork: async () => Promise.all(siblings.map((sibling) => inspectSessionWorkDirect({
-        project,
-        runCommand,
-        session: sibling
-      })))
-    });
-  }
-  if (stage === "publish") {
-    return {
-      verifiedCommit: await publishPreparedSessionWorkSave(runCommand, context, {
-        commandOptions,
-        prepared,
-        project
-      })
-    };
-  }
-  if (stage === "finalize") {
-    return finalizePublishedSessionWorkSave(runCommand, context, {
-      checkpoint,
-      commandOptions,
-      prepared,
-      project,
-      verifiedCommit
-    });
-  }
-  throw saveError(
-    "Unsupported session Save stage.",
-    "vibe64_session_save_stage_unsupported"
-  );
-}
-
-function siblingAdvisoryProgress(prepared = {}) {
-  const count = Number(prepared.siblingAdvisoryCount) || 0;
-  if (!count) {
-    return null;
-  }
-  return {
-    kind: "sibling-advisory",
-    message: count === 1
-      ? "Another open session edits some of the same files. Save will continue; that session must update before it can save."
-      : `${count} other open sessions edit some of the same files. Save will continue; those sessions must update before they can save.`,
-    siblingAdvisories: prepared.siblingAdvisories,
-    siblingAdvisoryCount: count,
-    stage: "sibling-advisory"
-  };
-}
-
 function completedSessionWorkSave(context, checkpoint, prepared, verifiedCommit, finalized) {
   return {
     baseCommit: context.baseCommit,
@@ -2456,21 +2455,86 @@ function completedSessionWorkSave(context, checkpoint, prepared, verifiedCommit,
     mode: context.mode,
     ok: true,
     operationId: checkpoint.operationId,
+    preparedRef: prepared.preparedRef,
     saveCommit: prepared.saveCommit,
-    siblingAdvisories: prepared.siblingAdvisories,
-    siblingAdvisoryCount: prepared.siblingAdvisoryCount,
+    sessionHead: checkpoint.sessionHead,
     status: finalized.status,
     verifiedCommit,
-    virtualCommit: prepared.virtualCommit,
     ...finalized
   };
 }
 
-async function saveSessionWorkDirect({
+function deferredCacheMaintenance(context, verifiedCommit) {
+  if (context.mode !== PROJECT_REPOSITORY_MODE_GITHUB) {
+    return {
+      attempted: false,
+      kind: "none",
+      retryable: false,
+      status: "not_applicable"
+    };
+  }
+  return {
+    attempted: false,
+    branch: context.branch,
+    kind: "github_mirror",
+    retryable: false,
+    status: "deferred",
+    verifiedCommit
+  };
+}
+
+function failedCacheMaintenance(context, verifiedCommit, error) {
+  return {
+    attempted: false,
+    branch: context.branch,
+    code: text(error?.code) || "vibe64_session_save_github_mirror_refresh_failed",
+    kind: "github_mirror",
+    message: "Your work was saved, but Vibe64 could not refresh its local clone cache. A later session or Save will retry it.",
+    reason: "refresh_interrupted",
+    retryable: true,
+    status: "retryable",
+    verifiedCommit
+  };
+}
+
+async function refreshSessionWorkSaveCacheDirect({
   commandOptions = {},
+  operationId = "",
+  project = {},
+  runCommand = runVibe64Command,
+  session = {},
+  verifiedCommit = ""
+} = {}) {
+  const context = repositoryContext(session, project);
+  runCommand = scopedSessionWorkCommand(runCommand, context, project, {
+    label: "Maintaining saved repository cache",
+    operationId
+  });
+  return refreshVerifiedGithubMirror(
+    runCommand,
+    context,
+    text(verifiedCommit),
+    { commandOptions, project }
+  );
+}
+
+async function deletePreparedSaveRef(runCommand, context, operationId, options = {}) {
+  if (text(operationId)) {
+    await deleteOperationRef(
+      runCommand,
+      context,
+      preparedSaveRef(context, operationId),
+      options
+    );
+  }
+}
+
+async function saveSessionWorkDirect({
+  checkpoint: suppliedCheckpoint = null,
+  commandOptions = {},
+  deferCacheMaintenance = false,
   derivedArtifactPaths = [],
   identity = {},
-  expectedMessageTree = "",
   message = "",
   operationId = crypto.randomUUID(),
   project = {},
@@ -2478,7 +2542,6 @@ async function saveSessionWorkDirect({
   runCommand = runVibe64Command,
   runProjectSourceExclusive = async (operation) => operation(),
   onProgress = async () => null,
-  siblingWork = async () => [],
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
@@ -2501,12 +2564,21 @@ async function saveSessionWorkDirect({
       operationId,
       stage: "checkpointing"
     });
-    const checkpoint = await captureSessionWorkSaveCheckpoint(runCommand, context, {
-      commandOptions,
-      expectedMessageTree,
-      operationId,
-      project
-    });
+    let checkpoint;
+    if (suppliedCheckpoint) {
+      await assertBranch(runCommand, context, { commandOptions, project });
+      checkpoint = await assertSessionWorkSaveCheckpoint(runCommand, context, suppliedCheckpoint, {
+        commandOptions,
+        operationId,
+        project
+      });
+    } else {
+      checkpoint = await captureSessionWorkSaveCheckpoint(runCommand, context, {
+        commandOptions,
+        operationId,
+        project
+      });
+    }
     await onProgress({
       checkpointCommit: checkpoint.checkpointCommit,
       checkpointTree: checkpoint.checkpointTree,
@@ -2523,8 +2595,7 @@ async function saveSessionWorkDirect({
       message,
       operationId,
       project,
-      refreshDerivedArtifacts,
-      siblingWork
+      refreshDerivedArtifacts
     });
     await onProgress({
       expectedCanonicalCommit: prepared.canonicalCommit,
@@ -2532,18 +2603,13 @@ async function saveSessionWorkDirect({
       message: "Canonical branch read.",
       stage: "canonical-read"
     });
-    const advisoryProgress = siblingAdvisoryProgress(prepared);
-    if (advisoryProgress) {
-      await onProgress(advisoryProgress);
-    }
     await onProgress({
       expectedCanonicalCommit: prepared.canonicalCommit,
       kind: "publish",
       mergedTree: prepared.mergedTree,
       message: "Save commit prepared.",
       proposedCommit: prepared.saveCommit,
-      stage: "prepared",
-      virtualCommit: prepared.virtualCommit
+      stage: "prepared"
     });
     await onProgress({ kind: "publish", message: "Publishing one ordinary Save commit.", stage: "publishing" });
     const verifiedCommit = await publishPreparedSessionWorkSave(runCommand, context, {
@@ -2557,12 +2623,25 @@ async function saveSessionWorkDirect({
       stage: "published",
       verifiedCommit
     });
-    const cacheMaintenance = await refreshVerifiedGithubMirror(
-      runCommand,
-      context,
-      verifiedCommit,
-      { commandOptions, project }
-    );
+    await onProgress({ kind: "reconcile", message: "Reconciling the session onto the saved commit.", stage: "reconciling" });
+    const reconciliation = await reconcileSession(runCommand, context, {
+      checkpointCommit: checkpoint.checkpointCommit,
+      checkpointTree: checkpoint.checkpointTree,
+      commandOptions,
+      project,
+      saveCommit: prepared.saveCommit,
+      sessionHead: checkpoint.sessionHead
+    });
+    const cacheMaintenance = deferCacheMaintenance
+      ? deferredCacheMaintenance(context, verifiedCommit)
+      : await refreshSessionWorkSaveCacheDirect({
+          commandOptions,
+          operationId,
+          project,
+          runCommand,
+          session,
+          verifiedCommit
+        });
     if (cacheMaintenance.retryable === true) {
       await onProgress({
         cacheMaintenance,
@@ -2571,14 +2650,12 @@ async function saveSessionWorkDirect({
         stage: "cache-maintenance-warning"
       });
     }
-    await onProgress({ kind: "reconcile", message: "Reconciling the session onto the saved commit.", stage: "reconciling" });
-    const reconciliation = await reconcileSession(runCommand, context, {
-      checkpointCommit: checkpoint.checkpointCommit,
-      checkpointTree: checkpoint.checkpointTree,
-      commandOptions,
-      project,
-      saveCommit: prepared.saveCommit
-    });
+    if (!deferCacheMaintenance) {
+      await deletePreparedSaveRef(runCommand, context, operationId, {
+        commandOptions,
+        project
+      });
+    }
     return completedSessionWorkSave(
       context,
       checkpoint,
@@ -2591,13 +2668,35 @@ async function saveSessionWorkDirect({
   });
 }
 
-async function saveSessionWork({
+async function prepareSessionWorkSaveMessage({
   commandOptions = {},
   derivedArtifactPaths = [],
-  expectedMessageTree = "",
+  limit = 40,
+  operationId = crypto.randomUUID(),
+  project = {},
+  runCommand = runVibe64Command,
+  session = {}
+} = {}) {
+  const context = repositoryContext(session, project);
+  return runSessionWorkOperation({
+    commandOptions,
+    context,
+    input: { derivedArtifactPaths, limit },
+    label: "Capturing work for Save",
+    operation: "save-message",
+    operationId,
+    project,
+    runCommand
+  });
+}
+
+async function saveSessionWork({
+  checkpoint = {},
+  commandOptions = {},
+  derivedArtifactPaths = [],
   identity = {},
-  listSiblingSessions = async () => [],
   message = "",
+  onCacheMaintenance = async () => null,
   operationId = crypto.randomUUID(),
   project = {},
   runCommand = runVibe64Command,
@@ -2606,125 +2705,54 @@ async function saveSessionWork({
   session = {}
 } = {}) {
   const context = repositoryContext(session, project);
-  await onProgress({
-    kind: "lock",
-    message: "Waiting for exclusive repository access.",
-    stage: "repository-lock"
-  });
-  return runProjectSourceExclusive(async () => {
-    const listedSiblingSessions = await listSiblingSessions();
-    const siblingSessions = (Array.isArray(listedSiblingSessions)
-      ? listedSiblingSessions
-      : [])
-      .map((sibling) => sessionWorkOperationSession(repositoryContext(sibling, project)));
-    const runStage = (stage, input = {}) => runSessionWorkOperation({
+  const saved = await runProjectSourceExclusive(async () => {
+    await onProgress({
+      checkpointCommit: text(checkpoint.checkpointCommit),
+      checkpointTree: text(checkpoint.checkpointTree),
+      kind: "publish",
+      message: "Publishing the captured work.",
+      operationId,
+      sessionHead: text(checkpoint.sessionHead),
+      stage: "publishing"
+    });
+    return runSessionWorkOperation({
       commandOptions,
       context,
       input: {
-        ...input,
-        stage
+        checkpoint,
+        derivedArtifactPaths,
+        identity,
+        message
       },
       label: "Saving session work",
-      operation: "save-stage",
+      operation: "save",
       operationId,
       project,
       runCommand
     });
-
-    await onProgress({
-      baseCommit: context.baseCommit,
-      branch: context.branch,
-      kind: "checkpoint",
-      message: "Capturing the complete session worktree.",
-      mode: context.mode,
-      operationId,
-      stage: "checkpointing"
-    });
-    const checkpoint = await runStage("checkpoint", { expectedMessageTree });
-    await onProgress({
-      checkpointCommit: checkpoint.checkpointCommit,
-      checkpointTree: checkpoint.checkpointTree,
-      kind: "checkpoint",
-      message: "Session checkpoint captured.",
-      stage: "checkpointed"
-    });
-    await onProgress({
-      kind: "canonical",
-      message: "Reading the current canonical branch.",
-      stage: "canonical-reading"
-    });
-    const prepared = await runStage("prepare", {
-      checkpoint,
-      derivedArtifactPaths,
-      identity,
-      message,
-      siblingSessions
-    });
-    await onProgress({
-      expectedCanonicalCommit: prepared.canonicalCommit,
-      kind: "canonical",
-      message: "Canonical branch read.",
-      stage: "canonical-read"
-    });
-    const advisoryProgress = siblingAdvisoryProgress(prepared);
-    if (advisoryProgress) {
-      await onProgress(advisoryProgress);
-    }
-    await onProgress({
-      expectedCanonicalCommit: prepared.canonicalCommit,
-      kind: "publish",
-      mergedTree: prepared.mergedTree,
-      message: "Save commit prepared.",
-      proposedCommit: prepared.saveCommit,
-      stage: "prepared",
-      virtualCommit: prepared.virtualCommit
-    });
-    await onProgress({
-      kind: "publish",
-      message: "Publishing one ordinary Save commit.",
-      stage: "publishing"
-    });
-    const published = await runStage("publish", { prepared: {
-      canonicalCommit: prepared.canonicalCommit,
-      saveCommit: prepared.saveCommit
-    } });
-    await onProgress({
-      kind: "publish",
-      message: "Canonical Save commit verified.",
-      stage: "published",
-      verifiedCommit: published.verifiedCommit
-    });
-    await onProgress({
-      kind: "reconcile",
-      message: "Reconciling the session onto the saved commit.",
-      stage: "reconciling"
-    });
-    const finalized = await runStage("finalize", {
-      checkpoint: {
-        checkpointCommit: checkpoint.checkpointCommit,
-        checkpointTree: checkpoint.checkpointTree
-      },
-      prepared: { saveCommit: prepared.saveCommit },
-      verifiedCommit: published.verifiedCommit
-    });
-    if (finalized.cacheMaintenance?.retryable === true) {
-      await onProgress({
-        cacheMaintenance: finalized.cacheMaintenance,
-        kind: "cache-warning",
-        message: finalized.cacheMaintenance.message,
-        stage: "cache-maintenance-warning"
-      });
-    }
-    return completedSessionWorkSave(
-      context,
-      checkpoint,
-      prepared,
-      published.verifiedCommit,
-      finalized
-    );
   }, {
     operation: `save-session:${context.sessionId}`
   });
+  if (context.mode === PROJECT_REPOSITORY_MODE_GITHUB) {
+    queueMicrotask(() => {
+      void runSessionWorkOperation({
+        commandOptions,
+        context,
+        input: {
+          operationId,
+          verifiedCommit: saved.verifiedCommit
+        },
+        label: "Maintaining saved repository cache",
+        operation: "save-maintenance",
+        operationId,
+        project,
+        runCommand
+      }).then(onCacheMaintenance).catch((error) => (
+        onCacheMaintenance(failedCacheMaintenance(context, saved.verifiedCommit, error))
+      )).catch(() => {});
+    });
+  }
+  return saved;
 }
 
 async function recoverSessionWorkSave({
@@ -2741,15 +2769,59 @@ async function recoverSessionWorkSave({
     label: "Recovering session save",
     operationId: operationId || crypto.randomUUID()
   });
-  const expectedCanonicalCommit = text(recovery.expectedCanonicalCommit);
-  const proposedCommit = text(recovery.proposedCommit);
-  const checkpointCommit = text(recovery.checkpointCommit);
-  const checkpointTree = text(recovery.checkpointTree);
+  const preparedRef = operationId ? preparedSaveRef(context, operationId) : "";
+  const recordedProposedCommit = preparedRef
+    ? await optionalGitOutput(runCommand, context, ["rev-parse", "--verify", `${preparedRef}^{commit}`], {
+        commandOptions,
+        project
+      })
+    : "";
+  const proposedCommit = text(recovery.proposedCommit) || recordedProposedCommit;
+  if (
+    text(recovery.proposedCommit) &&
+    recordedProposedCommit &&
+    text(recovery.proposedCommit) !== recordedProposedCommit
+  ) {
+    throw saveError(
+      "The interrupted Save has inconsistent prepared-commit evidence.",
+      "vibe64_session_save_recovery_evidence_invalid"
+    );
+  }
+  const expectedCanonicalCommit = text(recovery.expectedCanonicalCommit) || (
+    proposedCommit
+      ? await optionalGitOutput(runCommand, context, ["rev-parse", "--verify", `${proposedCommit}^`], {
+          commandOptions,
+          project
+        })
+      : ""
+  );
+  const recordedCheckpointCommit = operationId
+    ? await optionalGitOutput(runCommand, context, [
+        "rev-parse",
+        "--verify",
+        `${saveCheckpointRef(context, operationId)}^{commit}`
+      ], { commandOptions, project })
+    : "";
+  const checkpointCommit = text(recovery.checkpointCommit) || recordedCheckpointCommit;
+  const checkpointTree = text(recovery.checkpointTree) || (
+    checkpointCommit
+      ? await optionalGitOutput(runCommand, context, ["rev-parse", "--verify", `${checkpointCommit}^{tree}`], {
+          commandOptions,
+          project
+        })
+      : ""
+  );
   if (!operationId || !expectedCanonicalCommit || !proposedCommit || !checkpointCommit || !checkpointTree) {
     throw saveError(
       "The interrupted Save stopped before a publishable commit was durably prepared. Retry Save.",
       "vibe64_session_save_interrupted_retryable",
       { retryable: true }
+    );
+  }
+  if (await commitTree(runCommand, context, checkpointCommit, { commandOptions, project }) !== checkpointTree) {
+    throw saveError(
+      "The interrupted Save has inconsistent checkpoint evidence.",
+      "vibe64_session_save_recovery_evidence_invalid"
     );
   }
   return runProjectSourceExclusive(async () => {
@@ -2784,7 +2856,8 @@ async function recoverSessionWorkSave({
       checkpointTree,
       commandOptions,
       project,
-      saveCommit: proposedCommit
+      saveCommit: proposedCommit,
+      sessionHead: text(recovery.sessionHead)
     });
     return {
       ...recovery,
@@ -2792,6 +2865,7 @@ async function recoverSessionWorkSave({
       cacheMaintenance,
       ok: true,
       recovered: true,
+      preparedRef,
       saveCommit: proposedCommit,
       status: reconciliation.status,
       verifiedCommit: proposedCommit,
@@ -2813,12 +2887,14 @@ export {
   inspectSessionWorkDirect,
   parseGitNameStatusZ,
   parseGitNumstatZ,
+  prepareSessionWorkSaveMessage,
+  prepareSessionWorkSaveMessageDirect,
   repositoryUpdateRelationship,
   repositoryUpdateStrategy,
   recoverSessionWorkSave,
   recoverSessionWorkUpdate,
+  refreshSessionWorkSaveCacheDirect,
   repositoryContext,
-  runSessionWorkSaveStageDirect,
   safeChangePath,
   saveSessionWork,
   saveSessionWorkDirect,

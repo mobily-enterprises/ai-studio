@@ -15,7 +15,7 @@ function githubGitAuthScript() {
     "  if ! vibe64_git_remote_url_is_github \"$VIBE64_GIT_AUTH_REMOTE_URL\"; then",
     "    return 0;",
     "  fi;",
-    "  if [ -n \"${GIT_ASKPASS:-}\" ] && [ -n \"${VIBE64_GIT_AUTH_TOKEN:-}\" ]; then",
+    "  if [ -n \"${VIBE64_GIT_AUTH_TOKEN:-}\" ]; then",
     "    return 0;",
     "  fi;",
     "  if ! command -v gh >/dev/null 2>&1; then",

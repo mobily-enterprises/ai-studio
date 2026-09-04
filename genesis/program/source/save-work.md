@@ -16,14 +16,18 @@ Git commands.
 ## Public contract
 
 Save captures tracked, staged, unstaged, and relevant untracked session work,
-preserves non-conflicting canonical changes, and publishes one ordinary commit
-to the exact configured GitHub, managed-Git, or local-source authority. It
-refuses ambiguous authority, overlapping sibling work, conflicting changes,
-dirty local authority, or a moving canonical branch. Progress and bounded
+asks the session's selected assistant to give that exact checkpoint a concise
+commit subject, and publishes one ordinary commit to the exact configured
+GitHub, managed-Git, or local-source authority. It refuses ambiguous authority,
+changed session history, dirty local authority, or a moving canonical branch.
+Worktree edits made after capture are left as unsaved work on top of the named
+checkpoint. The non-force publication itself rejects a stale concurrent
+publisher; Save does not inspect sibling worktrees first. Progress and bounded
 command output remain visible across reloads. A verified publication advances
-the session baseline and preserves any later session edits; an interrupted Save
-is reconciled only when the canonical authority proves the prepared commit was
-already published.
+the session baseline and preserves any later session edits; an interrupted
+Save is reconciled only when the canonical authority proves the privately
+recorded prepared commit was already published. Disposable GitHub mirror
+maintenance runs after Save completes and cannot change the Save result.
 
 While Save runs, the workspace shows one compact progress line. Opening its
 details reveals the bounded command progress; while work is active, Collapse
@@ -67,5 +71,8 @@ not offer cleanup yet.
   canonical source mutations across processes.
 - `scopedSessionWorkCommand()` assigns one semantic operation identity plus
   project and session ownership to repository operations. Inspection and update
-  checks enter the managed host once through `runSessionWorkOperation()`, while
-  Save and recovery retain their bounded command sequencing.
+  checks enter the managed host once through `runSessionWorkOperation()`. Save
+  uses one managed checkpoint-and-summary job before its temporary naming turn
+  and one managed publish-and-reconcile transaction under the project source
+  lock. A deterministic private prepared-commit ref supplies restart evidence;
+  disposable mirror refresh is deferred until after Save.

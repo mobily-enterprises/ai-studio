@@ -853,6 +853,17 @@ async function mockDirectChat(page: Page, {
     const url = new URL(request.url());
     const method = request.method();
 
+    if (method === "GET" && url.pathname.endsWith("/assistant-access")) {
+      await fulfillJson(route, {
+        accessLabel: "Workspace use",
+        available: true,
+        canRequestMessage: false,
+        canUse: true,
+        ok: true,
+        ownerOnly: false
+      });
+      return;
+    }
     if (method === "PUT" && url.pathname.endsWith("/current")) {
       const body = requestBodyWithoutOrigin(request);
       selectedSessionId = String(body.sessionId || SESSION_ID);
