@@ -8,7 +8,7 @@ import { useVibe64SessionDialogs } from "@/composables/useVibe64SessionDialogs.j
 import { useVibe64SessionRenewal } from "@/composables/useVibe64SessionRenewal.js";
 import { sessionRecordHasActiveAgentWork } from "@/lib/vibe64MountedSessionState.js";
 import {
-  isClosedVibe64Session,
+  isArchivedVibe64Session,
   vibe64SessionDisplayTitle,
   vibe64SessionStatusColor,
   vibe64SessionStatusLabel
@@ -188,7 +188,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     summarySession: selectedListSession
   });
   const selectedSession = mounted.session;
-  const selectedSessionClosed = computed(() => isClosedVibe64Session(selectedSession.value || {}));
+  const selectedSessionArchived = computed(() => isArchivedVibe64Session(selectedSession.value || {}));
   const selectedSessionTitle = computed(() => (
     vibe64SessionDisplayTitle(selectedSession.value || {}) ||
     `Session ${props.sessionData.shortSessionId(selectedSessionId.value)}`
@@ -214,18 +214,18 @@ function useVibe64SessionRuntimeHost(props, emit) {
 
   async function inspectWorkState({ isCurrent }) {
     const sessionId = selectedSessionId.value;
-    const sessionClosed = selectedSessionClosed.value;
+    const sessionArchived = selectedSessionArchived.value;
     const requestIsCurrent = () => Boolean(
       workStateActive &&
       isCurrent() &&
       !sourceOperationsSuspended.value &&
       selectedSessionId.value === sessionId &&
-      selectedSessionClosed.value === sessionClosed
+      selectedSessionArchived.value === sessionArchived
     );
     if (sourceOperationsSuspended.value) {
       return;
     }
-    if (!sessionId || sessionClosed) {
+    if (!sessionId || sessionArchived) {
       if (requestIsCurrent()) {
         workState.value = {
           checkedAt: new Date().toISOString(),
@@ -318,7 +318,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
 
   const dialogModels = useVibe64SessionDialogs({
     clearSelectedSession: props.sessionData.clearSelectedSession,
-    isSelectedSessionClosed: selectedSessionClosed,
+    isSelectedSessionArchived: selectedSessionArchived,
     refreshSessionData,
     selectedSessionId,
     selectedSessionTitle,
@@ -335,7 +335,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
   });
   const sourceOperationsSuspended = renewalModel.sourceOperationsSuspended;
   const dialogs = proxySessionDialogs({
-    abandon: dialogModels.abandon,
+    archive: dialogModels.archive,
     renewal: renewalModel
   });
   const conversationLog = proxyRefs(useVibe64ConversationLog({
@@ -343,7 +343,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     session: selectedSession
   }));
   const selection = proxyRefs({
-    isClosed: selectedSessionClosed,
+    isArchived: selectedSessionArchived,
     selectedSession,
     selectedSessionDetailState: mounted.detailState,
     selectedSessionId,
@@ -565,7 +565,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
   function emitToolbarControls() {
     emit("toolbar-controls-ready", {
       controls: {
-        abandon: dialogs.abandon
+        archive: dialogs.archive
       },
       sessionId: selectedSessionId.value
     });
@@ -640,7 +640,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     }
   });
   watch(() => {
-    return `${selectedSessionId.value}:${selectedSessionClosed.value}:${runtimeHostWorkTaskRevision(selectedSession.value)}`;
+    return `${selectedSessionId.value}:${selectedSessionArchived.value}:${runtimeHostWorkTaskRevision(selectedSession.value)}`;
   }, () => {
     const taskState = runtimeHostWorkTaskState(selectedSession.value);
     if (taskState.operation || taskState.updateOperation) {

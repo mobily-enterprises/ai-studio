@@ -28,7 +28,7 @@ import {
   vibe64SessionSourcePath
 } from "@/lib/vibe64SessionPaths.js";
 import {
-  isClosedVibe64Session,
+  isArchivedVibe64Session,
   vibe64SessionRevision
 } from "@/lib/vibe64SessionViewModel.js";
 import {
@@ -232,7 +232,7 @@ function launchControlsSessionCanRun(session = {}) {
     : {};
   return Boolean(
     String(session?.sessionId || "").trim() &&
-    !isClosedVibe64Session(session) &&
+    !isArchivedVibe64Session(session) &&
     !String(metadata.session_closing_reason || "").trim() &&
     outputTargetWorktreePath(session)
   );

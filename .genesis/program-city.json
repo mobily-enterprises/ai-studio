@@ -221,7 +221,7 @@
       "implementationMap": "",
       "name": "workspace-setup",
       "path": "genesis/program/execution/workspace-setup.md",
-      "publicContract": "`vibe64.workspace-setup.v1` is the only accepted schema. Its source is strict,\nreadable Markdown: each `Prepare` entry declares a label, runtimes, optional\nworking directory and path condition, then separate backticked argv values.\nVibe64 parses that opaque Stack section mechanically and runs the normalized\nargv with the project's resolved environment. It runs once for a fresh recipe,\nrecords progress and exact recipe identity, waits before dependent work, and\nexposes retry after failure. Missing or ambiguous declarations remain explicit;\nVibe64 never guesses an installer or reads a retired grammar.\nIf an explicit retry finds that Genesis recognizes the project as unversioned\nor outdated and prescribes migration, Vibe64 runs its bundled `genesis migrate`\ncommand through the same locked managed-source execution boundary. That command\ndeclares both its Node and Git runtimes and receives the exact session source as\na Git-safe directory, so the managed daemon identity can inspect the\nsession-owned worktree without weakening Git policy elsewhere. Vibe64 records\nthe bounded output, re-inspects the resulting Stack contract, and then runs the\ndeclared preparation recipe. It does not migrate a current, newer, invalid, or\notherwise unrecognized project merely because setup inspection failed.\nDuring preparation, the workspace shows one compact progress line. Opening its\ndetails reveals the bounded transcript; Collapse returns to the compact line,\nwhile Dismiss removes it. An opened transcript remains available after\ncompletion until dismissed. The browser remembers that dismissal across reloads for the\nexact preparation attempt without changing its result; a new attempt is visible\nagain. A successful preparation left compact disappears when it finishes; a\nfailure remains visible with direct Retry and Fix it with AI actions until\ndismissed, without requiring the person to expand terminal details. Fix it\nopens a workspace-writing Temporary AI task with the current diagnostic and\nbounded transcript, selects and focuses that separate chat, and presents a\nconcise visible request instead of the complete operational prompt. A prominent\nnotice explains that Temporary AI may edit the session, that progress and\nquestions remain in this chat, and that Vibe64 will verify the result. Every\nproduct surface that offers this ephemeral repair path uses the same Fix it with\nAI control and handoff presentation.\nAfter an accepted repair turn completes or fails, Vibe64—not the assistant—runs\nthe deterministic preparation retry and records its result. This includes a\nprovider timeout after edits may already have landed; an explicit user stop is\nnot treated as permission to retry. A repair that changed nothing simply\nreturns to the same authoritative setup failure. If the assistant needs human\ninput, that question remains in the temporary conversation instead of being\nmistaken for a completed repair.",
+      "publicContract": "`vibe64.workspace-setup.v1` is the only accepted schema. Its source is strict,\nreadable Markdown: each `Prepare` entry declares a label, runtimes, optional\nworking directory and path condition, then separate backticked argv values.\nVibe64 parses that opaque Stack section mechanically and runs the normalized\nargv with the project's resolved environment. It runs once for a fresh recipe,\nrecords progress and exact recipe identity, waits before dependent work, and\nexposes retry after failure. Missing or ambiguous declarations remain explicit;\nVibe64 never guesses an installer or reads a retired grammar.\nIf an explicit retry finds that Genesis recognizes the project as unversioned\nor outdated and prescribes migration, Vibe64 runs its bundled `genesis migrate`\ncommand through the same locked managed-source execution boundary. That command\ndeclares both its Node and Git runtimes and receives the exact session source as\na Git-safe directory, so the managed daemon identity can inspect the\nsession-owned worktree without weakening Git policy elsewhere. Vibe64 records\nthe bounded output, re-inspects the resulting Stack contract, and then runs the\ndeclared preparation recipe. It does not migrate a current, newer, invalid, or\notherwise unrecognized project merely because setup inspection failed.\nDuring preparation, the workspace shows one compact progress line. Opening its\ndetails reveals the bounded transcript; while work is active, Collapse returns\nto the compact line and Dismiss is unavailable. After the operation finishes,\nDismiss removes it. An opened transcript remains available after completion\nuntil dismissed. The browser remembers that dismissal across reloads for the\nexact preparation attempt without changing its result; a new attempt is visible\nagain. A successful preparation left compact disappears when it finishes; a\nfailure remains visible with direct Retry and Fix it with AI actions until\ndismissed, without requiring the person to expand terminal details. Fix it\nopens a workspace-writing Temporary AI task with the current diagnostic and\nbounded transcript, selects and focuses that separate chat, and presents a\nconcise visible request instead of the complete operational prompt. A prominent\nnotice explains that Temporary AI may edit the session, that progress and\nquestions remain in this chat, and that Vibe64 will verify the result. Every\nproduct surface that offers this ephemeral repair path uses the same Fix it with\nAI control and handoff presentation.\nAfter an accepted repair turn completes or fails, Vibe64—not the assistant—runs\nthe deterministic preparation retry and records its result. This includes a\nprovider timeout after edits may already have landed; an explicit user stop is\nnot treated as permission to retry. A repair that changed nothing simply\nreturns to the same authoritative setup failure. If the assistant needs human\ninput, that question remains in the temporary conversation instead of being\nmistaken for a completed repair.",
       "sourceFileIds": [
         "file:packages/vibe64-terminals/src/server/workspaceSetup.js",
         "file:packages/vibe64-sessions/src/server/service.js",
@@ -335,12 +335,13 @@
       "implementationMap": "",
       "name": "catalog",
       "path": "genesis/program/projects/catalog.md",
-      "publicContract": "The catalog lists stable project identities, creates projects, and selects one\nproject as the current context. The default creation path produces one real Git\ncommit containing a technology-neutral, current-format Genesis foundation; a\ntrusted technology template is materialized only when a caller selects it\nexplicitly. Selection changes the active project without rewriting its\napplication source. A hosted project namespace may contain repository mirrors\nand session state without itself being a Git worktree; only an explicit checkout\nis treated as inspectable source.",
+      "publicContract": "The catalog lists stable project identities, creates projects, and selects one\nproject as the current context. The default creation path produces one real Git\ncommit containing a technology-neutral, current-format Genesis foundation; a\ntrusted technology template is materialized only when a caller selects it\nexplicitly. Selection changes the active project without rewriting its\napplication source. A hosted project namespace may contain repository mirrors\nand session state without itself being a Git worktree; only an explicit checkout\nis treated as inspectable source.\nThe hosted project namespace is the catalog authority. When that namespace has\nbeen removed outside Vibe64, the next catalog read removes its stale private\nproject state so the deleted project cannot remain or block recreation.",
       "sourceFileIds": [
         "file:packages/vibe64-project/src/server/service.js",
         "file:packages/vibe64-project/src/server/actions.js",
         "file:packages/vibe64-project/src/server/managedProject.js",
         "file:packages/vibe64-project/src/server/projectFoundation.js",
+        "file:packages/vibe64-core/src/server/studioProjectContext.js",
         "file:src/composables/useVibe64ProjectsResource.js"
       ],
       "sources": [
@@ -348,6 +349,7 @@
         "packages/vibe64-project/src/server/actions.js",
         "packages/vibe64-project/src/server/managedProject.js",
         "packages/vibe64-project/src/server/projectFoundation.js",
+        "packages/vibe64-core/src/server/studioProjectContext.js",
         "src/composables/useVibe64ProjectsResource.js"
       ],
       "subsystem": "projects",
@@ -420,18 +422,22 @@
       "implementationMap": "",
       "name": "workspaces",
       "path": "genesis/program/sessions/workspaces.md",
-      "publicContract": "People can create, select, inspect, and abandon sessions. A new session receives\nits own Git source and stable identity. Its conversation, source location,\nagent activity, workspace preparation, and repository status remain available across UI\nrefreshes. Abandoning a session closes the active work while preserving the\nread-only history needed to recover its conversation and understand what\nhappened.\nRepository status uses realtime changes as its primary signal and a bounded\nfreshness check as fallback. The fallback does no work while the page is hidden\nand refreshes immediately when the person returns. Session-renewal recovery\nalso slows its checks when maintenance needs operator attention rather than\nretrying continuously.",
+      "publicContract": "People can create, select, inspect, and archive sessions. A new session receives\nits own Git source and stable identity. Its conversation, source location,\nagent activity, workspace preparation, and repository status remain available\nacross UI refreshes. Archiving stops active work, removes its active workspace,\nand preserves the read-only history needed to recover its conversation and\nunderstand what happened. Session History reads lightweight archive indexes and\nshows the most recently archived session first.\nRepository status uses realtime changes as its primary signal and a bounded\nfreshness check as fallback. The fallback does no work while the page is hidden\nand refreshes immediately when the person returns. Session-renewal recovery\nalso slows its checks when maintenance needs operator attention rather than\nretrying continuously.",
       "sourceFileIds": [
         "file:packages/vibe64-sessions/src/server/service.js",
         "file:packages/vibe64-runtime/src/server/runtime.js",
+        "file:packages/vibe64-runtime/src/server/sessionStore.js",
         "file:packages/vibe64-terminals/src/server/sessionSource.js",
+        "file:src/composables/useArchivedVibe64Sessions.js",
         "file:src/composables/useVibe64SessionRenewal.js",
         "file:src/composables/useVibe64SessionRepositoryStatusRegistry.js"
       ],
       "sources": [
         "packages/vibe64-sessions/src/server/service.js",
         "packages/vibe64-runtime/src/server/runtime.js",
+        "packages/vibe64-runtime/src/server/sessionStore.js",
         "packages/vibe64-terminals/src/server/sessionSource.js",
+        "src/composables/useArchivedVibe64Sessions.js",
         "src/composables/useVibe64SessionRenewal.js",
         "src/composables/useVibe64SessionRepositoryStatusRegistry.js"
       ],
@@ -478,7 +484,7 @@
       "implementationMap": "- `packages/vibe64-execution/src/server/gitTurnCheckpoint.js` captures private,\n  non-advertised worktree checkpoints without changing the user's index. Each\n  checkpoint retains the preceding checkpoint as recoverable history while its\n  tree reflects the current saveable worktree, so a newly ignored local file is\n  left on disk without remaining in later checkpoint trees.\n- `packages/vibe64-project/src/server/projectSourceMutationLock.js` serializes\n  canonical source mutations across processes.\n- `scopedSessionWorkCommand()` assigns one semantic operation identity plus\n  project and session ownership to repository operations. Inspection and update\n  checks enter the managed host once through `runSessionWorkOperation()`, while\n  Save and recovery retain their bounded command sequencing.",
       "name": "save-work",
       "path": "genesis/program/source/save-work.md",
-      "publicContract": "Save captures tracked, staged, unstaged, and relevant untracked session work,\npreserves non-conflicting canonical changes, and publishes one ordinary commit\nto the exact configured GitHub, managed-Git, or local-source authority. It\nrefuses ambiguous authority, overlapping sibling work, conflicting changes,\ndirty local authority, or a moving canonical branch. Progress and bounded\ncommand output remain visible across reloads. A verified publication advances\nthe session baseline and preserves any later session edits; an interrupted Save\nis reconciled only when the canonical authority proves the prepared commit was\nalready published.\nWhile Save runs, the workspace shows one compact progress line. Opening its\ndetails reveals the bounded command progress; Collapse returns to the compact\nline, while Dismiss removes it. The browser remembers a dismissal across reloads\nfor that exact Save or Update attempt without changing its result; a new attempt\nis visible again. A successful Save disappears on\ncompletion; a failed Save remains visible with its recovery actions until\ndismissed. The selected session's icon-only Save or Update action stays in the\nchat header beside the session it will affect, rather than occupying the\napplication-wide toolbar.\nEach Save or Update attempt starts a fresh visible transcript. Retrying after a\nfailure does not mix the earlier attempt's errors into the new operation.\nThe current activity is causally bound to the Save or Update command the person\nactually invoked. If admission fails before that command creates a durable\noperation, the failure is shown without borrowing the label, icon, or transcript\nof an older completed repository operation.\nAfter a reload, current activity is restored only from the server's exact live\noperation identity. Durable task status and timestamp order are not treated as\nproof that an operation is still running; interrupted work is reconciled by the\nserver before it reports the session state. Completed task records remain\ndiagnostic history and are never selected as current activity.\nAfter a successful reconciled Save, the chat offers a behavior-preserving\nDeslop of that exact published commit. Accepting sends one ordinary visible\nmessage through the session's existing assistant path; declining only hides the\noffer and records no preference. A Save that still needs reconciliation does\nnot offer cleanup yet.",
+      "publicContract": "Save captures tracked, staged, unstaged, and relevant untracked session work,\npreserves non-conflicting canonical changes, and publishes one ordinary commit\nto the exact configured GitHub, managed-Git, or local-source authority. It\nrefuses ambiguous authority, overlapping sibling work, conflicting changes,\ndirty local authority, or a moving canonical branch. Progress and bounded\ncommand output remain visible across reloads. A verified publication advances\nthe session baseline and preserves any later session edits; an interrupted Save\nis reconciled only when the canonical authority proves the prepared commit was\nalready published.\nWhile Save runs, the workspace shows one compact progress line. Opening its\ndetails reveals the bounded command progress; while work is active, Collapse\nreturns to the compact line and Dismiss is unavailable. After the operation\nfinishes, Dismiss removes it. The browser remembers a dismissal across reloads\nfor that exact Save or Update attempt without changing its result; a new attempt\nis visible again. A successful Save disappears on\ncompletion; a failed Save remains visible with its recovery actions until\ndismissed. The selected session's icon-only Save or Update action stays in the\nchat header beside the session it will affect, rather than occupying the\napplication-wide toolbar.\nEach Save or Update attempt starts a fresh visible transcript. Retrying after a\nfailure does not mix the earlier attempt's errors into the new operation.\nThe current activity is causally bound to the Save or Update command the person\nactually invoked. If admission fails before that command creates a durable\noperation, the failure is shown without borrowing the label, icon, or transcript\nof an older completed repository operation.\nAfter a reload, current activity is restored only from the server's exact live\noperation identity. Durable task status and timestamp order are not treated as\nproof that an operation is still running; interrupted work is reconciled by the\nserver before it reports the session state. Completed task records remain\ndiagnostic history and are never selected as current activity.\nAfter a successful reconciled Save, the chat offers a behavior-preserving\nDeslop of that exact published commit. Accepting sends one ordinary visible\nmessage through the session's existing assistant path; declining only hides the\noffer and records no preference. A Save that still needs reconciliation does\nnot offer cleanup yet.",
       "sourceFileIds": [
         "file:packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js",
         "file:packages/vibe64-terminals/src/server/sessionWorkSave.js",
@@ -1131,6 +1137,11 @@
     {
       "fromId": "operation:projects/catalog",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-core/src/server/studioProjectContext.js"
+    },
+    {
+      "fromId": "operation:projects/catalog",
+      "kind": "implemented-by",
       "toId": "file:src/composables/useVibe64ProjectsResource.js"
     },
     {
@@ -1221,7 +1232,17 @@
     {
       "fromId": "operation:sessions/workspaces",
       "kind": "implemented-by",
+      "toId": "file:packages/vibe64-runtime/src/server/sessionStore.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
       "toId": "file:packages/vibe64-terminals/src/server/sessionSource.js"
+    },
+    {
+      "fromId": "operation:sessions/workspaces",
+      "kind": "implemented-by",
+      "toId": "file:src/composables/useArchivedVibe64Sessions.js"
     },
     {
       "fromId": "operation:sessions/workspaces",
@@ -1349,7 +1370,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:9b9a24c4df1b1143185c748e80cc9afe64317756e23053c7318aedf9b2d06d92",
+  "programHash": "sha256:f83ed46ee86ead885cdc98a41003b6bb7a5d21c5665ade29bbdf44db5b602dd1",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

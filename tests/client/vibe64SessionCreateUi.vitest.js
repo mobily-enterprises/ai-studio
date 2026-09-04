@@ -116,7 +116,7 @@ async function renderToolbar({
   title = "Create a new Vibe64 session"
 } = {}) {
   const app = createSSRApp(Vibe64SessionToolbar, {
-    abandon: { command: { isRunning: false } },
+    archive: { command: { isRunning: false } },
     createVisible,
     toolbar: {
       canCreateSession: canCreate,
@@ -162,7 +162,7 @@ describe("session creation controls", () => {
   });
 
   it("keeps a regular session cap visible with its authoritative disabled reason", async () => {
-    const reason = "Studio allows up to 3 open sessions. Close one before creating another.";
+    const reason = "Studio allows up to 3 open sessions. Archive one before creating another.";
     const button = await renderCreateButton({
       canCreate: false,
       iconOnly: true,

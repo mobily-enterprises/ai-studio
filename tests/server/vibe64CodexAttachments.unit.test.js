@@ -957,7 +957,7 @@ test("controller rejects persisted and in-flight session-closing attachment admi
         createRuntime() {
           return {
             async getSession() {
-              return session("persisted-closing", "abandoned");
+              return session("persisted-closing", "archived");
             }
           };
         }
@@ -970,7 +970,7 @@ test("controller rejects persisted and in-flight session-closing attachment admi
     assert.equal(persisted.ok, false);
     assert.equal(persisted.code, "vibe64_agent_attachment_session_unavailable");
     assert.equal(persisted.statusCode, 409);
-    assert.match(persisted.error, /Session is abandoned/u);
+    assert.match(persisted.error, /Session is archived/u);
 
     let sessionReads = 0;
     const racingController = createCodexTerminalController({

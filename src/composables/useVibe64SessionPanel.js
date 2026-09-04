@@ -62,7 +62,7 @@ function useVibe64SessionPanel(props, emit) {
   const route = useRoute();
   const projectSlug = useVibe64ProjectSlug();
 
-  const fallbackAbandon = {
+  const fallbackArchive = {
     command: {
       isRunning: false
     },
@@ -99,7 +99,7 @@ function useVibe64SessionPanel(props, emit) {
     };
   });
   const selection = proxyRefs({
-    isClosed: sessionData.isSelectedSessionClosed,
+    isArchived: sessionData.isSelectedSessionArchived,
     selectedSession: sessionData.selectedSession,
     selectedSessionId: sessionData.selectedSessionId
   });
@@ -194,9 +194,9 @@ function useVibe64SessionPanel(props, emit) {
     (toolbar.sessions || []).length < 1
   ));
   const emptyLayoutVisible = computed(() => Boolean(!selection.selectedSession && runtimeHostSessionIds.value.length < 1));
-  const selectedAbandon = computed(() => selectedRuntimeState.value?.toolbarControls?.abandon || fallbackAbandon);
-  const selectedSessionClosing = computed(() => sessionPanelSelectedSessionClosing({
-    abandon: selectedAbandon.value,
+  const selectedArchive = computed(() => selectedRuntimeState.value?.toolbarControls?.archive || fallbackArchive);
+  const selectedSessionArchiving = computed(() => sessionPanelSelectedSessionArchiving({
+    archive: selectedArchive.value,
     selectedSessionId: selection.selectedSessionId
   }));
   const rawPageError = computed(() => blockingVibe64SessionPageError({
@@ -282,8 +282,8 @@ function useVibe64SessionPanel(props, emit) {
     promptHintPolicy,
     projectPane,
     runtimeHostSessionIds,
-    selectedAbandon,
-    selectedSessionClosing,
+    selectedArchive,
+    selectedSessionArchiving,
     selection,
     sessionData,
     setRuntimeBusy,
@@ -464,13 +464,13 @@ function sessionPanelPageErrorMessage(error = "") {
   return message;
 }
 
-function sessionPanelSelectedSessionClosing({
-  abandon = null,
+function sessionPanelSelectedSessionArchiving({
+  archive = null,
   selectedSessionId = ""
 } = {}) {
   const selectedId = String(selectedSessionId || "").trim();
-  const closingId = String(abandon?.closingSessionId || "").trim();
-  return Boolean(abandon?.closing && selectedId && closingId === selectedId);
+  const archivingId = String(archive?.archivingSessionId || "").trim();
+  return Boolean(archive?.archiving && selectedId && archivingId === selectedId);
 }
 
 function sessionPanelDashboardContext(projectContext = {}, sessionsApiPath = "") {
@@ -572,7 +572,7 @@ export {
   sessionPanelDashboardContext,
   sessionPanelEmptyStateActivity,
   sessionPanelRuntimeHostDiagnostics,
-  sessionPanelSelectedSessionClosing,
+  sessionPanelSelectedSessionArchiving,
   sessionRepositoryWorkState,
   sessionPanelToolbarSessions,
   useVibe64SessionPanel,

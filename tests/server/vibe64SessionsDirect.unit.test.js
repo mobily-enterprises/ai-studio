@@ -8,7 +8,7 @@ import {
   ACTION_INSPECT_REPOSITORY_HISTORY,
   ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
-  ACTION_ABANDON_SESSION,
+  ACTION_ARCHIVE_SESSION,
   ACTION_CREATE_SESSION,
   ACTION_DISCARD_MESSAGE_SUGGESTION,
   ACTION_INSPECT_ASSISTANT_ACCESS,
@@ -18,6 +18,7 @@ import {
   ACTION_INSPECT_SESSION_CHANGES,
   ACTION_INSPECT_SESSION_WORK,
   ACTION_LIST_ASSISTANT_CAPABILITIES,
+  ACTION_LIST_ARCHIVED_SESSIONS,
   ACTION_LIST_SESSIONS,
   ACTION_LIST_MESSAGE_SUGGESTIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
@@ -224,6 +225,7 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_INSPECT_REPOSITORY_VERSION_FILES,
     ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
     ACTION_LIST_SESSIONS,
+    ACTION_LIST_ARCHIVED_SESSIONS,
     ACTION_LIST_ASSISTANT_CAPABILITIES,
     ACTION_UPDATE_ASSISTANT_MODEL_ACCESS,
     ACTION_CREATE_SESSION,
@@ -244,7 +246,7 @@ test("sessions expose only direct chat and source actions", () => {
     ACTION_UPDATE_SESSION_WORK,
     ACTION_READ_SESSION_CONVERSATION_LOG,
     ACTION_RETRY_WORKSPACE_SETUP,
-    ACTION_ABANDON_SESSION,
+    ACTION_ARCHIVE_SESSION,
     ACTION_SEND_AGENT_MESSAGE,
     ACTION_INSPECT_ASSISTANT_ACCESS,
     ACTION_LIST_MESSAGE_SUGGESTIONS,
@@ -1834,7 +1836,7 @@ test("an early assistant message waits for workspace preparation and is sent onc
   assert.equal(sendCount, 1);
 });
 
-test("live workspace preparation prevents retry and close races", async () => {
+test("live workspace preparation prevents retry and archive races", async () => {
   const service = createService({
     project: {
       async createRuntime() {
@@ -1864,16 +1866,16 @@ test("live workspace preparation prevents retry and close races", async () => {
     }
   });
 
-  const closed = await service.abandonSession("session-1");
-  assert.equal(closed.ok, false);
-  assert.equal(closed.code, "vibe64_workspace_setup_running");
+  const archived = await service.archiveSession("session-1");
+  assert.equal(archived.ok, false);
+  assert.equal(archived.code, "vibe64_workspace_setup_running");
 
   const retried = await service.retryWorkspaceSetup("session-1");
   assert.equal(retried.ok, false);
   assert.equal(retried.code, "vibe64_workspace_setup_running");
 });
 
-test("an active Save keeps abandonment out of its agent-write window", async () => {
+test("an active Save keeps archiving out of its agent-write window", async () => {
   const lock = agentWriteLockHarness();
   let finishSave;
   let saveStarted;
@@ -1890,9 +1892,9 @@ test("an active Save keeps abandonment out of its agent-write window", async () 
     status: "active"
   };
   const runtime = {
-    async abandonSession() {
-      calls.push("abandon");
-      session.status = "abandoned";
+    async archiveSession() {
+      calls.push("archive");
+      session.status = "archived";
       return { ...session };
     },
     async clearSessionClosing() {
@@ -1931,7 +1933,7 @@ test("an active Save keeps abandonment out of its agent-write window", async () 
   });
   await saveStartedPromise;
 
-  const blocked = await service.abandonSession("session-1");
+  const blocked = await service.archiveSession("session-1");
   assert.equal(blocked.ok, false);
   assert.equal(blocked.code, "vibe64_agent_write_mode_busy");
   assert.equal(blocked.retryable, true);
@@ -1939,14 +1941,14 @@ test("an active Save keeps abandonment out of its agent-write window", async () 
 
   finishSave();
   await saving;
-  const closed = await service.abandonSession("session-1");
-  assert.equal(closed.ok, true);
+  const archived = await service.archiveSession("session-1");
+  assert.equal(archived.ok, true);
   assert.deepEqual(calls, [
     "save-started",
     "save-finished",
     "closing",
     "terminals",
-    "abandon"
+    "archive"
   ]);
   assert.deepEqual(lock.attempts.map((attempt) => attempt.operationName), [
     "agent-write-mode",
@@ -1955,7 +1957,7 @@ test("an active Save keeps abandonment out of its agent-write window", async () 
   ]);
 });
 
-test("active abandonment keeps Save out of its agent-write window", async () => {
+test("active archiving keeps Save out of its agent-write window", async () => {
   const lock = agentWriteLockHarness();
   let finishCleanup;
   let cleanupStarted;
@@ -1967,9 +1969,9 @@ test("active abandonment keeps Save out of its agent-write window", async () => 
   });
   const calls = [];
   const runtime = {
-    async abandonSession() {
-      calls.push("abandon");
-      return { sessionId: "session-1", status: "abandoned" };
+    async archiveSession() {
+      calls.push("archive");
+      return { sessionId: "session-1", status: "archived" };
     },
     async clearSessionClosing() {},
     async getSession() {
@@ -2000,7 +2002,7 @@ test("active abandonment keeps Save out of its agent-write window", async () => 
     }
   });
 
-  const closing = service.abandonSession("session-1");
+  const archiving = service.archiveSession("session-1");
   await cleanupStartedPromise;
   let saveRan = false;
   const save = await runVibe64AgentWriteExclusive(runtime, "session-1", async () => {
@@ -2012,24 +2014,24 @@ test("active abandonment keeps Save out of its agent-write window", async () => 
   assert.equal(saveRan, false);
 
   finishCleanup();
-  const closed = await closing;
-  assert.equal(closed.ok, true);
+  const archived = await archiving;
+  assert.equal(archived.ok, true);
   assert.deepEqual(calls, [
     "closing",
     "terminals-started",
     "terminals-finished",
-    "abandon"
+    "archive"
   ]);
 });
 
-test("failed abandonment cleanup releases the agent-write lock for retry", async () => {
+test("failed archiving cleanup releases the agent-write lock for retry", async () => {
   const lock = agentWriteLockHarness();
   const calls = [];
   let cleanupAttempt = 0;
   const runtime = {
-    async abandonSession() {
-      calls.push("abandon");
-      return { sessionId: "session-1", status: "abandoned" };
+    async archiveSession() {
+      calls.push("archive");
+      return { sessionId: "session-1", status: "archived" };
     },
     async clearSessionClosing() {
       calls.push("clear-closing");
@@ -2065,12 +2067,12 @@ test("failed abandonment cleanup releases the agent-write lock for retry", async
     }
   });
 
-  const failed = await service.abandonSession("session-1");
+  const failed = await service.archiveSession("session-1");
   assert.equal(failed.ok, false);
   assert.equal(failed.code, "vibe64_test_cleanup_failed");
   assert.deepEqual(calls, ["closing", "terminals:1", "clear-closing"]);
 
-  const retried = await service.abandonSession("session-1");
+  const retried = await service.archiveSession("session-1");
   assert.equal(retried.ok, true);
   assert.deepEqual(calls, [
     "closing",
@@ -2078,11 +2080,11 @@ test("failed abandonment cleanup releases the agent-write lock for retry", async
     "clear-closing",
     "closing",
     "terminals:2",
-    "abandon"
+    "archive"
   ]);
 });
 
-test("concurrent abandonment has one cleanup owner", async () => {
+test("concurrent archiving has one cleanup owner", async () => {
   const lock = agentWriteLockHarness();
   let finishCleanup;
   let cleanupStarted;
@@ -2092,12 +2094,12 @@ test("concurrent abandonment has one cleanup owner", async () => {
   const cleanupFinishedPromise = new Promise((resolve) => {
     finishCleanup = resolve;
   });
-  let abandonCount = 0;
+  let archiveCount = 0;
   let cleanupCount = 0;
   const runtime = {
-    async abandonSession() {
-      abandonCount += 1;
-      return { sessionId: "session-1", status: "abandoned" };
+    async archiveSession() {
+      archiveCount += 1;
+      return { sessionId: "session-1", status: "archived" };
     },
     async clearSessionClosing() {},
     async getSession() {
@@ -2125,22 +2127,22 @@ test("concurrent abandonment has one cleanup owner", async () => {
     }
   });
 
-  const first = service.abandonSession("session-1");
+  const first = service.archiveSession("session-1");
   await cleanupStartedPromise;
-  const second = await service.abandonSession("session-1");
+  const second = await service.archiveSession("session-1");
   assert.equal(second.ok, false);
   assert.equal(second.code, "vibe64_agent_write_mode_busy");
   assert.equal(cleanupCount, 1);
-  assert.equal(abandonCount, 0);
+  assert.equal(archiveCount, 0);
 
   finishCleanup();
-  const closed = await first;
-  assert.equal(closed.ok, true);
+  const archived = await first;
+  assert.equal(archived.ok, true);
   assert.equal(cleanupCount, 1);
-  assert.equal(abandonCount, 1);
+  assert.equal(archiveCount, 1);
 });
 
-test("closing a session releases its managed resources after terminals stop", async () => {
+test("archiving a session releases its managed resources after terminals stop", async () => {
   const calls = [];
   const session = {
     sessionId: "session-1",
@@ -2148,9 +2150,9 @@ test("closing a session releases its managed resources after terminals stop", as
     status: "active"
   };
   const runtime = {
-    async abandonSession() {
-      calls.push("abandon");
-      return { ...session, status: "abandoned" };
+    async archiveSession() {
+      calls.push("archive");
+      return { ...session, status: "archived" };
     },
     async clearSessionClosing() {},
     async getSession() {
@@ -2181,12 +2183,12 @@ test("closing a session releases its managed resources after terminals stop", as
     }
   });
 
-  const result = await service.abandonSession("session-1");
+  const result = await service.archiveSession("session-1");
   assert.equal(result.ok, true);
-  assert.deepEqual(calls, ["closing", "terminals", "resources:session-1", "abandon"]);
+  assert.deepEqual(calls, ["closing", "terminals", "resources:session-1", "archive"]);
 });
 
-test("closing a source-creation failure does not release resources that were never provisioned", async () => {
+test("archiving a source-creation failure does not release resources that were never provisioned", async () => {
   const calls = [];
   const session = {
     metadata: {
@@ -2197,9 +2199,9 @@ test("closing a source-creation failure does not release resources that were nev
     status: "blocked"
   };
   const runtime = {
-    async abandonSession() {
-      calls.push("abandon");
-      return { ...session, status: "abandoned" };
+    async archiveSession() {
+      calls.push("archive");
+      return { ...session, status: "archived" };
     },
     async clearSessionClosing() {},
     async getSession() {
@@ -2230,9 +2232,9 @@ test("closing a source-creation failure does not release resources that were nev
     }
   });
 
-  const result = await service.abandonSession("failed-source");
+  const result = await service.archiveSession("failed-source");
   assert.equal(result.ok, true);
-  assert.deepEqual(calls, ["closing", "terminals", "abandon"]);
+  assert.deepEqual(calls, ["closing", "terminals", "archive"]);
 });
 
 test("session creation resolves a partial selection before checking access", async () => {
@@ -2390,6 +2392,45 @@ test("assistant model-access updates delegate the authenticated owner to the hos
   }]);
 });
 
+test("archived session history is ordered by archive time with a stable session-id tie-break", async () => {
+  const requestedOptions = [];
+  const service = createService({
+    project: {
+      async createRuntime() {
+        return {
+          async listSessionSummaries(options) {
+            requestedOptions.push(options);
+            return [
+              { archivedAt: "2026-09-02T10:00:00.000Z", sessionId: "2026-09-02", status: "archived" },
+              { archivedAt: "2026-09-04T10:00:00.000Z", sessionId: "session-a", status: "archived" },
+              { archivedAt: "2026-09-04T10:00:00.000Z", sessionId: "session-z", status: "archived" },
+              { archivedAt: "2026-09-05T10:00:00.000Z", sessionId: "2026-08-01", status: "archived" }
+            ];
+          }
+        };
+      }
+    },
+    terminals: {},
+    workspaceSetupRunner: {
+      isRunning: () => false,
+      wait: () => null
+    }
+  });
+
+  const result = await service.listArchivedSessions();
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requestedOptions, [{ statusGroup: "archived" }]);
+  assert.deepEqual(result.sessions.map(({ sessionId }) => sessionId), [
+    "2026-08-01",
+    "session-z",
+    "session-a",
+    "2026-09-02"
+  ]);
+  assert.equal(Object.hasOwn(result, "creation"), false);
+  assert.equal(Object.hasOwn(result, "limits"), false);
+});
+
 test("session responses enforce the ordinary three-session policy on the server", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const harness = sessionCreationPolicyHarness({
@@ -2475,7 +2516,7 @@ test("concurrent shared-database creation admits one request and leaves no rejec
     assert.equal(accepted.sessionId, "session-1");
     assert.deepEqual(accepted.creation, {
       canCreate: false,
-      disabledReason: "This project shares one development database. Close its open session before creating another.",
+      disabledReason: "This project shares one development database. Archive its open session before creating another.",
       mode: "direct",
       showCreateAction: false
     });

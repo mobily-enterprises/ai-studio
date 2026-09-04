@@ -69,7 +69,7 @@ serve only that view, returning
 to a view refreshes it promptly, and repeated failures slow recovery checks.
 Open sessions that choose the same coding-assistant application
 share one running assistant service, and that service stops when its final
-session closes. Short-lived suggestions and focused helper tasks reuse the
+session is archived. Short-lived suggestions and focused helper tasks reuse the
 session's chosen service instead of keeping another assistant service running.
 Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.

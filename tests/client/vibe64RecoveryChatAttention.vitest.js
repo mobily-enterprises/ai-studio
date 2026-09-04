@@ -113,7 +113,7 @@ const SessionRuntimeHost = componentFromSfcTemplate(
         saveSessionWork: vi.fn(),
         selectedAgentTerminalId: ref(""),
         selection: reactive({
-          isClosed: false,
+          isArchived: false,
           selectedSession: { sessionId: props.sessionId }
         }),
         sendAgentMessage: vi.fn(),
@@ -167,10 +167,10 @@ const SessionPanel = componentFromSfcTemplate(
         props,
         resizeChatColumnWithKeyboard: vi.fn(),
         runtimeHostSessionIds: ref(["session-1"]),
-        selectedAbandon: reactive({}),
-        selectedSessionClosing: ref(false),
+        selectedArchive: reactive({}),
+        selectedSessionArchiving: ref(false),
         selection: reactive({
-          isClosed: false,
+          isArchived: false,
           selectedSessionId: "session-1"
         }),
         sessionData: reactive({

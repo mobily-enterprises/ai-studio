@@ -324,7 +324,7 @@ function useVibe64SessionRenewal({
     const durableRenewalNeedsAccess = ["completed", "failed", "review", "running"].includes(status);
     return Boolean(sessionId.value && (
       durableRenewalNeedsAccess || (
-        session.value?.archived !== true && session.value?.status !== "abandoned"
+        session.value?.archived !== true && session.value?.status !== "archived"
       )
     ));
   });

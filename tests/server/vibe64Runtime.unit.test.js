@@ -288,7 +288,45 @@ test("plain runtime excludes open state records whose managed source no longer e
   });
 });
 
-test("a blocked session whose source creation failed can be closed and archived", async () => {
+test("plain runtime lists archive summaries without hydrating full session archives", async () => {
+  const listOptions = { statusGroup: "archived" };
+  let summaryReads = 0;
+  const runtime = new Vibe64SessionRuntime({
+    store: {
+      async listSessions() {
+        assert.fail("summary listing must not read full sessions");
+      },
+      async listSessionSummaries(options) {
+        summaryReads += 1;
+        assert.deepEqual(options, listOptions);
+        return [{
+          archived: true,
+          archivedAt: "2026-09-04T02:31:35.800Z",
+          manifest: {
+            createdAt: "2026-08-28T21:30:51.000Z",
+            revision: 1,
+            runtimeKind: "genesis",
+            updatedAt: "2026-09-04T02:31:35.800Z"
+          },
+          metadata: {},
+          revision: 1,
+          sessionId: "2026-08-28_21-30-51",
+          sessionName: "WHS review",
+          status: "archived"
+        }];
+      }
+    }
+  });
+
+  const sessions = await runtime.listSessionSummaries(listOptions);
+
+  assert.equal(summaryReads, 1);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].sessionId, "2026-08-28_21-30-51");
+  assert.equal(sessions[0].status, "archived");
+});
+
+test("a blocked session whose source creation failed can be archived", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const projectSessionSourceRoot = managedSessionSourceRoot(targetRoot);
     const failedSourcePath = sourcePath(targetRoot, "failed-source");
@@ -306,17 +344,17 @@ test("a blocked session whose source creation failed can be closed and archived"
       recursive: true
     });
 
-    const closed = await runtime.abandonSession("failed-source");
-    assert.equal(closed.status, "abandoned");
-    assert.equal(closed.archived, true);
+    const archived = await runtime.archiveSession("failed-source");
+    assert.equal(archived.status, "archived");
+    assert.equal(archived.archived, true);
     assert.deepEqual(await runtime.listSessions({ statusGroup: "open" }), []);
     await assert.rejects(() => access(failedSourcePath));
   });
 });
 
-test("a close failure after source recovery stays closing for a safe retry", async () => {
+test("an archive failure after source recovery remains marked for a safe retry", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const sessionId = "recoverable-close";
+    const sessionId = "recoverable-archive";
     const runtime = new Vibe64SessionRuntime({
       projectContextRoot: targetRoot,
       projectRuntimeRoot: projectRuntimeRoot(targetRoot)
@@ -331,7 +369,7 @@ test("a close failure after source recovery stays closing for a safe retry", asy
     };
 
     await assert.rejects(
-      () => runtime.abandonSession(sessionId),
+      () => runtime.archiveSession(sessionId),
       /Worktree removal raced a preview writer/u
     );
 
@@ -339,7 +377,7 @@ test("a close failure after source recovery stays closing for a safe retry", asy
       inspectSource: false
     });
     assert.equal(session.status, "active");
-    assert.equal(session.metadata.session_closing_reason, "abandoned");
+    assert.equal(session.metadata.session_closing_reason, "archived");
     assert.equal(session.metadata.source_recovery_saved, "yes");
   });
 });

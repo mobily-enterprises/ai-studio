@@ -7,6 +7,7 @@ import {
 } from "@/lib/vibe64ProjectScope.js";
 
 const VIBE64_SESSIONS_API_SUFFIX = "/vibe64/sessions";
+const VIBE64_ARCHIVED_SESSIONS_API_SUFFIX = `${VIBE64_SESSIONS_API_SUFFIX}/archived`;
 const VIBE64_ASSISTANTS_API_SUFFIX = "/vibe64/assistants/capabilities";
 const VIBE64_ASSISTANT_MODEL_ACCESS_API_SUFFIX = "/vibe64/assistants/model-access";
 const VIBE64_CURRENT_SESSION_API_SUFFIX = `${VIBE64_SESSIONS_API_SUFFIX}/current`;
@@ -388,6 +389,7 @@ function agentSettingsInputFromContext(context = {}) {
 
 export {
   VIBE64_ASSISTANTS_API_SUFFIX,
+  VIBE64_ARCHIVED_SESSIONS_API_SUFFIX,
   VIBE64_ASSISTANT_MODEL_ACCESS_API_SUFFIX,
   VIBE64_SESSION_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,

@@ -76,8 +76,8 @@ function viewProps(overrides = {}) {
       sessionRoot: "/tmp/state/session-1",
       source: "/tmp/sessions/active/session-1/source"
     },
-    sessionAbandon: {},
-    sessionSelectionClosed: false,
+    sessionArchive: {},
+    sessionSelectionArchived: false,
     sessionsApiPath: "/api/sessions",
     sessionToolbar: {},
     updateSessionWork: vi.fn(async () => ({ ok: true, status: "updated" })),

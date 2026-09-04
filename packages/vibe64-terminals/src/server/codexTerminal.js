@@ -606,7 +606,7 @@ function renewalArchivedPredecessorContext(sessionId = "", options = {}) {
     !renewalId ||
     normalizeText(session?.sessionId) !== normalizedSessionId ||
     session?.archived !== true ||
-    normalizeText(session?.status) !== VIBE64_SESSION_STATUS.ABANDONED ||
+    normalizeText(session?.status) !== VIBE64_SESSION_STATUS.ARCHIVED ||
     normalizeText(metadata.renewal_id) !== renewalId ||
     !normalizeText(metadata.renewed_to)
   ) {
@@ -8930,7 +8930,7 @@ function createCodexTerminalController({
         );
       }
       if (
-        session.status !== VIBE64_SESSION_STATUS.ABANDONED &&
+        session.status !== VIBE64_SESSION_STATUS.ARCHIVED &&
         !sessionIsClosing(session)
       ) {
         return { record: existing, retiredThreadId: "" };
@@ -9097,7 +9097,7 @@ function createCodexTerminalController({
     });
     if (
       attached.lifecycle !== CODEX_ECONOMY_THREAD_LIFECYCLES.READY ||
-      session.status === VIBE64_SESSION_STATUS.ABANDONED ||
+      session.status === VIBE64_SESSION_STATUS.ARCHIVED ||
       sessionIsClosing(session)
     ) {
       await retireCodexAppServerEconomyThread(attached);

@@ -134,7 +134,7 @@
             <p v-if="disabledReason">{{ disabledReason }}</p>
             <p v-else-if="scopeDraft === 'project'">
               Data and schema changes will be visible to every project session and remain
-              after a session is closed.
+              after a session is archived.
             </p>
             <v-btn
               :disabled="!databaseChanged || !canChange || !scopeDraftAvailable || databaseSaving"

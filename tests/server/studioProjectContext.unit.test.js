@@ -86,7 +86,7 @@ async function legacyCheckoutSnapshot(projectRoot) {
     "draft.txt",
     "sessions/active/open-session/source/session.txt",
     "sessions/blocked/blocked-session/metadata/status",
-    "sessions/closed/closed-session/archive.json"
+    "sessions/archived/archived-session/archive.json"
   ];
   return {
     branch: await gitOutput(projectRoot, ["branch", "--show-current"]),
@@ -607,7 +607,7 @@ test("hosted project access leaves every legacy root-checkout state inert", asyn
         await writeTestFile(path.join(projectRoot, ".git", "info", "exclude"), "sessions/\n");
         await writeTestFile(path.join(projectRoot, "sessions", "active", "open-session", "source", "session.txt"), "active\n");
         await writeTestFile(path.join(projectRoot, "sessions", "blocked", "blocked-session", "metadata", "status"), "blocked\n");
-        await writeTestFile(path.join(projectRoot, "sessions", "closed", "closed-session", "archive.json"), "{}\n");
+        await writeTestFile(path.join(projectRoot, "sessions", "archived", "archived-session", "archive.json"), "{}\n");
         await scenario.prepare?.(projectRoot);
 
         const before = await legacyCheckoutSnapshot(projectRoot);

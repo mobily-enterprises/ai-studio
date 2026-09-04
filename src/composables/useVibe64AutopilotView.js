@@ -181,7 +181,7 @@ const vibe64AutopilotViewProps = {
     default: null,
     type: Object
   },
-  sessionAbandon: {
+  sessionArchive: {
     default: () => ({}),
     type: Object
   },
@@ -189,7 +189,7 @@ const vibe64AutopilotViewProps = {
     default: () => ({}),
     type: Object
   },
-  sessionSelectionClosed: {
+  sessionSelectionArchived: {
     default: false,
     type: Boolean
   },
@@ -506,7 +506,7 @@ function useVibe64AutopilotView(props, emit, {
   const sessionInteractionDisabled = computed(() => Boolean(
     !props.active ||
     !sessionId.value ||
-    props.sessionSelectionClosed
+    props.sessionSelectionArchived
   ));
   const composerDisabled = computed(() => Boolean(
     sessionInteractionDisabled.value ||
@@ -650,14 +650,14 @@ function useVibe64AutopilotView(props, emit, {
     workspaceSetupRunning.value ||
     workspaceSetupRetrying.value ||
     !sessionId.value ||
-    props.sessionSelectionClosed
+    props.sessionSelectionArchived
   ));
   const workspaceSetupAskDisabled = computed(() => Boolean(
     !workspaceSetupNeedsAttention.value ||
     workspaceSetupFixSending.value ||
     !props.active ||
     !sessionId.value ||
-    props.sessionSelectionClosed ||
+    props.sessionSelectionArchived ||
     repositoryOperationActive.value ||
     !assistantDirectAllowed.value
   ));
@@ -743,7 +743,7 @@ function useVibe64AutopilotView(props, emit, {
       !assistantDirectAllowed.value ||
       !props.active ||
       !sessionId.value ||
-      props.sessionSelectionClosed ||
+      props.sessionSelectionArchived ||
       repositoryOperationActive.value
     ) {
       return false;
@@ -778,7 +778,7 @@ function useVibe64AutopilotView(props, emit, {
       !assistantDirectAllowed.value ||
       !props.active ||
       !sessionId.value ||
-      props.sessionSelectionClosed ||
+      props.sessionSelectionArchived ||
       repositoryOperationActive.value
     );
   }
@@ -1703,7 +1703,7 @@ function useVibe64AutopilotView(props, emit, {
   const sourceEditorAskCodexAvailable = computed(() => Boolean(
     props.active &&
     sessionId.value &&
-    !props.sessionSelectionClosed &&
+    !props.sessionSelectionArchived &&
     assistantDirectAllowed.value
   ));
 

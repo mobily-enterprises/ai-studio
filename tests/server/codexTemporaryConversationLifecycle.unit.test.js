@@ -5563,7 +5563,7 @@ test("archived renewal predecessor releases preserved runtime proof idempotently
         renewal_id: renewalId,
         renewed_to: "renewal-successor"
       },
-      status: VIBE64_SESSION_STATUS.ABANDONED
+      status: VIBE64_SESSION_STATUS.ARCHIVED
     };
     const runtime = projectService.createRuntime();
 
@@ -6840,7 +6840,7 @@ test("a same-account auth refresh can resume persisted economy ownership", async
   });
 });
 
-test("an abandoned session retires its persisted economy thread during reconciliation", async () => {
+test("an archived session retires its persisted economy thread during reconciliation", async () => {
   await withConversationController(async ({
     captures,
     controller,
@@ -6853,14 +6853,14 @@ test("an abandoned session retires its persisted economy thread during reconcili
     const pending = controller.runDetachedChatTurn("session-1", {
       executionProfile: sourceExplanationEconomyProfile(),
       outputSchema: sourceExplanationOutputSchema(),
-      prompt: "Persist before abandonment."
+      prompt: "Persist before archiving."
     });
     await waitForCapturedTurns(captures, 1);
     completeDetachedTurn(subscribers, {
       text: JSON.stringify({ answer: "Ready." })
     });
     assert.equal((await pending).ok, true);
-    session.status = VIBE64_SESSION_STATUS.ABANDONED;
+    session.status = VIBE64_SESSION_STATUS.ARCHIVED;
     simulateControllerCrash();
 
     const restarted = restartedCaptures(captures);

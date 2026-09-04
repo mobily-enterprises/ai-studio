@@ -457,7 +457,7 @@ describe("Vibe64 session creation", () => {
     creationHarness.queryData.value = {
       creation: {
         canCreate: false,
-        disabledReason: "Studio allows up to 3 open sessions. Close one before creating another.",
+        disabledReason: "Studio allows up to 3 open sessions. Archive one before creating another.",
         showCreateAction: true
       },
       limits: { maxOpenSessions: 3, openSessionCount: 3 },

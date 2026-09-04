@@ -179,11 +179,11 @@ describe("Vibe64 direct session runtime host", () => {
 
   it("projects only the supplied direct-session dialogs", () => {
     const dialogs = proxySessionDialogs({
-      abandon: { open: true }
+      archive: { open: true }
     });
 
-    expect(Object.keys(dialogs)).toEqual(["abandon"]);
-    expect(dialogs.abandon.open).toBe(true);
+    expect(Object.keys(dialogs)).toEqual(["archive"]);
+    expect(dialogs.archive.open).toBe(true);
   });
 
   it("uses the provider turn projection as visible assistant activity", () => {

@@ -70,8 +70,8 @@ function viewProps() {
       sessionId: "session-1",
       sessionRoot: "/tmp/state/session-1"
     },
-    sessionAbandon: {},
-    sessionSelectionClosed: false,
+    sessionArchive: {},
+    sessionSelectionArchived: false,
     sessionsApiPath: "/api/sessions",
     sessionToolbar: {}
   });

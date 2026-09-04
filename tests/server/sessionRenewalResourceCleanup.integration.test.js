@@ -612,7 +612,7 @@ test("completed renewal removes every predecessor process, command, attachment, 
         inspectSource: false
       });
       assert.equal(predecessor.archived, true);
-      assert.equal(predecessor.status, "abandoned");
+      assert.equal(predecessor.status, "archived");
       assert.equal(successor.status, "active");
       assert.equal(successor.metadata.renewed_from, PREDECESSOR_ID);
     } finally {

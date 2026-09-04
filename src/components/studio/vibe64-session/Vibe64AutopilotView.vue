@@ -26,12 +26,12 @@
       <header class="studio-autopilot__session-header">
         <Vibe64SessionToolbar
           v-if="sessionToolbarVisible"
-          :abandon="props.sessionAbandon"
+          :archive="props.sessionArchive"
           compact
           :create-visible="props.sessionToolbar.createSessionVisible === true"
           :max-visible-sessions="3"
           :selected-session-id="sessionId"
-          :selection-closed="sessionAbandonDisabled"
+          :selection-archived="sessionArchiveDisabled"
           :toolbar="props.sessionToolbar"
           @select-session="activateRealSession"
         />
@@ -611,7 +611,7 @@
           :ask-codex-to-fix-preview-identity="assistantDirectAllowed ? askCodexToFixPreviewIdentity : null"
           :attach-preview-file="attachPreviewFile"
           :prepare-preview-file="attachPreviewFileProducer"
-          :auto-start-managed-preview="!props.sessionSelectionClosed"
+          :auto-start-managed-preview="!props.sessionSelectionArchived"
           button-label="Run"
           button-size="small"
           button-variant="tonal"
@@ -775,7 +775,7 @@ function visibleOpenCodeProgressLabel(progress = {}) {
 useRealtimeEvent({
   enabled: computed(() => Boolean(
     props.active &&
-    !props.sessionSelectionClosed &&
+    !props.sessionSelectionArchived &&
     selectedAssistantSessionId.value &&
     props.session?.assistantSelection?.engineId === "opencode"
   )),
@@ -822,7 +822,7 @@ const {
   suggestionsError: assistantSuggestionsError,
   withdrawSuggestion: withdrawAssistantSuggestion
 } = useVibe64AssistantAccess({
-  active: computed(() => props.active && !props.sessionSelectionClosed),
+  active: computed(() => props.active && !props.sessionSelectionArchived),
   sessionId: selectedAssistantSessionId,
   sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
 });
@@ -993,7 +993,7 @@ const {
   submit: stopTypingOnSubmit,
   typingLabel
 } = useVibe64SessionTypingPresence({
-  active: computed(() => props.active && !props.sessionSelectionClosed),
+  active: computed(() => props.active && !props.sessionSelectionArchived),
   projectSlug,
   sessionId,
   sessionsApiPath: computed(() => readRefOrGetterValue(props.sessionsApiPath))
@@ -1016,7 +1016,7 @@ const promptHintsCanRequest = computed(() => Boolean(
   props.active &&
   !props.conversationLog?.loading &&
   !props.conversationLog?.error &&
-  !props.sessionSelectionClosed &&
+  !props.sessionSelectionArchived &&
   sessionId.value &&
   sessionSourceRoot.value &&
   !agentActive.value &&
@@ -1090,9 +1090,9 @@ const dashboardContext = computed(() => ({
   sourceOperationsSuspended: sourceOperationsSuspended.value
 }));
 
-const sessionAbandonDisabled = computed(() => Boolean(
-  props.sessionSelectionClosed ||
-  props.sessionAbandon?.command?.isRunning ||
+const sessionArchiveDisabled = computed(() => Boolean(
+  props.sessionSelectionArchived ||
+  props.sessionArchive?.command?.isRunning ||
   workspaceSetupRunning.value ||
   workspaceSetupRetrying.value
 ));

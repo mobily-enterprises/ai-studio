@@ -4,7 +4,7 @@ import {
   sessionPanelDashboardContext,
   sessionPanelEmptyStateActivity,
   sessionPanelRuntimeHostDiagnostics,
-  sessionPanelSelectedSessionClosing,
+  sessionPanelSelectedSessionArchiving,
   sessionPanelToolbarSessions,
   sessionRepositoryWorkState
 } from "../../src/composables/useVibe64SessionPanel.js";
@@ -51,25 +51,25 @@ describe("useVibe64SessionPanel", () => {
     });
   });
 
-  it("blocks only the session whose abandon request is in flight", () => {
-    expect(sessionPanelSelectedSessionClosing({
-      abandon: {
-        closing: true,
-        closingSessionId: "session-a"
+  it("blocks only the session whose archive request is in flight", () => {
+    expect(sessionPanelSelectedSessionArchiving({
+      archive: {
+        archiving: true,
+        archivingSessionId: "session-a"
       },
       selectedSessionId: "session-a"
     })).toBe(true);
-    expect(sessionPanelSelectedSessionClosing({
-      abandon: {
-        closing: true,
-        closingSessionId: "session-a"
+    expect(sessionPanelSelectedSessionArchiving({
+      archive: {
+        archiving: true,
+        archivingSessionId: "session-a"
       },
       selectedSessionId: "session-b"
     })).toBe(false);
-    expect(sessionPanelSelectedSessionClosing({
-      abandon: {
-        closing: false,
-        closingSessionId: "session-a"
+    expect(sessionPanelSelectedSessionArchiving({
+      archive: {
+        archiving: false,
+        archivingSessionId: "session-a"
       },
       selectedSessionId: "session-a"
     })).toBe(false);

@@ -420,8 +420,8 @@ test("pending suggestions remain readable after the session is archived", async 
       vibe64User: { displayName: "Grace", role: "user", username: "grace" }
     });
 
-    await runtime.store.writeStatus("session-1", VIBE64_SESSION_STATUS.ABANDONED);
-    await runtime.store.compactClosedSession("session-1");
+    await runtime.store.writeStatus("session-1", VIBE64_SESSION_STATUS.ARCHIVED);
+    await runtime.store.publishSessionArchive("session-1");
 
     const archived = await readSessionMessageSuggestionState(runtime.store, "session-1");
     assert.equal(archived.entries.length, 1);

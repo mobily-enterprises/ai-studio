@@ -4,7 +4,7 @@ import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEn
 import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
 import { useRoute } from "vue-router";
 import {
-  mdiArchiveCancelOutline,
+  mdiArchiveOutline,
   mdiEyeOutline,
   mdiFileDocumentOutline,
   mdiRefresh,
@@ -12,6 +12,7 @@ import {
   mdiSourceCommit
 } from "@mdi/js";
 import {
+  VIBE64_ARCHIVED_SESSIONS_API_SUFFIX,
   VIBE64_SESSIONS_API_SUFFIX,
   VIBE64_SURFACE_ID,
   vibe64SessionPath,
@@ -37,6 +38,10 @@ import {
 } from "@/lib/vibe64ProjectScope.js";
 
 const archivedVibe64SessionsEmits = ["loading-changed"];
+const archivedAtFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short"
+});
 const archivedVibe64SessionsProps = {
   description: {
     default: "",
@@ -63,7 +68,7 @@ const archivedVibe64SessionsProps = {
 function useArchivedVibe64Sessions(emit) {
   const paths = usePaths();
   const projectSlug = useVibe64ProjectSlug();
-  const sessionsApiPath = computed(() => paths.api(VIBE64_SESSIONS_API_SUFFIX, {
+  const sessionsApiPath = computed(() => paths.api(VIBE64_ARCHIVED_SESSIONS_API_SUFFIX, {
     surface: VIBE64_SURFACE_ID
   }));
 
@@ -76,12 +81,8 @@ function useArchivedVibe64Sessions(emit) {
         ROUTE_VISIBILITY_PUBLIC,
         projectSlug.value
       ),
-      "archive",
-      "abandoned"
+      "archived"
     ]),
-    readQuery: computed(() => ({
-      archive: "abandoned"
-    })),
     requestRecoveryLabel: "Archived sessions"
   });
 
@@ -102,10 +103,11 @@ function useArchivedVibe64Sessions(emit) {
   });
 
   return {
-    archiveIcon: mdiArchiveCancelOutline,
+    archiveIcon: mdiArchiveOutline,
     error,
     loadSessions,
     loading,
+    formatArchivedAt,
     mdiEyeOutline,
     mdiRefresh,
     mdiSourceBranch,
@@ -117,7 +119,7 @@ function useArchivedVibe64Sessions(emit) {
   };
 
   function sessionIsInArchive(session = {}) {
-    return String(session.status || "") === "abandoned";
+    return String(session.status || "") === "archived";
   }
 
   async function loadSessions() {
@@ -172,7 +174,7 @@ function useArchivedVibe64SessionDetail() {
       return null;
     }
     const enrichedSession = enrichVibe64SessionForDisplay(payload);
-    return String(enrichedSession.status || "") === "abandoned" ? enrichedSession : null;
+    return String(enrichedSession.status || "") === "archived" ? enrichedSession : null;
   });
   const backTo = computed(() => ({
     path: `${projectAppPath(projectSlug.value)}/dashboard/history`
@@ -204,6 +206,11 @@ function statusLabel(status) {
 
 function statusColor(status) {
   return vibe64SessionStatusColor(status);
+}
+
+function formatArchivedAt(value = "") {
+  const date = new Date(String(value || ""));
+  return Number.isNaN(date.getTime()) ? "time unavailable" : archivedAtFormatter.format(date);
 }
 
 function archivedSessionDetailRoute({

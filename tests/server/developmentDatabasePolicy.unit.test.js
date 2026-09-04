@@ -69,7 +69,7 @@ test("a shared managed database permits exactly one open session", () => {
   });
   assert.equal(occupied.creation.canCreate, false);
   assert.equal(occupied.creation.showCreateAction, false);
-  assert.match(occupied.creation.disabledReason, /Close its open session/u);
+  assert.match(occupied.creation.disabledReason, /Archive its open session/u);
   assert.deepEqual(occupied.limits, {
     maxOpenSessions: 1,
     openSessionCount: 1

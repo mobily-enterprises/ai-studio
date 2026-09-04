@@ -11,37 +11,37 @@ import { vibe64RealtimeOriginPayload } from "@/lib/vibe64BrowserTabOrigin.js";
 
 function useVibe64SessionDialogs({
   clearSelectedSession = () => null,
-  isSelectedSessionClosed,
+  isSelectedSessionArchived,
   refreshSessionData = async () => null,
   selectedSessionId,
   selectedSessionTitle,
   sessionsApiPath
 } = {}) {
-  const abandonDialogOpen = ref(false);
-  const abandonDialogSessionId = ref("");
-  const abandonDialogSessionTitle = ref("");
-  const abandonClosingSessionId = ref("");
+  const archiveDialogOpen = ref(false);
+  const archiveDialogSessionId = ref("");
+  const archiveDialogSessionTitle = ref("");
+  const archivingSessionId = ref("");
   const resolvedSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || ""));
 
-  const abandonCommand = useCommand({
+  const archiveCommand = useCommand({
     access: "never",
     apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
     buildRawPayload: () => vibe64RealtimeOriginPayload(),
     buildCommandOptions: (_payload, { context }) => ({
       method: "POST",
-      path: vibe64SessionPath(resolvedSessionsApiPath.value, context?.sessionId, "/abandon")
+      path: vibe64SessionPath(resolvedSessionsApiPath.value, context?.sessionId, "/archive")
     }),
-    fallbackRunError: "Vibe64 session could not be closed.",
+    fallbackRunError: "Vibe64 session could not be archived.",
     messages: {
-      error: "Vibe64 session could not be closed.",
-      success: "Vibe64 session closed."
+      error: "Vibe64 session could not be archived.",
+      success: "Vibe64 session archived."
     },
     onRunSuccess: async (response, { context } = {}) => {
       if (response?.ok !== true) {
         throw new Error(
           response?.errors?.[0]?.message ||
           response?.error ||
-          "Vibe64 session could not be closed."
+          "Vibe64 session could not be archived."
         );
       }
       if (!context?.sessionId || context.sessionId === unref(selectedSessionId)) {
@@ -49,78 +49,78 @@ function useVibe64SessionDialogs({
       }
       await refreshSessionData({
         includeList: true,
-        reason: "close-session"
+        reason: "archive-session"
       });
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-    placementSource: "vibe64.sessions.abandon",
+    placementSource: "vibe64.sessions.archive",
     surfaceId: VIBE64_SURFACE_ID,
     writeMethod: "POST"
   });
 
-  function clearAbandonDialog() {
-    abandonDialogOpen.value = false;
-    abandonDialogSessionId.value = "";
-    abandonDialogSessionTitle.value = "";
+  function clearArchiveDialog() {
+    archiveDialogOpen.value = false;
+    archiveDialogSessionId.value = "";
+    archiveDialogSessionTitle.value = "";
   }
 
-  function requestAbandonSelectedSession() {
+  function requestArchiveSelectedSession() {
     if (
       !unref(selectedSessionId) ||
-      abandonClosingSessionId.value ||
-      abandonCommand.isRunning ||
-      unref(isSelectedSessionClosed)
+      archivingSessionId.value ||
+      archiveCommand.isRunning ||
+      unref(isSelectedSessionArchived)
     ) {
       return;
     }
-    abandonDialogSessionId.value = unref(selectedSessionId);
-    abandonDialogSessionTitle.value = unref(selectedSessionTitle);
-    abandonDialogOpen.value = true;
+    archiveDialogSessionId.value = unref(selectedSessionId);
+    archiveDialogSessionTitle.value = unref(selectedSessionTitle);
+    archiveDialogOpen.value = true;
   }
 
-  function cancelAbandonSession() {
-    if (!abandonCommand.isRunning) {
-      clearAbandonDialog();
+  function cancelArchiveSession() {
+    if (!archiveCommand.isRunning) {
+      clearArchiveDialog();
     }
   }
 
-  async function confirmAbandonSession() {
+  async function confirmArchiveSession() {
     if (
-      !abandonDialogSessionId.value ||
-      abandonClosingSessionId.value ||
-      abandonCommand.isRunning
+      !archiveDialogSessionId.value ||
+      archivingSessionId.value ||
+      archiveCommand.isRunning
     ) {
       return false;
     }
-    const sessionId = abandonDialogSessionId.value;
-    abandonClosingSessionId.value = sessionId;
-    clearAbandonDialog();
+    const sessionId = archiveDialogSessionId.value;
+    archivingSessionId.value = sessionId;
+    clearArchiveDialog();
     try {
-      return await abandonCommand.run({ sessionId });
+      return await archiveCommand.run({ sessionId });
     } finally {
-      if (abandonClosingSessionId.value === sessionId) {
-        abandonClosingSessionId.value = "";
+      if (archivingSessionId.value === sessionId) {
+        archivingSessionId.value = "";
       }
     }
   }
 
   function clear() {
-    clearAbandonDialog();
+    clearArchiveDialog();
   }
 
   return {
-    abandon: {
-      cancel: cancelAbandonSession,
-      closing: computed(() => Boolean(abandonClosingSessionId.value)),
-      closingSessionId: abandonClosingSessionId,
-      command: abandonCommand,
-      confirm: confirmAbandonSession,
-      open: abandonDialogOpen,
-      request: requestAbandonSelectedSession,
-      sessionId: abandonDialogSessionId,
-      sessionTitle: abandonDialogSessionTitle
+    archive: {
+      archiving: computed(() => Boolean(archivingSessionId.value)),
+      archivingSessionId,
+      cancel: cancelArchiveSession,
+      command: archiveCommand,
+      confirm: confirmArchiveSession,
+      open: archiveDialogOpen,
+      request: requestArchiveSelectedSession,
+      sessionId: archiveDialogSessionId,
+      sessionTitle: archiveDialogSessionTitle
     },
-    busy: computed(() => Boolean(abandonClosingSessionId.value)),
+    busy: computed(() => Boolean(archivingSessionId.value)),
     clear
   };
 }

@@ -144,8 +144,8 @@ function plainSessionView(session = {}, {
   };
 }
 
-function closedSessionStatus(status = "") {
-  return normalizeText(status) === VIBE64_SESSION_STATUS.ABANDONED;
+function archivedSessionStatus(status = "") {
+  return normalizeText(status) === VIBE64_SESSION_STATUS.ARCHIVED;
 }
 
 function sessionSourceCreationFailed(session = {}) {
@@ -176,7 +176,7 @@ async function sessionIsListable(session = {}) {
   if (!sessionIsSupported(session)) {
     return false;
   }
-  if (session.archived === true || closedSessionStatus(session.status)) {
+  if (session.archived === true || archivedSessionStatus(session.status)) {
     return true;
   }
   if (sessionSourceCreationFailed(session)) {
@@ -461,7 +461,7 @@ class Vibe64SessionRuntime {
   }
 
   async listSessionSummaries(options = {}) {
-    const sessions = await this.store.listSessions(options);
+    const sessions = await this.store.listSessionSummaries(options);
     const listable = await Promise.all(sessions.map(sessionIsListable));
     return sessions
       .filter((_session, index) => listable[index])
@@ -658,9 +658,9 @@ class Vibe64SessionRuntime {
   } = {}) {
     return this.store.withPublishedRenewalSession(sessionId, async (publishedSession) => {
       const session = assertSupportedSession(publishedSession);
-      if (session.status !== VIBE64_SESSION_STATUS.ABANDONED) {
+      if (session.status !== VIBE64_SESSION_STATUS.ARCHIVED) {
         throw vibe64Error(
-          `Renewal source removal requires an abandoned predecessor archive: ${normalizeText(sessionId)}`,
+          `Renewal source removal requires an archived predecessor: ${normalizeText(sessionId)}`,
           "vibe64_session_renewal_source_commit_status_invalid"
         );
       }
@@ -707,11 +707,11 @@ class Vibe64SessionRuntime {
     });
   }
 
-  async abandonSession(sessionId = "", {
-    reason = "abandoned"
+  async archiveSession(sessionId = "", {
+    reason = "archived"
   } = {}) {
     const session = assertSupportedSession(await this.store.readSession(sessionId));
-    if (closedSessionStatus(session.status)) {
+    if (archivedSessionStatus(session.status)) {
       return this.getSession(sessionId);
     }
     await this.markSessionClosing(sessionId, {
@@ -733,10 +733,8 @@ class Vibe64SessionRuntime {
       } else {
         await this.assertSourceHealthy(session);
       }
-      await this.store.writeStatus(sessionId, VIBE64_SESSION_STATUS.ABANDONED);
-      if (typeof this.store.compactClosedSession === "function") {
-        await this.store.compactClosedSession(sessionId);
-      }
+      await this.store.writeStatus(sessionId, VIBE64_SESSION_STATUS.ARCHIVED);
+      await this.store.publishSessionArchive(sessionId);
       return this.getSession(sessionId);
     } catch (error) {
       await this.clearSessionClosing(sessionId).catch(() => null);

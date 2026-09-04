@@ -1031,7 +1031,7 @@ function createSessionRenewalController({
         });
         await runtime.store.transitionRenewalSuccessor(transition);
       }
-      const preparedArchive = await runtime.store.compactRenewedSession(transition);
+      const preparedArchive = await runtime.store.prepareRenewalSessionArchive(transition);
       const preparedMetadata = preparedArchive?.index?.metadata;
       if (
         normalizeText(preparedMetadata?.renewal_id) !== state.renewalId ||

@@ -5,8 +5,8 @@
     </header>
 
     <ArchivedVibe64Sessions
-      empty-text="Abandoned chats will appear here after their sources are removed."
-      empty-title="No abandoned chats"
+      empty-text="Archived chats will appear here after their active workspaces are removed."
+      empty-title="No archived chats"
     />
   </section>
 </template>

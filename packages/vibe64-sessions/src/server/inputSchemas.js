@@ -258,12 +258,7 @@ const sessionPresenceActionInputValidator = requiredInputSchema({
 });
 
 const sessionListInputValidator = patchSchema({
-  ...optionalUser,
-  archive: {
-    type: "string",
-    noTrim: false,
-    required: false
-  }
+  ...optionalUser
 });
 
 const sessionCreateInputValidator = patchSchema({

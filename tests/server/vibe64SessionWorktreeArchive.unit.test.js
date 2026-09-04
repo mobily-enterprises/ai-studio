@@ -109,7 +109,7 @@ test("archives all dirty worktree files without adapter exclusions", async () =>
 
     const archiveSession = await runtime.getSession("archive_test");
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(await pathExists(worktreePath), false);
@@ -162,7 +162,7 @@ test("archive removes session clones with ignored generated files", async () => 
 
     const archiveSession = await runtime.getSession("ignored_generated_file");
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(await pathExists(worktreePath), false);
@@ -195,7 +195,7 @@ test("archive removes a session-owned ordinary worktree directory without readin
 
     const archiveSession = await runtime.getSession("ordinary_directory");
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(archiveResult.recoverable, undefined);
@@ -242,7 +242,7 @@ test("archive completes when a previous remove left a session-owned ordinary dir
 
     const archiveSession = await runtime.getSession("half_removed");
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(await pathExists(worktreePath), false);
@@ -278,7 +278,7 @@ test("archive removes a session-owned Git directory that is not registered as a 
 
     const archiveSession = await runtime.getSession("unregistered_git_directory");
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(await pathExists(worktreePath), false);
@@ -331,7 +331,7 @@ test("archives session clone commits into a saved bundle", async () => {
 
     const archiveSession = await runtime.getSession("session_clone_bundle");
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(await pathExists(worktreePath), false);
@@ -392,7 +392,7 @@ test("archives and proves restoration of hidden turn checkpoint refs before remo
 
     const archiveSession = await runtime.getSession(sessionId);
     const archiveResult = await runtime.archiveSessionSource(archiveSession, {
-      reason: "abandoned"
+      reason: "archived"
     });
     assert.equal(archiveResult.removed, true);
     assert.equal(await pathExists(worktreePath), false);

@@ -12,13 +12,13 @@
       <v-btn
         v-if="showRefresh"
         class="studio-archived-sessions__refresh"
-        :loading="loading"
+        :disabled="loading"
         :prepend-icon="mdiRefresh"
         size="small"
         variant="tonal"
         @click="loadSessions"
       >
-        Refresh
+        {{ loading ? "Refreshing…" : "Refresh" }}
       </v-btn>
     </div>
 
@@ -26,13 +26,31 @@
       {{ error }}
     </v-alert>
 
-    <v-progress-linear
+    <div
       v-if="loading && sessions.length < 1"
-      color="primary"
-      height="6"
-      indeterminate
-      rounded
-    />
+      aria-label="Loading archived sessions"
+      class="studio-archived-sessions__grid"
+      role="status"
+    >
+      <v-card
+        v-for="index in 4"
+        :key="`archived-session-skeleton-${index}`"
+        class="studio-archived-sessions__card"
+        rounded="lg"
+        variant="outlined"
+      >
+        <v-card-text class="studio-archived-sessions__card-body">
+          <div class="studio-archived-sessions__card-heading">
+            <v-skeleton-loader class="studio-archived-sessions__skeleton-icon" type="avatar" />
+            <div class="studio-archived-sessions__identity">
+              <v-skeleton-loader type="text" />
+              <v-skeleton-loader type="chip@2" />
+            </div>
+            <v-skeleton-loader class="studio-archived-sessions__skeleton-button" type="button" />
+          </div>
+        </v-card-text>
+      </v-card>
+    </div>
 
     <v-sheet v-if="!loading && sessions.length < 1 && !error" rounded="lg" border class="studio-archived-sessions__empty">
       <h2 class="text-subtitle-1 mb-1">{{ emptyTitle }}</h2>
@@ -58,7 +76,7 @@
               </div>
               <div class="studio-archived-sessions__meta">
                 <v-chip :color="statusColor(session.status)" size="x-small" variant="tonal">
-                  {{ statusLabel(session.status || "abandoned") }}
+                  {{ statusLabel(session.status || "archived") }}
                 </v-chip>
                 <v-chip v-if="session.sourceRemoved" color="warning" size="x-small" variant="tonal">
                   source removed
@@ -67,6 +85,12 @@
                   source available
                 </v-chip>
               </div>
+              <time
+                class="studio-archived-sessions__archived-at text-caption text-medium-emphasis"
+                :datetime="session.archivedAt || undefined"
+              >
+                Archived {{ formatArchivedAt(session.archivedAt) }}
+              </time>
             </div>
             <v-btn
               class="studio-archived-sessions__view"
@@ -97,6 +121,7 @@ const emit = defineEmits(archivedVibe64SessionsEmits);
 const {
   archiveIcon,
   error,
+  formatArchivedAt,
   loadSessions,
   loading,
   mdiEyeOutline,
@@ -146,6 +171,7 @@ defineExpose({
 
 .studio-archived-sessions__refresh {
   min-height: 48px;
+  min-width: 8.5rem;
 }
 
 .studio-archived-sessions__empty {
@@ -191,6 +217,19 @@ defineExpose({
   flex: 1 1 auto;
   gap: 0.35rem;
   min-width: 0;
+}
+
+.studio-archived-sessions__archived-at {
+  display: block;
+}
+
+.studio-archived-sessions__skeleton-icon,
+.studio-archived-sessions__skeleton-button {
+  flex: 0 0 auto;
+}
+
+.studio-archived-sessions__skeleton-icon {
+  width: 2rem;
 }
 
 .studio-archived-sessions__session-id {

@@ -67,9 +67,9 @@ function developmentDatabasePolicy({
       ? {
           disabledReason: shared
             ? openSessionCount === 1
-              ? "This project shares one development database. Close its open session before creating another."
-              : `This project shares one development database and already has ${openSessionCount} open sessions. Close sessions before creating another.`
-            : `Studio allows up to ${maxOpenSessions} open sessions. Close one before creating another.`
+              ? "This project shares one development database. Archive its open session before creating another."
+              : `This project shares one development database and already has ${openSessionCount} open sessions. Archive sessions before creating another.`
+            : `Studio allows up to ${maxOpenSessions} open sessions. Archive one before creating another.`
         }
       : {})
   };

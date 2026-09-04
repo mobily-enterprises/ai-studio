@@ -142,8 +142,8 @@ test("session state requires an explicit runtime root", () => {
 
 test("plain session status has no workflow completion state", () => {
   assert.deepEqual(VIBE64_SESSION_STATUS, {
-    ABANDONED: "abandoned",
     ACTIVE: "active",
+    ARCHIVED: "archived",
     BLOCKED: "blocked",
     RENEWAL_ACTIVATING: "renewal_activating",
     RENEWAL_PENDING: "renewal_pending",
@@ -889,7 +889,7 @@ test("renewal records are private to explicit store APIs", async () => {
       () => store.readConversationLog(fixture.successorSessionId),
       () => store.readConversationLogPage(fixture.successorSessionId),
       () => store.conversationMessageIdExists(fixture.successorSessionId, "message-1"),
-      () => store.compactClosedSession(fixture.successorSessionId),
+      () => store.publishSessionArchive(fixture.successorSessionId),
       () => store.mutateSession(fixture.successorSessionId, async () => null),
       () => store.runSessionExclusive(fixture.successorSessionId, "agent-write", async () => null),
       () => store.writeMetadataValue(fixture.successorSessionId, "test", "value"),
@@ -928,7 +928,7 @@ test("renewal records are private to explicit store APIs", async () => {
       {},
       { statusGroup: "all" },
       { statusGroup: "open" },
-      { statusGroup: "closed" },
+      { statusGroup: "archived" },
       { statuses: [VIBE64_SESSION_STATUS.RENEWAL_PENDING] }
     ]) {
       const sessions = await store.listSessions(options);
@@ -979,7 +979,7 @@ test("project renewal state stays mutable after the predecessor archive is commi
       sourceSessionId: fixture.sourceSessionId,
       successorSessionId: fixture.successorSessionId
     });
-    await store.compactRenewedSession({
+    await store.prepareRenewalSessionArchive({
       renewalId: fixture.renewalId,
       sourceSessionId: fixture.sourceSessionId,
       successorSessionId: fixture.successorSessionId
@@ -1138,7 +1138,7 @@ test("renewal handoff and private preparation preserve the predecessor projectio
       (await store.readSessionForRenewal(fixture.successorSessionId)).metadata.renewed_at,
       "2026-08-24T01:04:00.000Z"
     );
-    const prepared = await store.compactRenewedSession(fixture);
+    const prepared = await store.prepareRenewalSessionArchive(fixture);
     assert.equal(prepared.index.metadata.renewed_to, fixture.successorSessionId);
     await store.activateRenewalSuccessor(fixture);
     assert.equal(
@@ -1187,7 +1187,7 @@ test("renewal archive commit resumes every reachable closing-tree interruption",
       name: `after ${metadataName} write`,
       step: "closing-metadata-written"
     })),
-    { name: "after abandoned status write", step: "closing-status-written" }
+    { name: "after archived status write", step: "closing-status-written" }
   ];
   for (const scenario of scenarios) {
     await t.test(scenario.name, async () => {
@@ -1217,7 +1217,7 @@ test("renewal archive commit resumes every reachable closing-tree interruption",
           sourceSessionId: fixture.sourceSessionId,
           successorSessionId: fixture.successorSessionId
         });
-        await store.compactRenewedSession(fixture);
+        await store.prepareRenewalSessionArchive(fixture);
         await store.activateRenewalSuccessor(fixture);
         await store.finalizeRenewalCurrentSession(fixture);
 
@@ -1232,7 +1232,7 @@ test("renewal archive commit resumes every reachable closing-tree interruption",
         assert.equal(
           interruptedPredecessor.status,
           scenario.step === "closing-status-written"
-            ? VIBE64_SESSION_STATUS.ABANDONED
+            ? VIBE64_SESSION_STATUS.ARCHIVED
             : VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
         );
         const sourcePaths = store.paths(fixture.sourceSessionId);
@@ -1262,12 +1262,12 @@ test("renewal archive commit resumes every reachable closing-tree interruption",
         );
         await assert.rejects(access(closingRoot));
         await assert.rejects(access(path.join(
-          sourcePaths.closedSessionsRoot,
+          sourcePaths.archivedSessionsRoot,
           ".renewals",
           fixture.sourceSessionId
         )));
         await assert.rejects(access(path.join(
-          sourcePaths.closedSessionsRoot,
+          sourcePaths.archivedSessionsRoot,
           ".renewals",
           ".publishing",
           fixture.sourceSessionId
@@ -1377,7 +1377,7 @@ test("renewed session archives retain bounded handoff provenance", async () => {
       "renewal_archived_at",
       "2026-08-24T01:06:00.000Z"
     );
-    const prepared = await store.compactRenewedSession({
+    const prepared = await store.prepareRenewalSessionArchive({
       renewalId: fixture.renewalId,
       sourceSessionId: fixture.sourceSessionId,
       successorSessionId: fixture.successorSessionId
@@ -1402,10 +1402,10 @@ test("renewed session archives retain bounded handoff provenance", async () => {
       [fixture.successorSessionId]
     );
 
-    const closed = await store.listSessionSummaries({ statusGroup: "closed" });
-    assert.equal(closed.length, 1);
-    assert.equal(closed[0].sessionId, fixture.sourceSessionId);
-    assert.deepEqual(closed[0].metadata, {
+    const archived = await store.listSessionSummaries({ statusGroup: "archived" });
+    assert.equal(archived.length, 1);
+    assert.equal(archived[0].sessionId, fixture.sourceSessionId);
+    assert.deepEqual(archived[0].metadata, {
       renewal_acknowledged_at: "2026-08-24T01:03:00.000Z",
       renewal_actor_display_name: "Ada",
       renewal_actor_id: "ada-owner",
@@ -1415,17 +1415,17 @@ test("renewed session archives retain bounded handoff provenance", async () => {
       renewal_quiesced_at: "2026-08-24T01:00:30.000Z",
       renewal_quiesced_id: fixture.renewalId,
       renewal_started_at: "2026-08-24T01:00:00.000Z",
-      renewal_successor_created_at: closed[0].metadata.renewal_successor_created_at,
+      renewal_successor_created_at: archived[0].metadata.renewal_successor_created_at,
       renewed_at: "2026-08-24T01:04:00.000Z",
       renewed_to: fixture.successorSessionId
     });
-    assert.equal(Object.hasOwn(closed[0].metadata, "private_not_indexed"), false);
+    assert.equal(Object.hasOwn(archived[0].metadata, "private_not_indexed"), false);
     assert.equal((await store.readSession(fixture.sourceSessionId)).archived, true);
     assert.equal((await store.readSession(fixture.sourceSessionId)).archived, true);
   });
 });
 
-test("a renewal successor can later close normally and retains its predecessor link", async () => {
+test("a renewal successor can later be archived and retain its predecessor link", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);
     const fixture = await createRenewalFixture(store);
@@ -1436,7 +1436,7 @@ test("a renewal successor can later close normally and retains its predecessor l
       sourceSessionId: fixture.sourceSessionId,
       successorSessionId: fixture.successorSessionId
     });
-    await store.compactRenewedSession({
+    await store.prepareRenewalSessionArchive({
       renewalId: fixture.renewalId,
       sourceSessionId: fixture.sourceSessionId,
       successorSessionId: fixture.successorSessionId
@@ -1452,11 +1452,11 @@ test("a renewal successor can later close normally and retains its predecessor l
       "agent_renewal_seed_turn_id",
       "private-turn"
     );
-    await store.writeStatus(fixture.successorSessionId, VIBE64_SESSION_STATUS.ABANDONED);
+    await store.writeStatus(fixture.successorSessionId, VIBE64_SESSION_STATUS.ARCHIVED);
 
-    await store.compactClosedSession(fixture.successorSessionId);
+    await store.publishSessionArchive(fixture.successorSessionId);
 
-    const successor = (await store.listSessionSummaries({ statusGroup: "closed" }))
+    const successor = (await store.listSessionSummaries({ statusGroup: "archived" }))
       .find((session) => session.sessionId === fixture.successorSessionId);
     assert.equal(successor.metadata.renewal_id, fixture.renewalId);
     assert.equal(successor.metadata.renewal_finalized_at, "2026-08-24T01:06:00.000Z");
@@ -1481,7 +1481,7 @@ test("a finalized successor can renew again but an unfinished successor cannot",
       sourceSessionId: first.sourceSessionId,
       successorSessionId: first.successorSessionId
     });
-    await store.compactRenewedSession({
+    await store.prepareRenewalSessionArchive({
       renewalId: first.renewalId,
       sourceSessionId: first.sourceSessionId,
       successorSessionId: first.successorSessionId
@@ -1533,7 +1533,7 @@ test("a finalized successor can renew again but an unfinished successor cannot",
     assert.equal(middle.metadata.renewed_from, first.sourceSessionId);
     assert.equal(middle.metadata.renewed_to, undefined);
 
-    const secondPrepared = await store.compactRenewedSession({
+    const secondPrepared = await store.prepareRenewalSessionArchive({
       renewalId: "renewal-generation-2",
       sourceSessionId: first.successorSessionId,
       successorSessionId: second.sessionId
@@ -1553,7 +1553,7 @@ test("a finalized successor can renew again but an unfinished successor cannot",
       "2026-08-24T02:06:00.000Z"
     );
 
-    const archivedMiddle = (await store.listSessionSummaries({ statusGroup: "closed" }))
+    const archivedMiddle = (await store.listSessionSummaries({ statusGroup: "archived" }))
       .find((session) => session.sessionId === first.successorSessionId);
     assert.equal(archivedMiddle.metadata.renewal_id, "renewal-generation-2");
     assert.equal(archivedMiddle.metadata.renewed_from, first.sourceSessionId);
@@ -1655,8 +1655,8 @@ test("plain session store deduplicates durable system messages by message id", a
     assert.equal(conversationLog.length, 1);
     assert.equal(conversationLog[0].system.text, "Codex was interrupted.");
 
-    await store.writeStatus("conversation-system-dedupe", VIBE64_SESSION_STATUS.ABANDONED);
-    await store.compactClosedSession("conversation-system-dedupe");
+    await store.writeStatus("conversation-system-dedupe", VIBE64_SESSION_STATUS.ARCHIVED);
+    await store.publishSessionArchive("conversation-system-dedupe");
     const archivedLog = await store.readConversationLog("conversation-system-dedupe");
     assert.equal(archivedLog.length, 1);
     assert.equal(archivedLog[0].system.messageId, "codex-turn-outcome-fixed");
@@ -1730,20 +1730,61 @@ test("plain session store keeps immutable actor attribution on each user turn", 
   });
 });
 
-test("plain session store archives closed sessions", async () => {
+test("plain session store archives sessions into the archive namespace", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const store = createStore(targetRoot);
     await store.createSession({
       runtimeKind: "genesis",
-      sessionId: "closed"
+      sessionId: "archived"
     });
-    await store.writeStatus("closed", VIBE64_SESSION_STATUS.ABANDONED);
-    await store.compactClosedSession("closed");
+    await store.writeStatus("archived", VIBE64_SESSION_STATUS.ARCHIVED);
+    await store.publishSessionArchive("archived");
 
-    const session = await store.readSession("closed");
+    const archiveRoot = store.paths().archivedSessionsRoot;
+    const archivePath = path.join(archiveRoot, "archived.tar.gz");
+    const metadataPath = path.join(archiveRoot, "archived.json");
+    const session = await store.readSession("archived");
     assert.equal(session.archived, true);
-    assert.equal(session.status, VIBE64_SESSION_STATUS.ABANDONED);
+    assert.equal(session.status, VIBE64_SESSION_STATUS.ARCHIVED);
     assert.equal(session.manifest.runtimeKind, "genesis");
+    assert.equal(archiveRoot, path.join(projectRuntimeRoot(targetRoot), "sessions", "archived"));
+    assert.deepEqual(JSON.parse(await readFile(metadataPath, "utf8")), {
+      archive: {
+        fileName: "archived.tar.gz",
+        relativePath: "archived/archived.tar.gz"
+      },
+      archivedAt: session.archivedAt,
+      index: {
+        createdAt: session.manifest.createdAt,
+        manifest: {
+          createdAt: session.manifest.createdAt,
+          revision: session.revision,
+          runtimeKind: "genesis",
+          updatedAt: session.updatedAt
+        },
+        metadata: {},
+        revision: session.revision,
+        sessionId: "archived",
+        sessionName: session.sessionName,
+        sessionRoot: "",
+        status: "archived",
+        updatedAt: session.updatedAt
+      },
+      kind: "vibe64.session_archive",
+      metadata: {
+        fileName: "archived.json",
+        relativePath: "archived/archived.json"
+      },
+      schemaVersion: 2,
+      sessionId: "archived",
+      status: "archived"
+    });
+
+    await writeFile(archivePath, "not a tarball", "utf8");
+    assert.deepEqual(
+      (await store.listSessionSummaries({ statusGroup: "archived" })).map(({ sessionId }) => sessionId),
+      ["archived"]
+    );
   });
 });
 

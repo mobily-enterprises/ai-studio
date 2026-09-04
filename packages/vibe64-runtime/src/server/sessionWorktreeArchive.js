@@ -882,7 +882,7 @@ async function commitRenewalSessionSourceStage({
 } = {}) {
   if (
     session.archived !== true ||
-    normalizeText(session.archiveStatus || session.status) !== "abandoned" ||
+    normalizeText(session.archiveStatus || session.status) !== "archived" ||
     !normalizeText(session.archivePath) ||
     !normalizeText(session.artifactsRoot)
   ) {

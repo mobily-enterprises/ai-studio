@@ -5,7 +5,7 @@ import {
   ACTION_INSPECT_REPOSITORY_HISTORY,
   ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
-  ACTION_ABANDON_SESSION,
+  ACTION_ARCHIVE_SESSION,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_DISCARD_MESSAGE_SUGGESTION,
@@ -18,6 +18,7 @@ import {
   ACTION_INSPECT_ASSISTANT_ACCESS,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
+  ACTION_LIST_ARCHIVED_SESSIONS,
   ACTION_LIST_ASSISTANT_CAPABILITIES,
   ACTION_LIST_MESSAGE_SUGGESTIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
@@ -107,10 +108,14 @@ function registerRoutes(http, {
 
   routes.actionRoute("GET", "/sessions", {
     actionId: ACTION_LIST_SESSIONS,
-    buildInput: (request) => withVibe64User(request, {
-      archive: request.query?.archive || request.input?.query?.archive || ""
-    }),
-    summary: "List Vibe64 sessions."
+    buildInput: (request) => withVibe64User(request),
+    summary: "List open Vibe64 sessions."
+  });
+
+  routes.actionRoute("GET", "/sessions/archived", {
+    actionId: ACTION_LIST_ARCHIVED_SESSIONS,
+    buildInput: (request) => withVibe64User(request),
+    summary: "List archived Vibe64 sessions, newest first."
   });
 
   routes.actionRoute("GET", "/assistants/capabilities", {
@@ -393,13 +398,13 @@ function registerRoutes(http, {
     summary: "Publish the page displayed in a Vibe64 managed preview."
   });
 
-  routes.actionRoute("POST", "/sessions/:sessionId/abandon", {
-    actionId: ACTION_ABANDON_SESSION,
+  routes.actionRoute("POST", "/sessions/:sessionId/archive", {
+    actionId: ACTION_ARCHIVE_SESSION,
     buildInput: (request) => withVibe64User(request, {
       ...routes.requestBody(request),
       sessionId: request.params.sessionId
     }),
-    summary: "Close and archive a Vibe64 session."
+    summary: "Archive a Vibe64 session."
   });
 
   routes.actionRoute("POST", "/sessions/:sessionId/workspace-setup/retry", {

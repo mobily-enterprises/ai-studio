@@ -33,6 +33,7 @@ import {
 } from "./events.js";
 
 const ACTION_LIST_SESSIONS = "vibe64.sessions.list";
+const ACTION_LIST_ARCHIVED_SESSIONS = "vibe64.sessions.archived.list";
 const ACTION_LIST_ASSISTANT_CAPABILITIES = "vibe64.assistants.capabilities.list";
 const ACTION_UPDATE_ASSISTANT_MODEL_ACCESS = "vibe64.assistants.model-access.update";
 const ACTION_CREATE_SESSION = "vibe64.sessions.create";
@@ -53,7 +54,7 @@ const ACTION_INSPECT_SESSION_CHANGES = "vibe64.sessions.changes.inspect";
 const ACTION_INSPECT_SESSION_CHANGE_DIFF = "vibe64.sessions.changes.diff.inspect";
 const ACTION_READ_SESSION_CONVERSATION_LOG = "vibe64.sessions.conversation-log.read";
 const ACTION_RETRY_WORKSPACE_SETUP = "vibe64.sessions.workspace-setup.retry";
-const ACTION_ABANDON_SESSION = "vibe64.sessions.abandon";
+const ACTION_ARCHIVE_SESSION = "vibe64.sessions.archive";
 const ACTION_SEND_AGENT_MESSAGE = "vibe64.sessions.agent-message.send";
 const ACTION_INSPECT_ASSISTANT_ACCESS = "vibe64.sessions.assistant-access.inspect";
 const ACTION_LIST_MESSAGE_SUGGESTIONS = "vibe64.sessions.message-suggestions.list";
@@ -134,6 +135,12 @@ function createSessionActions({ sessions } = {}) {
       kind: "query",
       input: sessionListInputValidator,
       execute: (input) => sessions.listSessions(input || {})
+    }),
+    action({
+      id: ACTION_LIST_ARCHIVED_SESSIONS,
+      kind: "query",
+      input: sessionListInputValidator,
+      execute: () => sessions.listArchivedSessions()
     }),
     action({
       id: ACTION_LIST_ASSISTANT_CAPABILITIES,
@@ -311,10 +318,10 @@ function createSessionActions({ sessions } = {}) {
       })
     }),
     action({
-      id: ACTION_ABANDON_SESSION,
+      id: ACTION_ARCHIVE_SESSION,
       kind: "command",
       input: sessionIdInputValidator,
-      execute: (input) => sessions.abandonSession(input.sessionId, {
+      execute: (input) => sessions.archiveSession(input.sessionId, {
         originId: input.originId || "",
         vibe64User: input.vibe64User || null
       })
@@ -397,7 +404,7 @@ export {
   ACTION_INSPECT_REPOSITORY_HISTORY,
   ACTION_INSPECT_REPOSITORY_VERSION_FILE_DIFF,
   ACTION_INSPECT_REPOSITORY_VERSION_FILES,
-  ACTION_ABANDON_SESSION,
+  ACTION_ARCHIVE_SESSION,
   ACTION_BROADCAST_SESSION_PREVIEW_STATE,
   ACTION_CREATE_SESSION,
   ACTION_DISCARD_MESSAGE_SUGGESTION,
@@ -410,6 +417,7 @@ export {
   ACTION_INSPECT_ASSISTANT_ACCESS,
   ACTION_INTERRUPT_AGENT_TURN,
   ACTION_LIST_SESSIONS,
+  ACTION_LIST_ARCHIVED_SESSIONS,
   ACTION_LIST_MESSAGE_SUGGESTIONS,
   ACTION_READ_SESSION_CONVERSATION_LOG,
   ACTION_REQUEST_SESSION_RENEWAL_DRAFT,

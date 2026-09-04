@@ -1,5 +1,5 @@
 import {
-  abandonedArchiveSession,
+  archivedHistorySession,
   bootstrapPayload,
   currentAppPayload,
   targetRoot,
@@ -168,13 +168,13 @@ async function mockSessionHistoryArchives(page, archiveRequests = []) {
       status: "active"
     });
   });
-  await routeApiEndpoint(page, `/vibe64/sessions/${abandonedArchiveSession.sessionId}`, async (route) => {
+  await routeApiEndpoint(page, `/vibe64/sessions/${archivedHistorySession.sessionId}`, async (route) => {
     await fulfillJson(route, {
-      ...abandonedArchiveSession,
+      ...archivedHistorySession,
       ok: true
     });
   });
-  await routeApiEndpoint(page, `/vibe64/sessions/${abandonedArchiveSession.sessionId}/conversation-log`, async (route) => {
+  await routeApiEndpoint(page, `/vibe64/sessions/${archivedHistorySession.sessionId}/conversation-log`, async (route) => {
     await fulfillJson(route, {
       conversationLog: [
         {
@@ -183,7 +183,7 @@ async function mockSessionHistoryArchives(page, archiveRequests = []) {
             role: "assistant",
             text: "I stopped before finishing this session."
           },
-          turnId: `${abandonedArchiveSession.sessionId}-turn-1`,
+          turnId: `${archivedHistorySession.sessionId}-turn-1`,
           user: {
             at: "2026-05-12T03:14:00.000Z",
             role: "user",
@@ -196,23 +196,20 @@ async function mockSessionHistoryArchives(page, archiveRequests = []) {
         count: 1,
         hasMoreBefore: false,
         limit: 20,
-        newestTurnId: `${abandonedArchiveSession.sessionId}-turn-1`,
-        oldestTurnId: `${abandonedArchiveSession.sessionId}-turn-1`,
+        newestTurnId: `${archivedHistorySession.sessionId}-turn-1`,
+        oldestTurnId: `${archivedHistorySession.sessionId}-turn-1`,
         totalTurnCount: 1
       },
       revision: 1,
-      sessionId: abandonedArchiveSession.sessionId
+      sessionId: archivedHistorySession.sessionId
     });
   });
-  await routeApiEndpoint(page, "/vibe64/sessions", async (route) => {
+  await routeApiEndpoint(page, "/vibe64/sessions/archived", async (route) => {
     const url = new URL(route.request().url());
     archiveRequests.push(`${url.pathname}${url.search}`);
     await fulfillJson(route, {
-      limits: {
-        openSessionCount: 0
-      },
       ok: true,
-      sessions: [abandonedArchiveSession]
+      sessions: [archivedHistorySession]
     });
   });
 }

@@ -130,7 +130,7 @@ function selectTool() {
 
 .vibe64-active-session-nav-item__status--failed,
 .vibe64-active-session-nav-item__status--blocked,
-.vibe64-active-session-nav-item__status--abandoned {
+.vibe64-active-session-nav-item__status--archived {
   background: rgb(var(--v-theme-error));
   box-shadow: 0 0 0 0.22rem rgba(var(--v-theme-error), 0.12);
 }

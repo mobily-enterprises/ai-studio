@@ -31,7 +31,7 @@ import {
   vibe64SessionDisplayTitle,
   vibe64SessionStatusColor,
   vibe64SessionStatusLabel,
-  isClosedVibe64Session
+  isArchivedVibe64Session
 } from "@/lib/vibe64SessionViewModel.js";
 import {
   vibe64SessionDebugDurationMs,
@@ -347,7 +347,7 @@ function useVibe64SessionData({
   });
   const creationOptions = computed(() => sessionList.pages?.[0]?.creation || {});
   const selectedSession = computed(() => enrichVibe64SessionForDisplay(selectedListSession.value));
-  const isSelectedSessionClosed = computed(() => isClosedVibe64Session(selectedSession.value || {}));
+  const isSelectedSessionArchived = computed(() => isArchivedVibe64Session(selectedSession.value || {}));
   const pageLoading = computed(() => Boolean(sessionList.isLoading));
   const canCreateSession = computed(() => {
     return creationOptions.value.canCreate === true;
@@ -656,7 +656,7 @@ function useVibe64SessionData({
     createSessionRunning,
     createSessionVisible,
     createSessionTitle,
-    isSelectedSessionClosed,
+    isSelectedSessionArchived,
     pageLoading,
     refreshSessionData,
     selectSessionId,

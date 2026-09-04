@@ -1881,7 +1881,7 @@ for (const viewportWidth of [390, 960, 1600]) {
     });
 
     await page.evaluate(async ({ apiPrefix }) => {
-      await fetch(`${apiPrefix}/vibe64/sessions/session-created-1/abandon`, {
+      await fetch(`${apiPrefix}/vibe64/sessions/session-created-1/archive`, {
         body: "{}",
         headers: {
           "content-type": "application/json"
@@ -2081,11 +2081,11 @@ for (const viewportWidth of [390, 960, 1600]) {
     await expect(toolbarCreate).toHaveAttribute("aria-disabled", "true");
     await expect(toolbarCreate).toHaveAttribute(
       "aria-label",
-      "New session. Studio allows up to 3 open sessions. Close one before creating another."
+      "New session. Studio allows up to 3 open sessions. Archive one before creating another."
     );
     await expect(toolbarCreate).toHaveAttribute(
       "title",
-      "Studio allows up to 3 open sessions. Close one before creating another."
+      "Studio allows up to 3 open sessions. Archive one before creating another."
     );
     await expect.poll(() => page.evaluate(() => (
       document.documentElement.scrollWidth <= window.innerWidth
@@ -2841,7 +2841,7 @@ async function mockLaunchSession(page: Page, {
   }
   let sharedDevelopmentDatabaseActive = sharedDevelopmentDatabase;
   function currentSessionCreationPolicy() {
-    const openSessionCount = listedSessions.filter((item) => item.status !== "abandoned").length;
+    const openSessionCount = listedSessions.filter((item) => item.status !== "archived").length;
     const maxOpenSessions = sharedDevelopmentDatabaseActive ? 1 : 3;
     const canCreate = openSessionCount < maxOpenSessions;
     return {
@@ -2852,8 +2852,8 @@ async function mockLaunchSession(page: Page, {
         ...(!canCreate
           ? {
               disabledReason: sharedDevelopmentDatabaseActive
-                ? "This project shares one development database. Close its open session before creating another."
-                : "Studio allows up to 3 open sessions. Close one before creating another."
+                ? "This project shares one development database. Archive its open session before creating another."
+                : "Studio allows up to 3 open sessions. Archive one before creating another."
             }
           : {})
       },
@@ -2911,20 +2911,20 @@ async function mockLaunchSession(page: Page, {
       });
       return;
     }
-    if (method === "POST" && /\/sessions\/[^/]+\/abandon$/u.test(url.pathname)) {
-      const abandonedSessionId = decodeURIComponent(url.pathname.split("/").at(-2) || "");
+    if (method === "POST" && /\/sessions\/[^/]+\/archive$/u.test(url.pathname)) {
+      const archivedSessionId = decodeURIComponent(url.pathname.split("/").at(-2) || "");
       listedSessions = listedSessions.map((item) => (
-        item.sessionId === abandonedSessionId
+        item.sessionId === archivedSessionId
           ? {
               ...item,
-              status: "abandoned"
+              status: "archived"
             }
           : item
       ));
       await fulfillJson(route, {
         ok: true,
-        sessionId: abandonedSessionId,
-        status: "abandoned"
+        sessionId: archivedSessionId,
+        status: "archived"
       });
       return;
     }
@@ -3168,7 +3168,7 @@ async function mockLaunchSession(page: Page, {
     await fulfillJson(route, {
       ...currentSessionCreationPolicy(),
       ok: true,
-      sessions: listedSessions.filter((item) => item.status !== "abandoned")
+      sessions: listedSessions.filter((item) => item.status !== "archived")
     });
   });
   if (!previewServer) {

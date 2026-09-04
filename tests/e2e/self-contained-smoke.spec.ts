@@ -19,7 +19,6 @@ test("home loads through a self-contained mocked Studio shell", async ({ page })
   await page.goto(`${DASHBOARD_PATH}/history`);
   await expect(page.getByRole("heading", { level: 1, name: "Session History", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(0);
-  await expect(page.getByText("Review completed and abandoned Vibe64 sessions.", { exact: true })).toHaveCount(0);
   await page.goto(DEVELOPMENT_PATH);
   await expect(page).toHaveURL(developmentUrlPattern());
   await expect(page.getByRole("button", { name: "New Session" })).toBeVisible();
@@ -208,6 +207,13 @@ async function mockReadyStudioShell(page: Page, options: MockReadyStudioShellOpt
         limits: {
           openSessionCount: 0
         },
+        ok: true,
+        sessions: []
+      }
+    ],
+    [
+      "/api/vibe64/sessions/archived",
+      {
         ok: true,
         sessions: []
       }

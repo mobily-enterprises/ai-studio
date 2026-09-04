@@ -234,7 +234,7 @@ describe("Vibe64 launch controls", () => {
       displayed: true,
       session: {
         ...session,
-        status: "abandoned"
+        status: "archived"
       }
     })).toBe(false);
     expect(launchControlsCanLoadTargets({
@@ -243,7 +243,7 @@ describe("Vibe64 launch controls", () => {
         ...session,
         metadata: {
           ...managedSourceMetadata,
-          session_closing_reason: "abandoned"
+          session_closing_reason: "archived"
         }
       }
     })).toBe(false);

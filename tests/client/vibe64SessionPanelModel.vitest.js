@@ -12,7 +12,7 @@ describe("plain Vibe64 session presentation", () => {
     expect(visibleVibe64Sessions([
       { createdAt: "2026-01-02", sessionId: "second", status: "active" },
       { createdAt: "2026-01-01", sessionId: "first", status: "active" },
-      { createdAt: "2026-01-03", sessionId: "closed", status: "abandoned" }
+      { createdAt: "2026-01-03", sessionId: "archived", status: "archived" }
     ]).map((session) => session.sessionId)).toEqual(["first", "second"]);
   });
 
@@ -36,7 +36,7 @@ describe("plain Vibe64 session presentation", () => {
   it("reports session limits and only blocking page errors", () => {
     expect(vibe64SessionLimits({
       payloadLimits: { maxOpenSessions: 4 },
-      sessions: [{ status: "active" }, { status: "abandoned" }]
+      sessions: [{ status: "active" }, { status: "archived" }]
     })).toEqual({ maxOpenSessions: 4, openSessionCount: 1 });
     expect(blockingVibe64SessionPageError({ runtimePageError: "Runtime unavailable" }))
       .toBe("Runtime unavailable");

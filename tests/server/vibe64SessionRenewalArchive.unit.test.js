@@ -268,7 +268,7 @@ test("renewal stages a clean source reversibly before committing removal", async
     );
     assert.equal(await pathExists(firstStage.stagePath), true);
     await handoffAndFinalize(fixture);
-    await fixture.runtime.store.compactRenewedSession(fixture);
+    await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     await activateSuccessor(fixture);
     assert.equal(
       (await fixture.runtime.store.listSessions())
@@ -476,7 +476,7 @@ test("renewal source cleanup resumes an exact partially deleted tombstone", asyn
       { renewalId: fixture.renewalId }
     );
     await handoffAndFinalize(fixture);
-    await fixture.runtime.store.compactRenewedSession(fixture);
+    await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     await activateSuccessor(fixture);
     await commitPreparedRenewal(fixture);
 
@@ -512,13 +512,13 @@ test("renewal completion selects the successor only when the archived predecesso
       { renewalId: fixture.renewalId }
     );
     await handoffAndFinalize(fixture);
-    await fixture.runtime.store.compactRenewedSession(fixture);
+    await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     assert.equal(
       (await fixture.runtime.store.readCurrentSession()).sessionId,
       fixture.sourceSessionId
     );
     assert.deepEqual(
-      await fixture.runtime.store.listSessionSummaries({ statusGroup: "closed" }),
+      await fixture.runtime.store.listSessionSummaries({ statusGroup: "archived" }),
       []
     );
     await activateSuccessor(fixture);
@@ -561,7 +561,7 @@ test("renewal completion never overwrites a selection made outside its exact arc
       { renewalId: fixture.renewalId }
     );
     await handoffAndFinalize(fixture);
-    await fixture.runtime.store.compactRenewedSession(fixture);
+    await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     await activateSuccessor(fixture);
     await fixture.runtime.store.updateCurrentSession("other-session");
 
@@ -589,7 +589,7 @@ test("renewal completion preserves no-selection intent captured by the archive",
       { renewalId: fixture.renewalId }
     );
     await handoffAndFinalize(fixture);
-    await fixture.runtime.store.compactRenewedSession(fixture);
+    await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     await activateSuccessor(fixture);
 
     const prepared = await fixture.runtime.finalizeRenewalCurrentSession(fixture);
@@ -623,7 +623,7 @@ test("failed pre-commit renewal preparation stays private and restores without c
       fixture.sourceSessionId
     );
     assert.deepEqual(
-      await fixture.runtime.store.listSessionSummaries({ statusGroup: "closed" }),
+      await fixture.runtime.store.listSessionSummaries({ statusGroup: "archived" }),
       []
     );
 
@@ -714,7 +714,7 @@ test("renewal restoration never overwrites another selection or a published arch
       sourceSessionId: fixture.sourceSessionId,
       successorSessionId: fixture.successorSessionId
     });
-    await fixture.runtime.store.compactRenewedSession(fixture);
+    await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     await fixture.runtime.store.activateRenewalSuccessor(fixture);
     await fixture.runtime.finalizeRenewalCurrentSession(fixture);
     await fixture.runtime.store.commitRenewalArchive(fixture);
@@ -727,7 +727,7 @@ test("renewal restoration never overwrites another selection or a published arch
   });
 });
 
-test("ordinary compaction refuses to bypass the renewal archive transaction", async () => {
+test("ordinary archiving refuses to bypass the renewal archive transaction", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const fixture = await createRenewalFixture(targetRoot);
     await fixture.runtime.prepareSessionSourceForRenewal(
@@ -736,11 +736,11 @@ test("ordinary compaction refuses to bypass the renewal archive transaction", as
     );
     await handoffAndFinalize(fixture);
     assert.deepEqual(
-      await fixture.runtime.store.listSessionSummaries({ statusGroup: "closed" }),
+      await fixture.runtime.store.listSessionSummaries({ statusGroup: "archived" }),
       []
     );
     await assert.rejects(
-      () => fixture.runtime.store.compactClosedSession(fixture.sourceSessionId),
+      () => fixture.runtime.store.publishSessionArchive(fixture.sourceSessionId),
       { code: "vibe64_session_renewal_quiesced" }
     );
     assert.equal(await pathExists(fixture.runtime.store.paths(fixture.sourceSessionId).manifestPath), true);
@@ -750,15 +750,15 @@ test("ordinary compaction refuses to bypass the renewal archive transaction", as
 test("renewal archive retries clean only exact crash-owned staging paths", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const fixture = await createRenewalFixture(targetRoot);
-    const closedRoot = fixture.runtime.store.paths().closedSessionsRoot;
+    const archiveRoot = fixture.runtime.store.paths().archivedSessionsRoot;
     const buildRoot = path.join(
-      closedRoot,
+      archiveRoot,
       ".renewals",
       ".building",
       fixture.sourceSessionId
     );
     const unrelatedBuildRoot = path.join(
-      closedRoot,
+      archiveRoot,
       ".renewals",
       ".building",
       "another-session"
@@ -772,18 +772,18 @@ test("renewal archive retries clean only exact crash-owned staging paths", async
       { renewalId: fixture.renewalId }
     );
     await handoffAndFinalize(fixture);
-    const prepared = await fixture.runtime.store.compactRenewedSession(fixture);
+    const prepared = await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
     assert.equal(await pathExists(buildRoot), false);
     assert.equal(await pathExists(path.join(unrelatedBuildRoot, "keep.tmp")), true);
 
     const publishingRoot = path.join(
-      closedRoot,
+      archiveRoot,
       ".renewals",
       ".publishing",
       fixture.sourceSessionId
     );
     const unrelatedPublishingRoot = path.join(
-      closedRoot,
+      archiveRoot,
       ".renewals",
       ".publishing",
       "another-session"
@@ -793,8 +793,7 @@ test("renewal archive retries clean only exact crash-owned staging paths", async
       writeProjectFile(unrelatedPublishingRoot, "keep.tmp", "keep")
     ]);
     const finalArchivePath = path.join(
-      closedRoot,
-      VIBE64_SESSION_STATUS.ABANDONED,
+      archiveRoot,
       `${fixture.sourceSessionId}.tar.gz`
     );
     await mkdir(path.dirname(finalArchivePath), { recursive: true });
@@ -812,8 +811,7 @@ test("renewal archive retries clean only exact crash-owned staging paths", async
     assert.equal(await pathExists(finalArchivePath), true);
     assert.equal(
       await pathExists(path.join(
-        closedRoot,
-        VIBE64_SESSION_STATUS.ABANDONED,
+        archiveRoot,
         `${fixture.sourceSessionId}.json`
       )),
       true
@@ -842,7 +840,7 @@ test("renewal archive publication resumes after every closing-tree write boundar
       name: `${metadataName} write`,
       step: "closing-metadata-written"
     })),
-    { name: "abandoned status write", step: "closing-status-written" }
+    { name: "archived status write", step: "closing-status-written" }
   ];
   for (const scenario of scenarios) {
     await t.test(scenario.name, async () => {
@@ -868,7 +866,7 @@ test("renewal archive publication resumes after every closing-tree write boundar
           { renewalId: fixture.renewalId }
         );
         await handoffAndFinalize(fixture);
-        await fixture.runtime.store.compactRenewedSession(fixture);
+        await fixture.runtime.store.prepareRenewalSessionArchive(fixture);
         await activateSuccessor(fixture);
         await fixture.runtime.finalizeRenewalCurrentSession(fixture);
 
@@ -883,7 +881,7 @@ test("renewal archive publication resumes after every closing-tree write boundar
         assert.equal(
           interruptedPredecessor.status,
           scenario.step === "closing-status-written"
-            ? VIBE64_SESSION_STATUS.ABANDONED
+            ? VIBE64_SESSION_STATUS.ARCHIVED
             : VIBE64_SESSION_STATUS.RENEWAL_QUIESCED
         );
         const sourcePaths = fixture.runtime.store.paths(fixture.sourceSessionId);
@@ -908,12 +906,12 @@ test("renewal archive publication resumes after every closing-tree write boundar
         );
         assert.equal(await pathExists(closingRoot), false);
         assert.equal(await pathExists(path.join(
-          sourcePaths.closedSessionsRoot,
+          sourcePaths.archivedSessionsRoot,
           ".renewals",
           fixture.sourceSessionId
         )), false);
         assert.equal(await pathExists(path.join(
-          sourcePaths.closedSessionsRoot,
+          sourcePaths.archivedSessionsRoot,
           ".renewals",
           ".publishing",
           fixture.sourceSessionId

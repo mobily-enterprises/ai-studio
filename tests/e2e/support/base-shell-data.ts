@@ -112,10 +112,10 @@ function archivedSession({
   };
 }
 
-const abandonedArchiveSession = archivedSession({
+const archivedHistorySession = archivedSession({
   sessionId: "2026-05-12_03-11-00",
-  sessionName: "Abandoned direct chat",
-  status: "abandoned"
+  sessionName: "Archived direct chat",
+  status: "archived"
 });
 
 export {
@@ -124,7 +124,7 @@ export {
   DEVELOPMENT_PATH,
   SCOPED_API_PREFIX,
   WORKSPACE_SLUG,
-  abandonedArchiveSession,
+  archivedHistorySession,
   bootstrapPayload,
   currentAppPayload,
   projectRuntimeRoot,

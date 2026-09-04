@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  isClosedVibe64Session,
+  isArchivedVibe64Session,
   isOpenVibe64Session,
   shortVibe64SessionId,
   vibe64SessionDisplayTitle,
@@ -21,12 +21,12 @@ describe("plain Vibe64 session view", () => {
 
   it("distinguishes open and archived sessions", () => {
     expect(isOpenVibe64Session({ status: "active" })).toBe(true);
-    expect(isClosedVibe64Session({ status: "abandoned" })).toBe(true);
+    expect(isArchivedVibe64Session({ status: "archived" })).toBe(true);
   });
 
   it("presents the small plain-session status set", () => {
     expect(vibe64SessionStatusLabel("active")).toBe("active");
-    expect(vibe64SessionStatusColor("abandoned")).toBe("error");
+    expect(vibe64SessionStatusColor("archived")).toBe("primary");
     expect(vibe64SessionStatusColor("blocked")).toBe("error");
     expect(vibe64SessionStatusColor("active")).toBe("primary");
   });

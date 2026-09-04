@@ -19,22 +19,22 @@
       </div>
     </Transition>
 
-    <Transition name="studio-ai-sessions-closing">
+    <Transition name="studio-ai-sessions-archiving">
       <section
-        v-if="selectedSessionClosing"
-        class="studio-ai-sessions__closing-overlay"
-        aria-label="Closing session"
+        v-if="selectedSessionArchiving"
+        class="studio-ai-sessions__archiving-overlay"
+        aria-label="Archiving session"
         aria-live="polite"
         role="status"
       >
-        <div class="studio-ai-sessions__closing-card">
+        <div class="studio-ai-sessions__archiving-card">
           <v-icon
             color="primary"
             :icon="mdiArchiveArrowDownOutline"
             size="32"
           />
-          <strong>Closing session…</strong>
-          <span>Stopping its tools and archiving its state.</span>
+          <strong>Archiving session…</strong>
+          <span>Stopping its tools and preserving its state.</span>
         </div>
       </section>
     </Transition>
@@ -61,12 +61,12 @@
     <div
       v-if="emptyLayoutVisible"
       class="studio-ai-sessions__empty-layout"
-      :aria-hidden="selectedSessionClosing ? 'true' : undefined"
+      :aria-hidden="selectedSessionArchiving ? 'true' : undefined"
       :class="{
         'studio-ai-sessions__empty-layout--chat-collapsed': chatCollapsed,
         'studio-ai-sessions__empty-layout--dashboard': dashboardProjectActive
       }"
-      :inert="selectedSessionClosing"
+      :inert="selectedSessionArchiving"
     >
       <section
         class="studio-ai-sessions__empty-main"
@@ -74,13 +74,13 @@
       >
         <div class="studio-ai-sessions__empty-session-header">
           <Vibe64SessionToolbar
-            :abandon="selectedAbandon"
+            :archive="selectedArchive"
             compact
             :create-attention="emptyCreateAttention"
             :create-visible="!emptyStateInitialLoading && toolbar.createSessionVisible"
             :max-visible-sessions="3"
             :selected-session-id="selection.selectedSessionId"
-            :selection-closed="selection.isClosed"
+            :selection-archived="selection.isArchived"
             :toolbar="emptyToolbar"
           />
         </div>
@@ -156,8 +156,8 @@
     <div
       v-show="runtimeHostSessionIds.length > 0"
       class="studio-ai-sessions__runtime-stack"
-      :aria-hidden="selectedSessionClosing ? 'true' : undefined"
-      :inert="selectedSessionClosing"
+      :aria-hidden="selectedSessionArchiving ? 'true' : undefined"
+      :inert="selectedSessionArchiving"
     >
       <Vibe64SessionRuntimeHost
         v-for="runtimeSessionId in runtimeHostSessionIds"
@@ -233,8 +233,8 @@ const {
   promptHintPolicy,
   projectPane,
   runtimeHostSessionIds,
-  selectedAbandon,
-  selectedSessionClosing,
+  selectedArchive,
+  selectedSessionArchiving,
   selection,
   sessionData,
   setRuntimeBusy,
@@ -474,7 +474,7 @@ const {
   z-index: 12;
 }
 
-.studio-ai-sessions__closing-overlay {
+.studio-ai-sessions__archiving-overlay {
   align-items: center;
   background: rgba(var(--v-theme-background), 0.92);
   display: grid;
@@ -485,7 +485,7 @@ const {
   z-index: 14;
 }
 
-.studio-ai-sessions__closing-card {
+.studio-ai-sessions__archiving-card {
   align-items: center;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-primary), 0.22);
@@ -499,23 +499,23 @@ const {
   text-align: center;
 }
 
-.studio-ai-sessions__closing-card strong {
+.studio-ai-sessions__archiving-card strong {
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
 }
 
-.studio-ai-sessions__closing-card span {
+.studio-ai-sessions__archiving-card span {
   color: rgba(var(--v-theme-on-surface), 0.66);
   font-size: 0.86rem;
 }
 
-.studio-ai-sessions-closing-enter-active,
-.studio-ai-sessions-closing-leave-active {
+.studio-ai-sessions-archiving-enter-active,
+.studio-ai-sessions-archiving-leave-active {
   transition: opacity 120ms ease;
 }
 
-.studio-ai-sessions-closing-enter-from,
-.studio-ai-sessions-closing-leave-to {
+.studio-ai-sessions-archiving-enter-from,
+.studio-ai-sessions-archiving-leave-to {
   opacity: 0;
 }
 

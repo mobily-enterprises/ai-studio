@@ -121,18 +121,6 @@ function requiredRepositorySessionId(value = "") {
   return sessionId;
 }
 
-function archiveListOptions(value = "") {
-  const archive = text(value);
-  if (archive === "abandoned") {
-    return {
-      statuses: ["abandoned"]
-    };
-  }
-  return {
-    statusGroup: "open"
-  };
-}
-
 function conversationPageOptions(options = {}) {
   const limit = Number.parseInt(String(options.limit || ""), 10);
   return {
@@ -842,10 +830,10 @@ function createService({
       }, "Vibe64 could not read this version's file change.");
     },
 
-    async abandonSession(sessionId, input = {}) {
+    async archiveSession(sessionId, input = {}) {
       return sessionResult(async () => {
         if (setupRunner.isRunning(sessionId)) {
-          const error = new Error("Wait for workspace preparation to finish before closing this session.");
+          const error = new Error("Wait for workspace preparation to finish before archiving this session.");
           error.code = "vibe64_workspace_setup_running";
           throw error;
         }
@@ -857,7 +845,7 @@ function createService({
           const sourceCreationFailed = currentSession.sourceReady !== true &&
             text(currentSession.metadata?.source_creation_failed).toLowerCase() === "yes";
           await runtime.markSessionClosing(sessionId, {
-            reason: "abandoned"
+            reason: "archived"
           });
           try {
             await terminals.closeSessionTerminals(sessionId);
@@ -869,7 +857,7 @@ function createService({
                 sessionId
               });
             }
-            return runtime.abandonSession(sessionId);
+            return runtime.archiveSession(sessionId);
           } catch (error) {
             await runtime.clearSessionClosing(sessionId).catch(() => null);
             throw error;
@@ -882,11 +870,11 @@ function createService({
         await publishSessionChanged(sessionId, {
           operation: "updated",
           originId: text(input.originId),
-          reason: "session-abandoned",
+          reason: "session-archived",
           session
         });
         return publicSession(session);
-      }, "Vibe64 could not close this session.");
+      }, "Vibe64 could not archive this session.");
     },
 
     async broadcastSessionPreviewState(sessionId, input = {}) {
@@ -1460,26 +1448,38 @@ function createService({
       }), "Vibe64 could not interrupt the assistant.");
     },
 
-    async listSessions(input = {}) {
+    async listSessions() {
       return sessionResult(async () => {
         const runtime = await project.createRuntime({
           inspectSource: false
         });
-        const viewingAbandoned = text(input.archive) === "abandoned";
-        const sessions = await runtime.listSessionSummaries(archiveListOptions(input.archive));
+        const sessions = await runtime.listSessionSummaries({ statusGroup: "open" });
         if (typeof project.developmentDatabasePolicy !== "function") {
           throw new TypeError("Session listing requires the project session policy.");
         }
-        const visibleOpenSessions = viewingAbandoned
-          ? await runtime.listSessionSummaries({ statusGroup: "open" })
-          : sessions;
-        const openSessions = await sessionsOccupyingPolicySlots(runtime, visibleOpenSessions);
+        const openSessions = await sessionsOccupyingPolicySlots(runtime, sessions);
         const policy = await project.developmentDatabasePolicy({ openSessions });
         return {
           creation: policy.creation,
           limits: policy.limits,
           ok: true,
           sessions
+        };
+      });
+    },
+
+    async listArchivedSessions() {
+      return sessionResult(async () => {
+        const runtime = await project.createRuntime({
+          inspectSource: false
+        });
+        const sessions = await runtime.listSessionSummaries({ statusGroup: "archived" });
+        return {
+          ok: true,
+          sessions: [...sessions].sort((left, right) => (
+            text(right.archivedAt).localeCompare(text(left.archivedAt)) ||
+            text(right.sessionId).localeCompare(text(left.sessionId))
+          ))
         };
       });
     },

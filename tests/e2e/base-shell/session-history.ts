@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { BASE_URL, DASHBOARD_PATH, DEVELOPMENT_PATH, viewports } from "../support/base-shell-data";
+import { BASE_URL, DASHBOARD_PATH, viewports } from "../support/base-shell-data";
 import {
   expectNoHorizontalOverflow,
   expectSessionHistoryRoute,
@@ -10,7 +10,7 @@ import { mockSessionHistoryArchives } from "../support/base-shell-mocks";
 
 test.describe("session history navigation", () => {
   for (const viewport of viewports) {
-    test(`${viewport.name} session history shows abandoned direct chats`, async ({ page }) => {
+    test(`${viewport.name} session history shows archived direct chats`, async ({ page }) => {
       const archiveRequests = [];
       await mockSessionHistoryArchives(page, archiveRequests);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -19,13 +19,14 @@ test.describe("session history navigation", () => {
 
       await expect(page).toHaveURL(new RegExp(`${DASHBOARD_PATH}/history$`, "u"));
       await expectSessionHistoryRoute(page);
-      await expect(page.getByText("Abandoned direct chat")).toBeVisible();
+      await expect(page.getByText("Archived direct chat")).toBeVisible();
+      await expect(page.getByText(/^Archived /u)).toBeVisible();
       await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
       if (viewport.width > 980) {
         await expect(page.getByRole("link", { name: /^Session History$/u }).first()).toBeVisible();
       }
       expect(archiveRequests.some((request) => {
-        return request.includes("/vibe64/sessions?") && request.includes("archive=abandoned");
+        return request.endsWith("/vibe64/sessions/archived");
       })).toBe(true);
 
       await page.getByRole("link", { name: "View", exact: true }).first().click();
@@ -47,14 +48,4 @@ test.describe("session history navigation", () => {
       await expectNoHorizontalOverflow(page);
     });
   }
-
-  test("the removed development archive route stays unsupported", async ({ page }) => {
-    const archiveRequests = [];
-    await mockSessionHistoryArchives(page, archiveRequests);
-
-    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}/abandoned`);
-    await expect(page.getByRole("heading", { name: "Abandoned Sessions", exact: true })).toHaveCount(0);
-    await expect(page.locator(".studio-archived-sessions")).toHaveCount(0);
-    expect(archiveRequests).toEqual([]);
-  });
 });

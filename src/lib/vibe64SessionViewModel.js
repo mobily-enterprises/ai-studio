@@ -21,18 +21,18 @@ function vibe64SessionStatusLabel(status = "") {
 
 function vibe64SessionStatusColor(status = "") {
   const value = text(status);
-  if (value === "abandoned" || value === "blocked") {
+  if (value === "blocked") {
     return "error";
   }
   return "primary";
 }
 
-function isClosedVibe64Session(session = {}) {
-  return text(session.status) === "abandoned";
+function isArchivedVibe64Session(session = {}) {
+  return text(session.status) === "archived";
 }
 
 function isOpenVibe64Session(session = {}) {
-  return !isClosedVibe64Session(session);
+  return !isArchivedVibe64Session(session);
 }
 
 function vibe64SessionRevision(session = null) {
@@ -41,7 +41,7 @@ function vibe64SessionRevision(session = null) {
 }
 
 export {
-  isClosedVibe64Session,
+  isArchivedVibe64Session,
   isOpenVibe64Session,
   shortVibe64SessionId,
   vibe64SessionDisplayTitle,

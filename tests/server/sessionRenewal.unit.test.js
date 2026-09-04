@@ -451,7 +451,7 @@ function fixture({
       assert.equal(successor.metadata.renewal_activated_at, committedAt);
       return successor;
     },
-    async compactRenewedSession({ renewalId, sourceSessionId, successorSessionId }) {
+    async prepareRenewalSessionArchive({ renewalId, sourceSessionId, successorSessionId }) {
       calls.compact += 1;
       if (archiveBarrier) {
         archiveBarrier.started?.();
@@ -497,7 +497,7 @@ function fixture({
         assert.equal(source.preparedMetadata.renewal_id, renewalId);
         assert.equal(source.preparedMetadata.renewed_to, successorSessionId);
         source.metadata = { ...source.preparedMetadata };
-        source.status = "abandoned";
+        source.status = "archived";
         source.archived = true;
         source.archiveRetained = true;
         if (currentSessionId === sourceSessionId) {
@@ -971,7 +971,7 @@ function fixture({
       calls.processExitProofRelease += 1;
       calls.ordering.push("process-exit-proof-release");
       assert.equal(session.archived, true);
-      assert.equal(session.status, "abandoned");
+      assert.equal(session.status, "archived");
       assert.equal(options.renewalId, session.metadata.renewal_id);
       assert.equal(options.runtime, runtime);
       if (remainingProcessExitProofReleaseFailures > 0) {
@@ -985,7 +985,7 @@ function fixture({
     },
     async releaseRenewalPredecessorAttachments(session, options) {
       assert.equal(session.archived, true);
-      assert.equal(session.status, "abandoned");
+      assert.equal(session.status, "archived");
       assert.equal(options.renewalId, session.metadata.renewal_id);
       assert.equal(options.runtime, runtime);
       calls.attachmentRelease += 1;
@@ -1278,7 +1278,7 @@ test("draft requests cannot create renewal state for a non-active session", asyn
     prepare(context) {
       Object.assign(context.sessions.get(OLD_SESSION_ID), {
         archived: true,
-        status: "abandoned"
+        status: "archived"
       });
     },
     sessionId: OLD_SESSION_ID,
@@ -2285,7 +2285,7 @@ test("confirmed renewal creates a hidden successor and selects it only after ack
     agent_settings_provider: context.calls.seedSessionMetadata.agent_settings_provider,
     agent_settings_thinking: context.calls.seedSessionMetadata.agent_settings_thinking
   }, context.calls.createMetadata);
-  assert.equal(context.sessions.get(OLD_SESSION_ID).status, "abandoned");
+  assert.equal(context.sessions.get(OLD_SESSION_ID).status, "archived");
   assert.equal(context.sessions.get(completed.successor.sessionId).status, "active");
   assert.equal(context.currentSessionId, completed.successor.sessionId);
   assert.equal(completed.successor.threadId, "thread-new");
@@ -3567,7 +3567,7 @@ test("restart rejects a published predecessor without a durable commit marker", 
   Object.assign(context.sessions.get(OLD_SESSION_ID), {
     archiveRetained: true,
     archived: true,
-    status: "abandoned"
+    status: "archived"
   });
   Object.assign(context.sessions.get(OLD_SESSION_ID).metadata, {
     renewal_id: reviewed.renewalId,
@@ -3636,7 +3636,7 @@ test("post-commit recovery completes without restoring the persisted actor", asy
   Object.assign(context.sessions.get(OLD_SESSION_ID), {
     archiveRetained: true,
     archived: true,
-    status: "abandoned"
+    status: "archived"
   });
   Object.assign(context.sessions.get(OLD_SESSION_ID).metadata, {
     renewal_archived_at: "2026-08-24T04:01:00.000Z",
@@ -3721,7 +3721,7 @@ test("actor recovery never repairs a published predecessor without a commit mark
   Object.assign(context.sessions.get(OLD_SESSION_ID), {
     archiveRetained: true,
     archived: true,
-    status: "abandoned"
+    status: "archived"
   });
   Object.assign(context.sessions.get(OLD_SESSION_ID).metadata, {
     renewal_id: reviewed.renewalId,
@@ -3753,7 +3753,7 @@ test("actor recovery never repairs a published predecessor without a commit mark
   assert.equal(failed.error.code, "vibe64_session_renewal_restore_failed");
   assert.equal(failed.commit, undefined);
   assert.equal(context.sessions.get(OLD_SESSION_ID).archived, true);
-  assert.equal(context.sessions.get(OLD_SESSION_ID).status, "abandoned");
+  assert.equal(context.sessions.get(OLD_SESSION_ID).status, "archived");
   assert.equal(context.sessions.get(successorSessionId).status, "renewal_pending");
   assert.equal(context.currentSessionId, "");
   assert.equal(actorResolutionCount, 1);

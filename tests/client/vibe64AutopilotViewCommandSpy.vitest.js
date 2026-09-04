@@ -194,7 +194,7 @@ describe("Vibe64 direct session view", () => {
     const component = fs.readFileSync(componentPath, "utf8");
 
     expect(component).toContain("<Vibe64SessionToolbar");
-    expect(component).toContain(":abandon=\"props.sessionAbandon\"");
+    expect(component).toContain(":archive=\"props.sessionArchive\"");
     expect(component).toContain("<Vibe64SessionSourceEditor");
     expect(component).toContain("<Vibe64SystemWorldView");
     expect(component).toContain("<Vibe64OutputControls");

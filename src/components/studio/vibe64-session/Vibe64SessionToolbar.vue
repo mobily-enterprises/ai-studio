@@ -37,16 +37,15 @@
           class="studio-ai-sessions__tab-close-slot"
         >
           <v-btn
-            class="studio-ai-sessions__tab-abandon"
+            class="studio-ai-sessions__tab-archive"
             density="comfortable"
-            :disabled="selectionClosed || abandon.command.isRunning"
-            :icon="mdiClose"
-            :loading="abandon.command.isRunning"
+            :disabled="selectionArchived || archive.command.isRunning"
+            :icon="mdiArchiveOutline"
             size="small"
-            title="Abandon session"
+            title="Archive session"
             variant="text"
-            aria-label="Abandon session"
-            @click.stop="abandon.request"
+            aria-label="Archive session"
+            @click.stop="archive.request"
           />
         </span>
       </v-chip>
@@ -68,8 +67,8 @@
 import { computed } from "vue";
 import {
   mdiAlertCircleOutline,
+  mdiArchiveOutline,
   mdiCheckCircleOutline,
-  mdiClose,
   mdiCloudDownloadOutline,
   mdiContentSaveAlertOutline,
   mdiDotsHorizontalCircleOutline
@@ -80,7 +79,7 @@ import {
 } from "@/lib/vibe64SessionToolbarVisibility.js";
 
 const props = defineProps({
-  abandon: {
+  archive: {
     default: () => ({}),
     type: Object
   },
@@ -88,7 +87,7 @@ const props = defineProps({
     default: "",
     type: String
   },
-  selectionClosed: {
+  selectionArchived: {
     default: false,
     type: Boolean
   },
@@ -314,7 +313,7 @@ const visibleSessions = computed(() => {
   padding-inline: 0.14rem 0.28rem;
 }
 
-.studio-ai-sessions__tab-abandon {
+.studio-ai-sessions__tab-archive {
   background: transparent !important;
   color: currentColor !important;
   flex: 0 0 1.38rem;
@@ -325,8 +324,8 @@ const visibleSessions = computed(() => {
   width: 1.38rem !important;
 }
 
-.studio-ai-sessions__tab-abandon:hover,
-.studio-ai-sessions__tab-abandon:focus-visible {
+.studio-ai-sessions__tab-archive:hover,
+.studio-ai-sessions__tab-archive:focus-visible {
   background: rgb(var(--v-theme-primary)) !important;
   box-shadow:
     inset 0 0 0 1px rgba(var(--v-theme-on-primary), 0.16),
@@ -336,7 +335,7 @@ const visibleSessions = computed(() => {
   pointer-events: auto;
 }
 
-.studio-ai-sessions__tab-abandon :deep(.v-icon) {
+.studio-ai-sessions__tab-archive :deep(.v-icon) {
   font-size: 0.98rem;
 }
 
@@ -361,7 +360,6 @@ const visibleSessions = computed(() => {
   animation: studio-ai-sessions-thinking-pulse 1.3s steps(2, end) infinite;
 }
 
-.studio-ai-sessions__status-dot--abandoned,
 .studio-ai-sessions__status-dot--blocked,
 .studio-ai-sessions__status-dot--failed {
   background: rgb(var(--v-theme-error));
@@ -414,7 +412,7 @@ const visibleSessions = computed(() => {
   width: 0.58rem;
 }
 
-.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab-abandon {
+.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab-archive {
   flex-basis: 1.42rem;
   height: 1.42rem !important;
   min-height: 1.42rem;
@@ -422,7 +420,7 @@ const visibleSessions = computed(() => {
   width: 1.42rem !important;
 }
 
-.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab-abandon :deep(.v-icon) {
+.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab-archive :deep(.v-icon) {
   font-size: 1rem;
 }
 
@@ -434,7 +432,7 @@ const visibleSessions = computed(() => {
 }
 
 @media (hover: none), (pointer: coarse) {
-  .studio-ai-sessions__tab .studio-ai-sessions__tab-abandon {
+  .studio-ai-sessions__tab .studio-ai-sessions__tab-archive {
     box-shadow: none;
     opacity: 1;
     pointer-events: auto;
