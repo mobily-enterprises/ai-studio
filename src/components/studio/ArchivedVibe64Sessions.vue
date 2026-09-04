@@ -78,10 +78,7 @@
                 <v-chip :color="statusColor(session.status)" size="x-small" variant="tonal">
                   {{ statusLabel(session.status || "archived") }}
                 </v-chip>
-                <v-chip v-if="session.sourceRemoved" color="warning" size="x-small" variant="tonal">
-                  source removed
-                </v-chip>
-                <v-chip v-else-if="session.sourceReady" color="success" size="x-small" variant="tonal">
+                <v-chip v-if="session.sourceReady" color="success" size="x-small" variant="tonal">
                   source available
                 </v-chip>
               </div>

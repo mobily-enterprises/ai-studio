@@ -100,12 +100,13 @@ function archivedSession({
       sessionId,
       updatedAt: "2026-05-12T03:20:00.000Z"
     },
-    metadata: {},
+    metadata: {
+      source_removed: "yes"
+    },
     revision: 2,
     sessionId,
     sessionName,
     sourceReady: false,
-    sourceRemoved: true,
     status,
     targetRoot,
     updatedAt: "2026-05-12T03:20:00.000Z"

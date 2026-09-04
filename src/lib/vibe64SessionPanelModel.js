@@ -61,8 +61,7 @@ function enrichVibe64SessionForDisplay(session = null) {
     ...session,
     sessionName: session.sessionName || metadata.label || "",
     source,
-    sourceReady: !sourceRemoved && (session.sourceReady === true || Boolean(source)),
-    sourceRemoved
+    sourceReady: !sourceRemoved && (session.sourceReady === true || Boolean(source))
   };
 }
 

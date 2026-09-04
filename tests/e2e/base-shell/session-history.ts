@@ -21,6 +21,7 @@ test.describe("session history navigation", () => {
       await expectSessionHistoryRoute(page);
       await expect(page.getByText("Archived direct chat")).toBeVisible();
       await expect(page.getByText(/^Archived /u)).toBeVisible();
+      await expect(page.getByText("source removed", { exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
       if (viewport.width > 980) {
         await expect(page.getByRole("link", { name: /^Session History$/u }).first()).toBeVisible();
