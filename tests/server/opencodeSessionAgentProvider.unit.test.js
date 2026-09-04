@@ -51,6 +51,22 @@ test("OpenCode resolves every Vibe64 helper workload to the selected model and a
   }
 });
 
+test("OpenCode gives live commit-title and prompt-hint helpers enough bounded time", () => {
+  for (const workloadId of [
+    VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.COMMIT_TITLE,
+    VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.PROMPT_HINT
+  ]) {
+    const profile = resolveOpenCodeEconomyExecutionProfile({
+      assistantSelection: selection,
+      assistantAccess
+    }, {
+      profileId: VIBE64_AGENT_EXECUTION_PROFILE_IDS.ECONOMY,
+      workloadId
+    });
+    assert.equal(profile.limits.timeoutMs, 120_000);
+  }
+});
+
 test("OpenCode refuses helper profiles without its durable provider and model selection", () => {
   assert.throws(
     () => resolveOpenCodeEconomyExecutionProfile({

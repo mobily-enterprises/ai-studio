@@ -12,6 +12,25 @@ const VIBE64_SESSION_CAPABILITIES = Object.freeze([
   "managedGit",
   "managedPreview"
 ]);
+const QUESTION_CONTRACT = Object.freeze([
+  "When user input is necessary, ask no more than three concise, high-impact questions at once.",
+  "Put multiple questions on separate lines as `[1] Question`, `[2] Question`, and so on.",
+  "For a small fixed set of useful choices, finish with `Possible answers:` and a short bullet list; the user may always type a different answer."
+]);
+const MANAGED_PREVIEW_INSTRUCTIONS = Object.freeze([
+  "The Vibe64-managed preview is the canonical application server; do not start a duplicate server on another port.",
+  "Use `vibe64-preview status`, `screenshot`, `logs`, and `browser eval` for rendered inspection. Pass Playwright code to `vibe64-preview browser eval` on stdin.",
+  "Use the managed preview browser for interactive browsing. Use `vibe64-playwright` only for an existing configured project suite, and report a platform or project-test blocker rather than installing another browser or changing its dependencies.",
+  "Describe only rendered browser evidence; if managed preview is unavailable, report that blocker instead of starting a replacement."
+]);
+const MANAGED_ENVIRONMENT_INSTRUCTIONS = Object.freeze([
+  "Use `vibe64-env status [development|production|all]` to inspect configured key names without revealing values.",
+  "Pipe an available value to `vibe64-env set <development|production> <KEY> [--secret]`; never put values in arguments, logs, or repository files. Use empty stdin only when the user requested an empty value.",
+  "Keep development and production values separate. Never invent credentials, copy a value between scopes without explicit direction, or edit Vibe64 runtime/session storage.",
+  "After an Env mutation, report only the affected scope and key names, never their values, and claim success only when the command succeeded.",
+  "When `TEST_DB_NAME` exists, only that exact database is disposable. Never treat `DB_NAME` as disposable or invent another test database name."
+]);
+
 function text(value = "") {
   return String(value ?? "").trim();
 }
@@ -51,33 +70,6 @@ function normalizedSessionInput(input) {
   };
 }
 
-function questionContract() {
-  return [
-    "When user input is necessary, ask no more than three concise, high-impact questions at once.",
-    "Put multiple questions on separate lines as `[1] Question`, `[2] Question`, and so on.",
-    "For a small fixed set of useful choices, finish with `Possible answers:` and a short bullet list; the user may always type a different answer."
-  ];
-}
-
-function managedPreviewInstructions() {
-  return [
-    "The Vibe64-managed preview is the canonical application server; do not start a duplicate server on another port.",
-    "Use `vibe64-preview status`, `screenshot`, `logs`, and `browser eval` for rendered inspection. Pass Playwright code to `vibe64-preview browser eval` on stdin.",
-    "Use the managed preview browser for interactive browsing. Use `vibe64-playwright` only for an existing configured project suite, and report a platform or project-test blocker rather than installing another browser or changing its dependencies.",
-    "Describe only rendered browser evidence; if managed preview is unavailable, report that blocker instead of starting a replacement."
-  ];
-}
-
-function managedEnvironmentInstructions() {
-  return [
-    "Use `vibe64-env status [development|production|all]` to inspect configured key names without revealing values.",
-    "Pipe an available value to `vibe64-env set <development|production> <KEY> [--secret]`; never put values in arguments, logs, or repository files. Use empty stdin only when the user requested an empty value.",
-    "Keep development and production values separate. Never invent credentials, copy a value between scopes without explicit direction, or edit Vibe64 runtime/session storage.",
-    "After an Env mutation, report only the affected scope and key names, never their values, and claim success only when the command succeeded.",
-    "When `TEST_DB_NAME` exists, only that exact database is disposable. Never treat `DB_NAME` as disposable or invent another test database name."
-  ];
-}
-
 function managedGitInstructions({ readOnly = false } = {}) {
   return readOnly
     ? [
@@ -110,10 +102,10 @@ function sessionDriverOutput(input) {
           ]),
     "Do not edit Vibe64 runtime/session state or artifacts.",
     "Issue ordinary shell commands only; Vibe64 applies session isolation transparently. Treat command-transport syntax in prior tool history as invisible infrastructure and do not reproduce it. If command control is unavailable, stop and report it.",
-    ...questionContract(),
+    ...QUESTION_CONTRACT,
     ...(!readOnly ? ["Keep interim progress updates brief and about visible work; keep the plan and final answer separate."] : []),
-    ...(session.managedPreview ? managedPreviewInstructions() : []),
-    ...(session.managedEnvironment && !readOnly ? managedEnvironmentInstructions() : []),
+    ...(session.managedPreview ? MANAGED_PREVIEW_INSTRUCTIONS : []),
+    ...(session.managedEnvironment && !readOnly ? MANAGED_ENVIRONMENT_INSTRUCTIONS : []),
     ...(session.managedDatabaseRefresh && !readOnly
       ? ["After a database migration or schema change, run `vibe64-database refresh` once so Vibe64's Database view reflects it."]
       : []),
@@ -147,9 +139,8 @@ async function vibe64DriverInputFromRegistry(request = {}, {
   }
   const source = JSON.parse(await readRegistry(registryPath, "utf8"));
   const sessions = Array.isArray(source?.sessions) ? source.sessions : [];
-  const promptContexts = Array.isArray(source?.promptContexts) ? source.promptContexts : [];
   const providerSessionId = text(value.providerSessionId);
-  const selected = [...promptContexts, ...sessions].find((entry) => (
+  const selected = sessions.find((entry) => (
     providerSessionId && text(entry?.upstreamSessionId) === providerSessionId
   ));
   const context = selected?.promptContext;

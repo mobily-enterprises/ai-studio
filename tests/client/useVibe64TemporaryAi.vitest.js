@@ -595,7 +595,7 @@ describe("useVibe64TemporaryAi", () => {
       },
       {
         conversationId: "conversation-1",
-        message: "The conflict can be resolved safely.",
+        text: "The conflict can be resolved safely.",
         ok: true,
         progressUpdates: [{ id: "progress:1", text: "Inspecting the conflict." }],
         runId: "turn-1",

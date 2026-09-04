@@ -182,7 +182,8 @@ exposing the raw provider credential error. Other structured OpenCode API
 failures preserve the readable provider message and add the same durable
 account-management route. Existing conversation and project changes remain
 available for either failure, and the person can retry after the account is
-recovered.
+recovered. Other OpenCode turn failures preserve their readable error in a
+durable conversation notice without sending the person to account settings.
 
 When Codex reports its exact structured usage-limit condition, the durable turn
 outcome links directly to Codex usage and billing while preserving completed
@@ -213,9 +214,10 @@ an unrelated failure cannot gain an account link merely because of its wording.
 - `ensureSharedProcess()` and `stopProcessRecord()` own OpenCode's one-process
   lifecycle. Established session targets and pending starts both retain that
   process; directory-scoped clients and `Vibe64SessionEnvironment` preserve
-  each session's working and command boundary. The shared process receives the
-  prepared command paths so a project plugin can invoke Vibe64's bundled
-  Genesis executable through its ordinary CLI contract.
+  each session's working and command boundary. The shared process receives
+  only Vibe64's bundled Genesis executable path; the environment plugin adds
+  each session's command paths and private control identity when that session
+  executes a tool.
 - `safeOpenCodeEnvironment()` retains project configuration and plugins while
   disabling OpenCode's unrelated default plugins and loading Vibe64's
   session-environment plugin for command routing. It raises OpenCode's response

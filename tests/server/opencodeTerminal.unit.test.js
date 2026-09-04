@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { genesisCommandShimDirectory } from "@local/vibe64-genesis/server";
+
 import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_EXECUTION_WORKLOAD_IDS,
@@ -67,6 +69,7 @@ async function controllerHarness({
   catalogProviders = providerResult,
   commandEnvironmentGate = null,
   gitActorFailure = null,
+  helperResponse = '{"subject":"Add durable OpenCode sessions"}',
   providerEvents = [],
   realAttachedTerminal = false,
   withCommandBoundary = false
@@ -278,7 +281,7 @@ async function controllerHarness({
           throw Object.assign(new Error("admission failed"), { statusCode: 503 });
         }
         outputs.set(id, id.startsWith("ses_detached_")
-          ? '{"subject":"Add durable OpenCode sessions"}'
+          ? helperResponse
           : queuedAssistantResponses.shift() || "Main turn complete");
         return { admittedSeq: promptCalls.length, id: input.id };
       },
@@ -1248,7 +1251,15 @@ test("OpenCode preserves structured provider errors as readable turn failures", 
 
   assert.equal(result.error, "Aborted");
   assert.equal(result.state, "failed");
-  assert.deepEqual(harness.systemMessages, []);
+  assert.equal(harness.systemMessages.length, 1);
+  assert.equal(
+    harness.systemMessages[0].text,
+    "OpenCode could not finish.\n\nAborted\n\nSaved project changes remain."
+  );
+  assert.equal(harness.publishedSessionChanges.some(([, payload]) => (
+    payload.reason === "opencode-provider-failure" &&
+    payload.payload?.conversationLogPatch?.type === "upsert-turn"
+  )), true);
 });
 
 test("OpenCode makes structured provider API failures actionable", async (t) => {
@@ -1315,7 +1326,9 @@ test("OpenCode does not misclassify model token limits as credential failures", 
 
   assert.equal(result.error, "Maximum output token limit exceeded");
   assert.equal(result.state, "failed");
-  assert.deepEqual(harness.systemMessages, []);
+  assert.equal(harness.systemMessages.length, 1);
+  assert.match(harness.systemMessages[0].text, /Maximum output token limit exceeded/u);
+  assert.doesNotMatch(harness.systemMessages[0].text, /Manage AI accounts/u);
 });
 
 test("OpenCode turns make revoked provider keys actionable without exposing raw provider errors", async (t) => {
@@ -1468,6 +1481,7 @@ test("OpenCode switches connected providers while preserving its database and na
 
 test("OpenCode helper turns use the hidden deny-all agent and bounded structured output", async (t) => {
   const harness = await controllerHarness({
+    helperResponse: '```json\n{"subject":"Add durable OpenCode sessions"}\n```',
     providerEvents: [{
       data: {
         properties: { timestamp: Date.now() },
@@ -1561,7 +1575,7 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     harness.processStarts[0].options.sessionEnvironmentRegistry,
     "utf8"
   ));
-  assert.deepEqual(registry.promptContexts, []);
+  assert.equal(Object.hasOwn(registry, "promptContexts"), false);
 
   const tinyProfile = {
     ...executionProfile,
@@ -1609,7 +1623,7 @@ test("OpenCode receives the same complete session command boundary as Codex", as
   const sessionProcess = harness.processStarts.find((entry) => (
     entry.options.execution.operationId === "opencode-server"
   ));
-  assert.deepEqual(sessionProcess.options.shimDirs, ["/managed/wrappers"]);
+  assert.deepEqual(sessionProcess.options.shimDirs, [genesisCommandShimDirectory()]);
   assert.match(sessionProcess.options.hostContextResolver, /vibe64-genesis-host-context$/u);
   const registry = JSON.parse(await readFile(
     sessionProcess.options.sessionEnvironmentRegistry,
@@ -1632,6 +1646,40 @@ test("OpenCode receives the same complete session command boundary as Codex", as
       managedGit: true,
       managedPreview: true
     }
+  });
+
+  const conversation = await harness.controller.createConversation("session-1", {}, {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+  await harness.controller.runDetachedChatTurn("session-1", {
+    conversationId: conversation.conversationId,
+    policy: "workspace_write",
+    prompt: "Run one temporary task"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+  const updatedRegistry = JSON.parse(await readFile(
+    sessionProcess.options.sessionEnvironmentRegistry,
+    "utf8"
+  ));
+  const temporaryEnvironment = updatedRegistry.sessions.find((entry) => (
+    entry.upstreamSessionId === conversation.conversationId
+  ));
+  assert.deepEqual(temporaryEnvironment, {
+    ...updatedRegistry.sessions[0],
+    promptContext: {
+      conversationKind: "temporary-task",
+      scope: "session",
+      session: {
+        managedDatabaseRefresh: true,
+        managedEnvironment: true,
+        managedGit: true,
+        managedPreview: true
+      }
+    },
+    upstreamSessionId: conversation.conversationId
   });
 });
 

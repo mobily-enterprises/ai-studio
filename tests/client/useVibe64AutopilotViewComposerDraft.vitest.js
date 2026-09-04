@@ -986,6 +986,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     const view = await createView({ sendAgentMessage });
     view.composerDraft.value = "Inspect this screenshot.";
     view.updateComposerAttachments([{
+      attachmentId: "attachment-1",
       fileName: "screen.png",
       path: "/tmp/screen.png",
       size: 1024
@@ -996,7 +997,11 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(sendAgentMessage.mock.calls[0][0].message).toContain(
       "- screen.png (1.0 KB): /tmp/screen.png"
     );
-    expect(sendAgentMessage.mock.calls[0][0].displayMessage).toContain("screen.png");
+    expect(sendAgentMessage.mock.calls[0][0].displayMessage).toBe("Inspect this screenshot.");
+    expect(sendAgentMessage.mock.calls[0][0].displayAttachments).toEqual([{
+      fileName: "screen.png",
+      size: 1024
+    }]);
   });
 
   it("connects preview capture and diagnostics actions to direct chat", async () => {

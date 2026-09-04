@@ -474,6 +474,13 @@ describe("useVibe64ConversationLog", () => {
 
     expect(conversationLogRealtimeShouldRefresh({
       payload: {
+        reason: "opencode-provider-failure",
+        sessionId: "session-1"
+      }
+    }, "session-1")).toBe(true);
+
+    expect(conversationLogRealtimeShouldRefresh({
+      payload: {
         reason: "codex-turn-outcome",
         sessionId: "session-1"
       }
@@ -540,6 +547,25 @@ describe("useVibe64ConversationLog", () => {
       sessionId: "session-1"
     })).toEqual({
       turn,
+      type: "upsert-turn"
+    });
+
+    const providerFailureTurn = {
+      system: {
+        role: "system",
+        text: "OpenCode could not finish.\n\nAborted\n\nSaved project changes remain."
+      },
+      turnId: "000004"
+    };
+    expect(conversationLogRealtimePatch({
+      conversationLogPatch: {
+        turn: providerFailureTurn,
+        type: "upsert-turn"
+      },
+      reason: "opencode-provider-failure",
+      sessionId: "session-1"
+    })).toEqual({
+      turn: providerFailureTurn,
       type: "upsert-turn"
     });
 

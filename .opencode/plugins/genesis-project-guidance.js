@@ -31,7 +31,7 @@ function eventSessionId(event = {}) {
 }
 
 export const GenesisProjectGuidance = async ({ directory, worktree } = {}) => {
-  const projectRoot = path.resolve(worktree || directory || process.cwd());
+  const projectRoot = path.resolve(directory || worktree || process.cwd());
   const contexts = new Map();
 
   function contextForSession(sessionId) {

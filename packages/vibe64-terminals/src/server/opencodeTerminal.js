@@ -9,7 +9,10 @@ import {
   VIBE64_AGENT_RUN_STATE,
   vibe64AgentRunStateIsActive
 } from "@local/vibe64-runtime/server";
-import { vibe64HostContextResolverPath } from "@local/vibe64-genesis/server";
+import {
+  genesisCommandShimDirectory,
+  vibe64HostContextResolverPath
+} from "@local/vibe64-genesis/server";
 import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_WORKSPACE_WRITE_POLICY,
@@ -184,6 +187,12 @@ function openCodeDetachedPrompt(input = {}) {
     "Return only one JSON value matching this JSON Schema. Do not wrap it in Markdown code fences:",
     JSON.stringify(input.outputSchema)
   ].join("\n");
+}
+
+function openCodeStructuredOutput(value = "") {
+  const original = String(value ?? "");
+  const match = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/iu.exec(original.trim());
+  return match ? match[1].trim() : original;
 }
 
 function boundedOpenCodeExecutionInput(prompt = "", executionProfile = null) {
@@ -364,6 +373,13 @@ function openCodeCredentialFailureNoticeMessage() {
 
 function openCodeProviderApiFailureNoticeMessage(failure = "") {
   return `OpenCode could not finish: ${text(failure)} Saved project changes remain. [Manage AI accounts](/app/manage/accounts)`;
+}
+
+function openCodeFailureNoticeMessage(failure = "") {
+  const detail = text(failure);
+  return detail
+    ? `OpenCode could not finish.\n\n${detail}\n\nSaved project changes remain.`
+    : "OpenCode could not finish. Saved project changes remain.";
 }
 
 function lastAssistantResult(value = null) {
@@ -614,14 +630,24 @@ function createOpenCodeTerminalController({
     const { registryPath } = sharedRoots();
     await mkdir(path.dirname(registryPath), { mode: 0o700, recursive: true });
     const temporaryPath = `${registryPath}.${process.pid}.${randomUUID()}.tmp`;
+    const temporaryEnvironments = [...temporaryConversations.values()]
+      .filter((entry) => entry.promptContext && text(entry.conversationId))
+      .map((entry) => {
+        const environment = sessionEnvironments.get(entry.target?.key);
+        return environment
+          ? {
+              ...environment,
+              promptContext: entry.promptContext,
+              upstreamSessionId: entry.conversationId
+            }
+          : null;
+      })
+      .filter(Boolean);
     await writeFile(temporaryPath, `${JSON.stringify({
-      promptContexts: [...temporaryConversations.values()]
-        .filter((entry) => entry.promptContext && text(entry.conversationId))
-        .map((entry) => ({
-          promptContext: entry.promptContext,
-          upstreamSessionId: entry.conversationId
-        })),
-      sessions: [...sessionEnvironments.values()]
+      sessions: [
+        ...sessionEnvironments.values(),
+        ...temporaryEnvironments
+      ]
     })}\n`, {
       mode: 0o600
     });
@@ -991,7 +1017,7 @@ function createOpenCodeTerminalController({
         context,
         options,
         connection,
-        commands.shimDirs
+        [genesisCommandShimDirectory()]
       );
       const current = processes.get(context.key);
       if (
@@ -1523,6 +1549,15 @@ function createOpenCodeTerminalController({
               sessionId: context.sessionId
             });
           });
+        } else if (finalState === VIBE64_AGENT_RUN_STATE.FAILED) {
+          await writeOpenCodeFailureNotice(context, turn, {
+            message: openCodeFailureNoticeMessage(failure)
+          }).catch((error) => {
+            vibe64SessionDebugLog("server.opencode.failure-notice.error", {
+              error: vibe64SessionDebugError(error),
+              sessionId: context.sessionId
+            });
+          });
         }
         turn.active = false;
         turn.error = failure;
@@ -1895,10 +1930,16 @@ function createOpenCodeTerminalController({
       eventAbort.abort();
       await events;
     }
-    const result = boundedOpenCodeExecutionOutput(
+    const conversation = boundedOpenCodeExecutionOutput(
       await readDetachedConversation(target, conversationId),
       executionProfile
     );
+    const result = {
+      ...conversation,
+      text: input.outputSchema
+        ? openCodeStructuredOutput(conversation.text)
+        : conversation.text
+    };
     return {
       ...result,
       runId: text(admitted.id),

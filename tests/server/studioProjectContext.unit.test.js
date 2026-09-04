@@ -755,6 +755,37 @@ test("Studio project context lists and creates projects without selecting one", 
   });
 });
 
+test("Studio project listing removes private state whose hosted namespace is gone", async () => {
+  await withTemporaryRoot(async (root) => {
+    const projectsRoot = path.join(root, "projects");
+    const context = createStudioProjectContext({
+      explicitProjectsRoot: projectsRoot,
+      env: {},
+      home: root
+    });
+    await context.createWorkspaceProjectRecord({
+      slug: "removed-project"
+    });
+    const projectRoot = path.join(projectsRoot, "removed-project");
+    const runtimeRoot = context.projectRuntimeRootForSlug("removed-project");
+    await writeTestFile(path.join(runtimeRoot, "sessions", "stale.txt"), "stale\n");
+    await rm(projectRoot, {
+      recursive: true
+    });
+
+    const listed = await context.listWorkspaceProjects();
+
+    assert.deepEqual(listed.projects, []);
+    await assert.rejects(() => access(runtimeRoot), {
+      code: "ENOENT"
+    });
+    const recreated = await context.createWorkspaceProjectRecord({
+      slug: "removed-project"
+    });
+    assert.equal(recreated.project.slug, "removed-project");
+  });
+});
+
 test("Studio project context accepts explicit targets without treating them as workspace projects", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");

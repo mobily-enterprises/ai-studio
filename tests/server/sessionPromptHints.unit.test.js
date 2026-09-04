@@ -43,7 +43,7 @@ function resolvedPromptHintProfile() {
   };
 }
 
-function projectPolicy({ promptHints = true } = {}) {
+function projectPromptHints({ promptHints = true } = {}) {
   return { promptHints };
 }
 
@@ -182,7 +182,7 @@ function createFixture({
   deleteResult = { ok: true, status: "deleted" },
   describeProvider = null,
   now = () => Date.now(),
-  policy = projectPolicy(),
+  promptHints = projectPromptHints(),
   requireAssistantAccess = null,
   readBlueprintText = null,
   resolveExecutionProfile = null,
@@ -195,14 +195,14 @@ function createFixture({
     describe: [],
     diagnostic: [],
     interrupt: [],
-    policy: [],
+    promptHints: [],
     access: [],
     resolve: [],
     run: [],
     session: []
   };
   let currentConversation = conversation;
-  let currentPolicy = policy;
+  let currentPromptHints = promptHints;
   let currentSession = {
     metadata: {
       agent_identity_provider: "codex",
@@ -281,9 +281,9 @@ function createFixture({
         return runtime;
       },
       async readPromptHints() {
-        calls.policy.push({});
+        calls.promptHints.push({});
         return {
-          ...currentPolicy,
+          ...currentPromptHints,
           ok: true
         };
       }
@@ -339,8 +339,8 @@ function createFixture({
     setConversation(value) {
       currentConversation = value;
     },
-    setPolicy(value) {
-      currentPolicy = value;
+    setPromptHints(value) {
+      currentPromptHints = value;
     },
     setSession(value) {
       currentSession = value;
@@ -489,7 +489,7 @@ test("unsafe Blueprint filesystem entries fail hints closed before provider work
 
 test("prompt hints stop at the project toggle and blank-session static starters without using a provider", async () => {
   const disabled = createFixture({
-    policy: projectPolicy({ promptHints: false })
+    promptHints: projectPromptHints({ promptHints: false })
   });
   const disabledResult = await disabled.service.generateSessionPromptHints(
     "session-1",
@@ -581,7 +581,7 @@ test("restricted prompt hints stop before provider inspection and cannot reuse a
 
 test("prompt hints use only the selected account's prompt_hint economy profile and clean the detached thread", async () => {
   const fixture = createFixture({
-    policy: {
+    promptHints: {
       customNote: "Never suggest tests.",
       promptHints: true,
       tone: "military"
@@ -835,7 +835,7 @@ test("prompt hints coalesce identical work, invalidate on conversation, and igno
   assert.equal(conversationChanged.cached, false);
   assert.equal(agentCalls, 2);
 
-  fixture.setPolicy({
+  fixture.setPromptHints({
     promptHints: true,
     revision: 8,
     tone: "military"

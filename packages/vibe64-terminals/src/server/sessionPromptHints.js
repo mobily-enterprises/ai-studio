@@ -159,7 +159,7 @@ function promptHintBasis(context = {}) {
     ? context.conversation.pagination
     : {};
   const conversation = visibleConversation(context.conversation);
-  const policy = normalizedPromptHints(context.policy);
+  const settings = normalizedPromptHints(context.promptHints);
   const blueprint = boundedText(context.blueprint, PROMPT_HINT_BLUEPRINT_MAX_CHARACTERS);
   return {
     basis: {
@@ -171,12 +171,11 @@ function promptHintBasis(context = {}) {
           : 0,
         visible: conversation
       }),
-      promptHints: policy.promptHints,
+      promptHints: settings.promptHints,
       sessionRevision: canonicalHash(context.sessionState)
     },
     blueprint,
-    conversation,
-    policy
+    conversation
   };
 }
 
@@ -206,7 +205,7 @@ function promptHintStaticSuggestions(context = {}) {
 }
 
 function promptHintContextStatus(context = {}) {
-  if (context.policy?.promptHints === false) {
+  if (context.promptHints?.promptHints === false) {
     return "disabled";
   }
   if (!context.sessionState?.sourceAvailable) {
@@ -502,7 +501,7 @@ function createSessionPromptHintsService({
     const runtime = await projectService.createRuntime({ inspectSource: false });
     const session = await runtime.getSession(sessionId, { inspectSource: false });
     const sourceRoot = normalizeText(sessionSourcePath(session));
-    const [policyResult, conversation, repositoryTasks, blueprint] = await Promise.all([
+    const [promptHintsResult, conversation, repositoryTasks, blueprint] = await Promise.all([
       projectService.readPromptHints(),
       runtime.readConversationLogPage(sessionId, {
         limit: PROMPT_HINT_RECENT_TURN_LIMIT
@@ -514,8 +513,8 @@ function createSessionPromptHintsService({
         : [],
       sourceRoot ? readBlueprint(sourceRoot) : ""
     ]);
-    if (policyResult?.ok === false) {
-      throw new Error(policyResult.error || "Project prompt-hint settings could not be read.");
+    if (promptHintsResult?.ok === false) {
+      throw new Error(promptHintsResult.error || "Project prompt-hint settings could not be read.");
     }
     const repositoryOperationActive = repositoryTasks.some((task) => (
       ["queued", "running", "starting"].includes(normalizeText(task?.status))
@@ -527,7 +526,7 @@ function createSessionPromptHintsService({
     return {
       blueprint,
       conversation,
-      policy: normalizedPromptHints(policyResult || {}),
+      promptHints: normalizedPromptHints(promptHintsResult || {}),
       runtime,
       session,
       sessionState,

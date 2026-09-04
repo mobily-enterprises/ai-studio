@@ -39,7 +39,9 @@ declared preparation recipe. It does not migrate a current, newer, invalid, or
 otherwise unrecognized project merely because setup inspection failed.
 
 During preparation, the workspace shows one compact progress line. Opening its
-details reveals the bounded transcript and keeps it available after completion
+details reveals the bounded transcript; while work is active, Collapse returns
+to the compact line and Dismiss is unavailable. After the operation finishes,
+Dismiss removes it. An opened transcript remains available after completion
 until dismissed. The browser remembers that dismissal across reloads for the
 exact preparation attempt without changing its result; a new attempt is visible
 again. A successful preparation left compact disappears when it finishes; a

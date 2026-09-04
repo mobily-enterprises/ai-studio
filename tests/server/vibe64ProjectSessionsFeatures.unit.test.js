@@ -61,7 +61,7 @@ test("project and sessions register routes and captured actions during setup", a
   assert.equal(typeof projectOutputs.project.createRuntime, "function");
   assert.equal(projectActions.length, 1);
   assert.equal(projectActions[0].contributorId, "vibe64.project");
-  assert.equal(projectActions[0].actions.length, 12);
+  assert.equal(projectActions[0].actions.length, 13);
   assert.equal(projectRoutes.length, projectActions[0].actions.length + 1);
   assert.equal(
     projectRoutes.some(([method, path]) => method === "POST" && path.endsWith("/env/reveal")),
@@ -101,7 +101,7 @@ test("project and sessions register routes and captured actions during setup", a
   );
   assert.equal(sessionActions.length, 1);
   assert.equal(sessionActions[0].contributorId, "vibe64.sessions");
-  assert.equal(sessionActions[0].actions.length, 34);
+  assert.equal(sessionActions[0].actions.length, 35);
   assert.equal(sessionRoutes.length, sessionActions[0].actions.length);
   assert.equal(sessionActions[0].actions.some((action) => Object.hasOwn(action, "dependencies")), false);
 });

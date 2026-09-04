@@ -17,8 +17,8 @@ asks before selecting any technology.
 
 People can choose the name Vibe64 uses in welcomes and collaboration cues.
 Project owners can set a shared tone, answer length, assumed experience,
-explanation style, and
-project-specific communication requirements in the project's portable Genesis
+explanation style, and project-specific communication requirements in the
+project's portable Genesis
 source. Those choices apply when a conversation next establishes stable
 context; they do not rewrite past conversation or get repeated with every
 message. Personal names and prompt suggestions remain separate Vibe64 conveniences

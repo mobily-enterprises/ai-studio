@@ -50,6 +50,7 @@ import {
 } from "@local/vibe64-runtime/server/sessionStore";
 import {
   assertCodexAppServerEconomyOutputWithinLimit,
+  codexAppServerProjectHookTrustConfig,
   codexAppServerThreadHasReadableHistory,
   codexAppServerThreadSettings,
   ensureCodexAppServerThreadForSession,
@@ -1255,6 +1256,7 @@ function codexStartupScript(codexThreadId = "", {
     "-c",
     codexReasoningConfig,
     "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust",
     ...(normalizedThreadId ? ["resume", normalizedThreadId] : [])
   ];
   return studioUserStartupScript(codexCommand, {
@@ -2909,6 +2911,9 @@ function createCodexTerminalController({
       sessionId,
       providerOptions
     );
+    await codexAppServerProjectHookTrustConfig(provider, options.workdir, {
+      persist: true
+    });
     const providerKey = activeProvider?.providerKey || codexAppServerProviderKey(
       sessionId,
       providerOptions

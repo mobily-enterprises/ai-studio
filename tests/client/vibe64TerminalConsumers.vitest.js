@@ -77,9 +77,10 @@ describe("Vibe64 terminal consumers", () => {
     expect(longRunning).toContain('v-if="open"');
     expect(longRunning).toContain("props.terminal?.closeTerminalSocket?.()");
 
-    expect(temporaryAction).toContain("props.active || props.error || detailsOpen.value");
+    expect(temporaryAction).toContain("props.active || props.error || detailsViewed.value");
     expect(temporaryAction).toContain('v-if="visible && !detailsOpen"');
     expect(temporaryAction).toContain('v-else-if="visible"');
+    expect(temporaryAction).toContain(":show-close=\"canDismiss\"");
     expect(temporaryAction).toContain("if (active && !previousActive)");
 
     expect(runtimeHost).toContain("selectedAssistantEngineId === 'codex'");

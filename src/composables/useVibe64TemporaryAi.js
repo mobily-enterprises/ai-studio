@@ -328,7 +328,7 @@ function useVibe64TemporaryAi({
         ),
         { method: "GET" }
       );
-      const text = temporaryAiText(response.message || response.rawText);
+      const text = temporaryAiText(response.text || response.message || response.rawText);
       const status = temporaryAiText(response.status) || "completed";
       const messages = temporaryAiTurnMessages(task.messages, task.runId, {
         progressUpdates: temporaryAiProgressUpdates(response.progressUpdates),

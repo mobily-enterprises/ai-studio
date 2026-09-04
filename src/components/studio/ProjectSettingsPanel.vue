@@ -326,14 +326,6 @@ const engineeringProfileDraft = ref("");
 const savedEngineeringProfile = ref("");
 const routeSessionId = computed(() => String(route.query.sessionId || "").trim());
 
-const COLLABORATION_CHOICE_LABELS = Object.freeze({
-  conclusions: "Conclusions only",
-  military: "Crisp and military",
-  playful: "Playful and cheeky",
-  teaching: "Teaching detail",
-  very_short: "Very short"
-});
-
 const resource = useEndpointResource({
   fallbackLoadError: "Project settings could not load.",
   path: PROJECT_SETTINGS_ENDPOINT,
@@ -545,7 +537,9 @@ watch(() => developmentDatabase.value.scope, (scope) => {
 
 watch(collaboration, (value) => {
   const next = normalizeCollaborationDraft(value);
-  collaborationDraft.value = next;
+  if (!collaborationChanged.value) {
+    collaborationDraft.value = next;
+  }
   savedCollaboration.value = normalizeCollaborationDraft(next);
 }, {
   immediate: true
@@ -553,7 +547,9 @@ watch(collaboration, (value) => {
 
 watch(() => promptHints.value.enabled, (value) => {
   const enabled = value !== false;
-  promptHintsDraft.value = enabled;
+  if (!promptHintsChanged.value) {
+    promptHintsDraft.value = enabled;
+  }
   savedPromptHints.value = enabled;
 }, {
   immediate: true
@@ -592,20 +588,12 @@ async function refresh() {
   ]);
 }
 
-function choiceLabel(value = "") {
-  const id = String(value || "").trim();
-  if (COLLABORATION_CHOICE_LABELS[id]) {
-    return COLLABORATION_CHOICE_LABELS[id];
-  }
-  const words = id.replaceAll("_", " ");
-  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : "";
-}
-
 function collaborationOptions(field = "") {
   const choices = collaboration.value.choices?.[field];
   return (Array.isArray(choices) ? choices : []).flatMap((choice) => {
     const value = String(choice?.id || "").trim();
-    return value ? [{ label: choiceLabel(value), value }] : [];
+    const label = String(choice?.name || "").trim();
+    return value && label ? [{ label, value }] : [];
   });
 }
 

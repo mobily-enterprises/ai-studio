@@ -42,6 +42,7 @@
         @click="openDetails"
       />
       <v-btn
+        v-if="canDismiss"
         :aria-label="`Dismiss ${title}`"
         :icon="mdiClose"
         size="small"
@@ -56,15 +57,16 @@
     v-else-if="visible"
     body-mode="log"
     close-label="Dismiss"
-    :collapsible="false"
+    collapsible
     :error="error"
+    expanded
     :error-title="errorTitle"
     :height="height"
     mobile-takeover
     :open-error-details="Boolean(error)"
     :output="output"
     :retryable="retryable"
-    show-close
+    :show-close="canDismiss"
     :show-copy="Boolean(output)"
     :show-interrupt="false"
     :stage="stage"
@@ -75,6 +77,7 @@
     @close="dismiss"
     @copy="$emit('copy')"
     @retry="$emit('retry')"
+    @toggle-expanded="closeDetails"
   >
     <template v-for="slotName in forwardedSlots" #[slotName]="slotProps">
       <slot :name="slotName" v-bind="slotProps || {}" />
@@ -146,6 +149,8 @@ const props = defineProps({
 const emit = defineEmits(["copy", "dismiss", "retry"]);
 
 const detailsOpen = ref(false);
+const detailsViewed = ref(false);
+const canDismiss = computed(() => !props.active);
 const forwardedSlots = [
   "actions-after",
   "actions-before",
@@ -153,7 +158,7 @@ const forwardedSlots = [
   "output"
 ];
 const visible = computed(() => !props.dismissed && Boolean(
-  props.active || props.error || detailsOpen.value
+  props.active || props.error || detailsViewed.value
 ));
 const summaryText = computed(() => {
   const outputLine = terminalLastMeaningfulLine(props.output);
@@ -167,21 +172,29 @@ const summaryText = computed(() => {
 });
 
 function openDetails() {
+  detailsViewed.value = true;
   detailsOpen.value = true;
 }
 
-function dismiss() {
+function closeDetails() {
   detailsOpen.value = false;
+}
+
+function dismiss() {
+  closeDetails();
+  detailsViewed.value = false;
   emit("dismiss");
 }
 
 watch(() => props.operationKey, () => {
   detailsOpen.value = false;
+  detailsViewed.value = false;
 }, { immediate: true });
 
 watch(() => props.active, (active, previousActive) => {
   if (active && !previousActive) {
     detailsOpen.value = false;
+    detailsViewed.value = false;
   }
 }, { immediate: true });
 </script>

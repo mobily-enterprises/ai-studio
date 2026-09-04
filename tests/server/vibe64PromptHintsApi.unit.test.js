@@ -61,8 +61,10 @@ test("prompt-hint actions delegate generation and cancellation to their exact se
         calls.push(["generate", ...args]);
         return {
           basis: {
+            blueprintRevision: "blueprint-v1",
             conversationRevision: "conversation-v1",
-            policyRevision: "policy-v1"
+            promptHints: true,
+            sessionRevision: "session-v1"
           },
           cached: false,
           ok: true,

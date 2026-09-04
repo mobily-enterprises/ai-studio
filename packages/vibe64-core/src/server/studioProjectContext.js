@@ -882,6 +882,35 @@ function createStudioProjectContext({
           return false;
         }
       });
+    const projectSlugs = new Set(projectPaths.map((projectPath) => path.basename(projectPath)));
+    const runtimeProjectsRoot = path.join(systemRoot, EXTERNAL_PROJECT_LOCAL_ROOTS_DIR);
+    const runtimeEntries = await readdir(runtimeProjectsRoot, {
+      withFileTypes: true
+    }).catch((error) => {
+      if (error?.code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    });
+    await Promise.all(runtimeEntries.map(async (entry) => {
+      if (!entry.isDirectory() || projectSlugs.has(entry.name)) {
+        return;
+      }
+      try {
+        normalizeProjectSlug(entry.name);
+      } catch {
+        return;
+      }
+      const runtimeRoot = projectRuntimeRootForSlug(entry.name);
+      if (await pathExists(resolveProjectRecordPath({
+        projectRuntimeRoot: runtimeRoot
+      }))) {
+        await rm(runtimeRoot, {
+          force: true,
+          recursive: true
+        });
+      }
+    }));
     const projects = (await Promise.all(projectPaths.map((projectPath) => workspaceProjectRecordForPath({
       projectRecordPath: projectRecordPathForTarget(projectPath),
       path: projectPath,

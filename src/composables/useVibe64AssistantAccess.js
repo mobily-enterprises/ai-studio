@@ -19,6 +19,7 @@ import { VIBE64_CONNECTIONS_CHANGED_EVENT } from "@/lib/studioGateApi.js";
 
 const ASSISTANT_ACCESS_IGNORED_REALTIME_REASONS = new Set([
   "opencode-credential-failure",
+  "opencode-provider-failure",
   "opencode-server-assistant-message",
   "opencode-server-message-delivered",
   "opencode-server-progress",

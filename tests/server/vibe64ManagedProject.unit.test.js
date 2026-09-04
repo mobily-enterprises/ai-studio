@@ -111,7 +111,7 @@ test("managed projects begin as one canonical technology-neutral Genesis commit"
   ])).stdout.trim(), "1");
   assert.equal((await execFileAsync("git", [
     "--git-dir", initialized.repositoryPath, "show", "main:genesis/version"
-  ])).stdout, "2\n");
+  ])).stdout, "3\n");
   assert.match(stack, /## Components/u);
   assert.doesNotMatch(stack, /- `jskit`/u);
   assert.equal(files.includes("genesis/engineering.md"), true);

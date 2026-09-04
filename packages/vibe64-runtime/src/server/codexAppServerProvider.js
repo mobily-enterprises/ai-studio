@@ -3808,6 +3808,26 @@ class CodexAppServerAgentProvider {
     );
   }
 
+  async writeHookTrustState(state = {}) {
+    if (!isPlainObject(state) || Object.keys(state).length === 0) {
+      return null;
+    }
+    const client = await this.activeClient();
+    return this.runRequest(
+      () => client.request("config/batchWrite", {
+        edits: [{
+          keyPath: "hooks.state",
+          mergeStrategy: "upsert",
+          value: state
+        }],
+        expectedVersion: null,
+        filePath: null,
+        reloadUserConfig: true
+      }),
+      "codex-app-server-hook-trust-write"
+    );
+  }
+
   async unsubscribeThread(threadId = "") {
     const client = await this.activeClient();
     return this.runRequest(

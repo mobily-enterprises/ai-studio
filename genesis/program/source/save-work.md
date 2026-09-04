@@ -26,9 +26,11 @@ is reconciled only when the canonical authority proves the prepared commit was
 already published.
 
 While Save runs, the workspace shows one compact progress line. Opening its
-details reveals the bounded command progress. The browser remembers a
-dismissal across reloads for that exact Save or Update attempt without changing
-its result; a new attempt is visible again. A successful Save disappears on
+details reveals the bounded command progress; while work is active, Collapse
+returns to the compact line and Dismiss is unavailable. After the operation
+finishes, Dismiss removes it. The browser remembers a dismissal across reloads
+for that exact Save or Update attempt without changing its result; a new attempt
+is visible again. A successful Save disappears on
 completion; a failed Save remains visible with its recovery actions until
 dismissed. The selected session's icon-only Save or Update action stays in the
 chat header beside the session it will affect, rather than occupying the

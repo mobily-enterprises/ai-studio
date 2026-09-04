@@ -749,7 +749,9 @@ function codexAppServerThreadStartSettings(options = {}) {
   };
 }
 
-async function codexAppServerProjectHookTrustConfig(provider, cwd = "") {
+async function codexAppServerProjectHookTrustConfig(provider, cwd = "", {
+  persist = false
+} = {}) {
   const normalizedCwd = normalizeWorkdir(cwd);
   if (!normalizedCwd || typeof provider?.listHooks !== "function") {
     return null;
@@ -759,22 +761,31 @@ async function codexAppServerProjectHookTrustConfig(provider, cwd = "") {
     .find((item) => normalizeWorkdir(item?.cwd) === normalizedCwd);
   const trustedHooks = (Array.isArray(record?.hooks) ? record.hooks : [])
     .filter((hook) => hook?.enabled === true && hook?.source === "project")
-    .map((hook) => [
-      normalizeAgentText(hook?.key),
-      normalizeAgentText(hook?.currentHash)
-    ])
-    .filter(([key, currentHash]) => key && currentHash);
+    .map((hook) => ({
+      currentHash: normalizeAgentText(hook?.currentHash),
+      key: normalizeAgentText(hook?.key),
+      trustStatus: normalizeAgentText(hook?.trustStatus)
+    }))
+    .filter(({ currentHash, key }) => key && currentHash);
   if (trustedHooks.length === 0) {
     return null;
   }
+  const state = Object.fromEntries(trustedHooks.map(({ currentHash, key }) => [
+    key,
+    {
+      trusted_hash: currentHash
+    }
+  ]));
+  if (
+    persist &&
+    trustedHooks.some(({ trustStatus }) => !["managed", "trusted"].includes(trustStatus)) &&
+    typeof provider?.writeHookTrustState === "function"
+  ) {
+    await provider.writeHookTrustState(state);
+  }
   return {
     hooks: {
-      state: Object.fromEntries(trustedHooks.map(([key, currentHash]) => [
-        key,
-        {
-          trusted_hash: currentHash
-        }
-      ]))
+      state
     }
   };
 }
@@ -2318,6 +2329,7 @@ export {
   codexAppServerEconomyThreadStartSettings,
   codexAppServerEconomyTurnSettings,
   codexAppServerIdentityMetadata,
+  codexAppServerProjectHookTrustConfig,
   codexAppServerThreadHasReadableHistory,
   codexAppServerThreadIdForSession,
   codexAppServerThreadStartSettings,

@@ -191,8 +191,7 @@ async function generateSessionSaveCommitMessage({
       expectedAccountIdentitySignature: accountIdentitySignature,
       outputSchema: SESSION_SAVE_COMMIT_OUTPUT_SCHEMA,
       prompt: sessionSaveCommitMessagePrompt(changes),
-      promptLabel: "Name saved work",
-      timeoutMs: 30_000
+      promptLabel: "Name saved work"
     }, {
       ...agentContext,
       onEvent(event = {}) {

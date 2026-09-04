@@ -63,6 +63,10 @@ vi.mock("@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue", 
   default: defineComponent({ render: () => null })
 }));
 
+vi.mock("@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue", () => ({
+  default: defineComponent({ render: () => null })
+}));
+
 import Vibe64TemporaryAiWorkspace from "../../src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
 
 const workspaceComponentPath = path.resolve(

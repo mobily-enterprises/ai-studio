@@ -9,6 +9,7 @@ import {
   codexAppServerEconomyThreadSettings,
   codexAppServerEconomyTurnSettings,
   codexAppServerIdentityMetadata,
+  codexAppServerProjectHookTrustConfig,
   codexAppServerThreadStartSettings,
   codexAppServerThreadSettings,
   codexAppServerTurnSettings,
@@ -1271,6 +1272,62 @@ test("codex app-server bridge refreshes project hook trust when resuming a threa
       }
     }
   });
+});
+
+test("visible Codex terminals persist trust for the project hooks they already run", async () => {
+  const calls = [];
+  const provider = {
+    async listHooks(cwds) {
+      calls.push({ cwds, method: "listHooks" });
+      return {
+        data: [{
+          cwd: "/repo/worktree",
+          hooks: [{
+            currentHash: "sha256:session-start",
+            enabled: true,
+            key: "/repo/worktree/.codex/hooks.json:session_start:0:0",
+            source: "project",
+            trustStatus: "untrusted"
+          }, {
+            currentHash: "sha256:user-prompt",
+            enabled: true,
+            key: "/repo/worktree/.codex/hooks.json:user_prompt_submit:0:0",
+            source: "project",
+            trustStatus: "trusted"
+          }]
+        }]
+      };
+    },
+    async writeHookTrustState(state) {
+      calls.push({ method: "writeHookTrustState", state });
+    }
+  };
+
+  const config = await codexAppServerProjectHookTrustConfig(
+    provider,
+    "/repo/worktree",
+    { persist: true }
+  );
+
+  assert.deepEqual(config, {
+    hooks: {
+      state: {
+        "/repo/worktree/.codex/hooks.json:session_start:0:0": {
+          trusted_hash: "sha256:session-start"
+        },
+        "/repo/worktree/.codex/hooks.json:user_prompt_submit:0:0": {
+          trusted_hash: "sha256:user-prompt"
+        }
+      }
+    }
+  });
+  assert.deepEqual(calls, [{
+    cwds: ["/repo/worktree"],
+    method: "listHooks"
+  }, {
+    method: "writeHookTrustState",
+    state: config.hooks.state
+  }]);
 });
 
 test("codex app-server bridge replaces unreadable session threads after an invalid resume request", async () => {

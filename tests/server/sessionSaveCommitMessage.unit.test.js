@@ -94,6 +94,7 @@ test("commit-message generation uses and deletes one ephemeral assistant thread"
     TEST_ACCOUNT_IDENTITY_SIGNATURE
   );
   assert.equal(calls[0][1].agentSettings, undefined);
+  assert.equal(calls[0][1].timeoutMs, undefined);
   assert.deepEqual(calls[0][1].outputSchema.required, ["subject"]);
   assert.equal(calls[0][2].runtime, agentContext.runtime);
   assert.equal(calls[0][2].session, agentContext.session);

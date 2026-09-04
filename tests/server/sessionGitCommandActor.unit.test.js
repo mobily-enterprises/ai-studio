@@ -69,9 +69,24 @@ test("session Git actor changes only when a new turn explicitly replaces it", as
 });
 
 test("new assistant turns explicitly replace the session Git actor", async () => {
-  const source = await readFile(path.resolve("packages/vibe64-terminals/src/server/codexTerminal.js"), "utf8");
+  const [codexSource, openCodeSource] = await Promise.all([
+    readFile(path.resolve("packages/vibe64-terminals/src/server/codexTerminal.js"), "utf8"),
+    readFile(path.resolve("packages/vibe64-terminals/src/server/opencodeTerminal.js"), "utf8")
+  ]);
+  assert.match(
+    codexSource,
+    /recordSessionGitCommandActor\(\{\s*env,\s*overwrite: true,\s*reason: "codex-prompt"/u
+  );
+  assert.match(
+    openCodeSource,
+    /recordGitActor\(\{\s*env,\s*overwrite: !currentMonitor,\s*reason: "agent-message"/u
+  );
+});
+
+test("native OpenCode terminal input preserves the actor from the latest UI turn", async () => {
+  const source = await readFile(path.resolve("packages/vibe64-terminals/src/server/opencodeTerminal.js"), "utf8");
   assert.match(
     source,
-    /recordSessionGitCommandActor\(\{\s*env,\s*overwrite: true,\s*reason: "codex-prompt"/u
+    /recordGitActor\(\{\s*env,\s*overwrite: false,\s*reason: "opencode-terminal-input"/u
   );
 });

@@ -15,7 +15,7 @@ const VIBE64_AGENT_ECONOMY_WORKLOAD_LIMITS = Object.freeze({
   [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.COMMIT_TITLE]: Object.freeze({
     maxInputCharacters: 24_000,
     maxOutputCharacters: 512,
-    timeoutMs: 30_000
+    timeoutMs: 120_000
   }),
   [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.CONVERSATION_SUMMARY]: Object.freeze({
     maxInputCharacters: 200_000,
@@ -30,7 +30,7 @@ const VIBE64_AGENT_ECONOMY_WORKLOAD_LIMITS = Object.freeze({
   [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.PROMPT_HINT]: Object.freeze({
     maxInputCharacters: 24_000,
     maxOutputCharacters: 2_500,
-    timeoutMs: 30_000
+    timeoutMs: 120_000
   }),
   [VIBE64_AGENT_EXECUTION_WORKLOAD_IDS.SESSION_TITLE]: Object.freeze({
     maxInputCharacters: 24_000,

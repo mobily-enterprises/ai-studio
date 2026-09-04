@@ -3381,6 +3381,41 @@ test("codex provider reads effective config for one project cwd", async () => {
   }]);
 });
 
+test("codex provider persists hook trust through the app-server config API", async () => {
+  const calls = [];
+  const provider = new CodexAppServerAgentProvider({});
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      calls.push({ method, params });
+      return { status: "ok" };
+    }
+  });
+  const state = {
+    "/repo/.codex/hooks.json:session_start:0:0": {
+      trusted_hash: "sha256:session-start"
+    }
+  };
+
+  const result = await provider.writeHookTrustState(state);
+
+  assert.deepEqual(result, { status: "ok" });
+  assert.deepEqual(calls, [{
+    method: "config/batchWrite",
+    params: {
+      edits: [{
+        keyPath: "hooks.state",
+        mergeStrategy: "upsert",
+        value: state
+      }],
+      expectedVersion: null,
+      filePath: null,
+      reloadUserConfig: true
+    }
+  }]);
+  assert.equal(await provider.writeHookTrustState({}), null);
+  assert.equal(calls.length, 1);
+});
+
 test("codex provider discards a client that fails initialization", async () => {
   FakeWebSocket.instances = [];
   const provider = new CodexAppServerAgentProvider({

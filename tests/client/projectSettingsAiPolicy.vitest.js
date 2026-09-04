@@ -168,10 +168,28 @@ function createResource({
       available,
       canEdit,
       choices: {
-        experience: ["beginner", "comfortable", "expert"].map((id) => ({ id })),
-        explanationStyle: ["conclusions", "concise", "teaching"].map((id) => ({ id })),
-        responseLength: ["very_short", "concise", "balanced", "detailed"].map((id) => ({ id })),
-        tone: ["encouraging", "playful", "direct", "military"].map((id) => ({ id }))
+        experience: [
+          { id: "beginner", name: "Beginner" },
+          { id: "comfortable", name: "Comfortable" },
+          { id: "expert", name: "Expert" }
+        ],
+        explanationStyle: [
+          { id: "conclusions", name: "Conclusions only" },
+          { id: "concise", name: "Concise rationale" },
+          { id: "teaching", name: "Teaching detail" }
+        ],
+        responseLength: [
+          { id: "very_short", name: "Very short" },
+          { id: "concise", name: "Concise" },
+          { id: "balanced", name: "Balanced" },
+          { id: "detailed", name: "Detailed" }
+        ],
+        tone: [
+          { id: "encouraging", name: "Encouraging" },
+          { id: "playful", name: "Playful and cheeky" },
+          { id: "direct", name: "Direct" },
+          { id: "military", name: "Crisp and military" }
+        ]
       },
       experience: "expert",
       explanationStyle: "teaching",
@@ -395,6 +413,10 @@ describe("ProjectSettingsPanel AI behaviour", () => {
       .toBe(false);
     expect(findField(container, "Tone").props.modelValue).toBe("military");
     expect(findField(container, "Tone").props.density).toBe("comfortable");
+    expect(findField(container, "Tone").props.items).toContainEqual({
+      label: "Crisp and military",
+      value: "military"
+    });
     expect(findField(container, "Response length").props.modelValue).toBe("detailed");
     expect(findField(container, "Response length").props.density).toBe("comfortable");
     expect(findField(container, "Experience level").props.modelValue).toBe("expert");
@@ -593,6 +615,41 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(projectSettingsMocks.commandOptions[2].buildRawPayload(null, {
       context: { promptHints: true }
     })).toEqual({ promptHints: true });
+
+    app.unmount();
+  });
+
+  it("preserves one unsaved setting when the separately saved setting refreshes", async () => {
+    const { app, container } = mountPanel();
+
+    findField(container, "Tone").props["onUpdate:modelValue"]("playful");
+    await nextTick();
+    projectSettingsMocks.resource.data.value = {
+      ...projectSettingsMocks.resource.data.value,
+      promptHints: {
+        canEdit: true,
+        enabled: true
+      }
+    };
+    await nextTick();
+
+    expect(findField(container, "Tone").props.modelValue).toBe("playful");
+    expect(findButton(container, "Save collaboration").props.disabled).toBe(false);
+    expect(findField(container, "Suggest useful next prompts").props.modelValue).toBe(true);
+
+    findField(container, "Suggest useful next prompts").props["onUpdate:modelValue"](false);
+    await nextTick();
+    projectSettingsMocks.resource.data.value = {
+      ...projectSettingsMocks.resource.data.value,
+      collaboration: {
+        ...projectSettingsMocks.resource.data.value.collaboration,
+        tone: "direct"
+      }
+    };
+    await nextTick();
+
+    expect(findField(container, "Suggest useful next prompts").props.modelValue).toBe(false);
+    expect(findButton(container, "Save prompt suggestions").props.disabled).toBe(false);
 
     app.unmount();
   });

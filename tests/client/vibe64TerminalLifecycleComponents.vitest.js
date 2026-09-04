@@ -177,7 +177,7 @@ function nodeText(node) {
 }
 
 describe("Vibe64 terminal lifecycle components", () => {
-  it("dismisses action output without changing the operation and restores it for a new attempt", async () => {
+  it("allows collapse while active and dismissal only after the operation finishes", async () => {
     const state = reactive({
       active: false,
       dismissedKey: "",
@@ -211,16 +211,49 @@ describe("Vibe64 terminal lifecycle components", () => {
     expect(summary.props.color).toBe("surface-variant");
     expect(nodeText(summary)).toContain("Saved revision 42");
     expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeNull();
+    expect(findNode(container, (node) => (
+      node.type === "button" && node.props?.["aria-label"] === "Dismiss Save work"
+    ))).toBeNull();
 
     details.props.onClick();
     await nextTick();
     expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeTruthy();
+    expect(findNode(container, (node) => (
+      node.type === "button" && nodeText(node) === "Dismiss"
+    ))).toBeNull();
+
+    const activeCollapse = findNode(container, (node) => (
+      node.type === "button" && nodeText(node) === "Collapse"
+    ));
+    activeCollapse.props.onClick();
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeNull();
+
+    const activeReopen = findNode(container, (node) => (
+      node.type === "button" && node.props?.["aria-label"] === "Show Save work details"
+    ));
+    activeReopen.props.onClick();
+    await nextTick();
 
     state.active = false;
     state.status = "succeeded";
     await nextTick();
     expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeTruthy();
 
+    const collapseDetails = findNode(container, (node) => (
+      node.type === "button" && nodeText(node) === "Collapse"
+    ));
+    collapseDetails.props.onClick();
+    await nextTick();
+    expect(findNode(container, hasClass("vibe64-terminal-surface"))).toBeNull();
+    expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeTruthy();
+    expect(state.dismissedKey).toBe("");
+
+    const reopenedDetails = findNode(container, (node) => (
+      node.type === "button" && node.props?.["aria-label"] === "Show Save work details"
+    ));
+    reopenedDetails.props.onClick();
+    await nextTick();
     const dismissDetails = findNode(container, (node) => (
       node.type === "button" && nodeText(node) === "Dismiss"
     ));
@@ -234,14 +267,9 @@ describe("Vibe64 terminal lifecycle components", () => {
     state.status = "running";
     await nextTick();
     expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeTruthy();
-
-    const dismissSummary = findNode(container, (node) => (
+    expect(findNode(container, (node) => (
       node.type === "button" && node.props?.["aria-label"] === "Dismiss Save work"
-    ));
-    dismissSummary.props.onClick();
-    await nextTick();
-    expect(state.active).toBe(true);
-    expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeNull();
+    ))).toBeNull();
 
     state.operationKey = "save-3";
     await nextTick();
