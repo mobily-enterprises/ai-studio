@@ -47,6 +47,16 @@ function trailingAnswerChoiceLine(line = "") {
   return /^[-*]\s+.+/u.test(String(line || "").trim());
 }
 
+function numberedQuestionLabelLooksLikeQuestion(label = "") {
+  return /\?(?:[*_`”"'’)\]]*)$/u.test(String(label || "").trim());
+}
+
+function validNumberedQuestions(questions = []) {
+  return questions.every((question) => (
+    question.choices.length > 0 || numberedQuestionLabelLooksLikeQuestion(question.label)
+  ));
+}
+
 function numberedQuestionChoice(line = "") {
   const choice = answerChoiceFromLine(line);
   if (!choice) {
@@ -138,7 +148,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
       }
       const trailingLines = lines.slice(index);
       if (
-        trailingAnswerChoiceHeadingLine(line) ||
+        trailingLines.some((trailingLine) => trailingAnswerChoiceHeadingLine(trailingLine)) ||
         trailingLines.some((trailingLine) => numberedQuestionMarkerMatch(trailingLine))
       ) {
         return inactiveNumberedQuestionSugar();
@@ -155,7 +165,7 @@ function parseLineNumberedQuestionPrompt(value = "") {
     index += 1;
   }
 
-  if (!questions.length) {
+  if (!questions.length || !validNumberedQuestions(questions)) {
     return inactiveNumberedQuestionSugar();
   }
   return {
@@ -200,6 +210,9 @@ function parseInlineNumberedQuestionPrompt(value = "") {
     questions.push(question);
   }
 
+  if (!validNumberedQuestions(questions)) {
+    return inactiveNumberedQuestionSugar();
+  }
   return {
     intro,
     outro: "",

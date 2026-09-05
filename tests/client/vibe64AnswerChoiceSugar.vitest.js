@@ -85,6 +85,28 @@ describe("vibe64AnswerChoiceSugar", () => {
     ]);
   });
 
+  it("finds choices after numbered recommendations and before trailing prose", () => {
+    expect(parseAnswerChoicePrompt([
+      "Here are the strongest fits:",
+      "[1] **JSKIT + Vue** — a modern interactive web stack.",
+      "[2] **Laravel** — a full-featured PHP framework.",
+      "[3] **Plain Node.js** — a minimal Node backend.",
+      "[4] **Go** — a fast single-binary web server.",
+      "A database can be added later.",
+      "Possible answers:",
+      "- `jskit` (Vue + Node, recommended)",
+      "- `laravel` (PHP full-framework route)",
+      "- `nodejs` (minimal, hands-on)",
+      "- `go` (fast single-binary)",
+      "Which one should I set up?"
+    ].join("\n")).choices).toEqual([
+      { label: "jskit", value: "jskit" },
+      { label: "laravel", value: "laravel" },
+      { label: "nodejs", value: "nodejs" },
+      { label: "go", value: "go" }
+    ]);
+  });
+
   it("only activates for a single matching textarea message field", () => {
     const message = [
       "Choose.",

@@ -57,6 +57,10 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+An explicit Possible answers block remains one selectable answer group when
+explanatory prose or a numbered recommendation list appears before it. Only
+actual numbered questions become separate required fields, so ordinary
+numbered content retains its normal Markdown presentation.
 When canonical session state reports a completed turn that was not observed
 through realtime conversation delivery, the mounted conversation rereads its
 durable history. A missed notification therefore cannot leave a completed

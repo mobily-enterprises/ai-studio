@@ -419,4 +419,23 @@ describe("vibe64NumberedQuestionSugar", () => {
     ].join("\n")).questions).toEqual([]);
     expect(sugarForPrompt("See [1] the linked reference.").questions).toEqual([]);
   });
+
+  it("keeps numbered recommendations with later answer choices out of question fields", () => {
+    const sugar = sugarForPrompt([
+      "Here are the strongest fits:",
+      "[1] **JSKIT + Vue** — a modern interactive web stack.",
+      "[2] **Laravel** — a full-featured PHP framework.",
+      "[3] **Plain Node.js** — a minimal Node backend.",
+      "[4] **Go** — a fast single-binary web server.",
+      "A database can be added later.",
+      "Possible answers:",
+      "- `jskit` (Vue + Node, recommended)",
+      "- `laravel` (PHP full-framework route)",
+      "- `nodejs` (minimal, hands-on)",
+      "- `go` (fast single-binary)",
+      "Which one should I set up?"
+    ].join("\n"));
+
+    expect(sugar.questions).toEqual([]);
+  });
 });

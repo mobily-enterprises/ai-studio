@@ -1282,6 +1282,47 @@ describe("useVibe64AutopilotView direct chat", () => {
     });
   });
 
+  it("offers one choice group for numbered recommendations with later possible answers", async () => {
+    const sendAgentMessage = vi.fn(async () => true);
+    const view = await createView({
+      conversationLog: {
+        turns: [{
+          assistant: {
+            text: [
+              "Here are the strongest fits:",
+              "[1] **JSKIT + Vue** — a modern interactive web stack.",
+              "[2] **Laravel** — a full-featured PHP framework.",
+              "[3] **Plain Node.js** — a minimal Node backend.",
+              "[4] **Go** — a fast single-binary web server.",
+              "A database can be added later.",
+              "Possible answers:",
+              "- `jskit` (Vue + Node, recommended)",
+              "- `laravel` (PHP full-framework route)",
+              "- `nodejs` (minimal, hands-on)",
+              "- `go` (fast single-binary)",
+              "Which one should I set up?"
+            ].join("\n")
+          }
+        }]
+      },
+      sendAgentMessage
+    });
+
+    expect(view.numberedQuestions.value).toEqual([]);
+    expect(view.answerChoices.value).toEqual([
+      { label: "jskit", value: "jskit" },
+      { label: "laravel", value: "laravel" },
+      { label: "nodejs", value: "nodejs" },
+      { label: "go", value: "go" }
+    ]);
+    view.selectedAnswerChoice.value = "jskit";
+    expect(view.composerCanSubmit.value).toBe(true);
+
+    await view.submitComposerMessage();
+
+    expect(sendAgentMessage.mock.calls[0][0].message).toBe("jskit");
+  });
+
   it("lets the user leave structured questions and answer normally", async () => {
     const props = viewProps({
       conversationLog: {

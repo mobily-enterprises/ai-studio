@@ -69,7 +69,14 @@ function answerChoiceFromLine(line = "") {
 
   const parentheticalMatch = text.match(/^(.{1,96}?)\s+\(([^()]+)\)$/u);
   if (parentheticalMatch) {
-    const label = normalizedChoiceText(parentheticalMatch[1]);
+    const rawLabel = normalizedChoiceText(parentheticalMatch[1]);
+    const markdownTokenMatch = rawLabel.match(/^(?:`([^`]+)`|\*\*([^*]+)\*\*)$/u);
+    const label = normalizedChoiceText(
+      markdownTokenMatch?.[1] || markdownTokenMatch?.[2] || rawLabel
+    );
+    if (markdownTokenMatch) {
+      return label ? { label, value: label } : null;
+    }
     const value = normalizedChoiceText(parentheticalMatch[2]);
     return label && value ? { label, value } : null;
   }
@@ -92,7 +99,10 @@ function validAnswerChoice(choice = {}) {
 
 function parseAnswerChoicePrompt(value = "") {
   const lines = String(value || "").replace(/\r\n/gu, "\n").split("\n");
-  if (lines.some((line) => /^\[(?:Q)?\d+\]\s+.+/iu.test(String(line || "").trim()))) {
+  if (lines.some((line) => {
+    const match = String(line || "").trim().match(/^\[(?:Q)?\d+\]\s+(.+)/iu);
+    return match && /\?(?:[*_`”"'’)\]]*)$/u.test(match[1].trim());
+  })) {
     return inactiveAnswerChoiceSugar();
   }
   const headingIndex = lines.findIndex(answerChoiceHeadingLine);
@@ -108,6 +118,9 @@ function parseAnswerChoicePrompt(value = "") {
     }
     const choice = answerChoiceFromLine(line);
     if (!choice) {
+      if (choices.length) {
+        break;
+      }
       return inactiveAnswerChoiceSugar();
     }
     choices.push(choice);
