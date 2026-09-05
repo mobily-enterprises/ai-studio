@@ -155,7 +155,7 @@ async function main() {
     operation,
     targetUser
   });
-  const env = helperChildEnv(payload.env || {}, targetUser, owner.username);
+  const env = helperChildEnv(payload.env || {}, targetUser, owner.username, operation);
   const args = Array.isArray(payload.args) ? payload.args.map((arg) => String(arg)) : [];
   const input = payload.inputBase64
     ? Buffer.from(String(payload.inputBase64), "base64")
@@ -234,7 +234,7 @@ function handleManagedExecutionOperation(payload = {}, requestPayloadPath = "") 
     throw new Error("Vibe64 exec helper rejected an unsupported real-user managed command.");
   }
   const args = Array.isArray(payload.args) ? payload.args.map((arg) => String(arg)) : [];
-  const env = helperChildEnv(payload.env || {}, targetUser, owner.username);
+  const env = helperChildEnv(payload.env || {}, targetUser, owner.username, commandOperation);
   const memoryMaxBytes = managedExecutionInteger(
     payload.memoryMaxBytes,
     MANAGED_EXECUTION_MEMORY_MIN_BYTES,
@@ -1638,7 +1638,7 @@ function workspaceTempRoot(ownerUsername = "") {
   );
 }
 
-function helperChildEnv(input = {}, targetUser = {}, ownerUsername = "") {
+function helperChildEnv(input = {}, targetUser = {}, ownerUsername = "", operation = "") {
   const env = {
     PATH: DEFAULT_PATH,
     TERM: process.env.TERM || "xterm-256color"
@@ -1649,12 +1649,34 @@ function helperChildEnv(input = {}, targetUser = {}, ownerUsername = "") {
     }
     env[key] = String(value);
   }
-  env.HOME = targetUser.home;
+  if (operation === "opencode-app-server") {
+    const providerRoot = path.join(
+      managedExecutionRuntimeBase({ username: ownerUsername }),
+      "vibe64",
+      "agent-providers",
+      "opencode"
+    );
+    for (const name of [
+      "HOME",
+      "XDG_CACHE_HOME",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+      "XDG_STATE_HOME"
+    ]) {
+      const requested = String(input[name] || "").trim();
+      if (!path.isAbsolute(requested) || relativePathParts(providerRoot, requested).length === 0) {
+        throw new Error(`Vibe64 exec helper rejected OpenCode ${name} outside its provider runtime.`);
+      }
+      env[name] = path.resolve(requested);
+    }
+  } else {
+    env.HOME = targetUser.home;
+    env.XDG_CACHE_HOME = path.join(targetUser.home, ".cache");
+    env.XDG_CONFIG_HOME = path.join(targetUser.home, ".config");
+    env.XDG_DATA_HOME = path.join(targetUser.home, ".local", "share");
+  }
   env.LOGNAME = targetUser.username;
   env.USER = targetUser.username;
-  env.XDG_CACHE_HOME = path.join(targetUser.home, ".cache");
-  env.XDG_CONFIG_HOME = path.join(targetUser.home, ".config");
-  env.XDG_DATA_HOME = path.join(targetUser.home, ".local", "share");
   env.TMPDIR = workspaceTempRoot(ownerUsername);
   return env;
 }

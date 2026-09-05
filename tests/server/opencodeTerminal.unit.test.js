@@ -107,6 +107,7 @@ async function controllerHarness({
   messagesErrorAfterPromptCount = 1,
   providerEvents = [],
   realAttachedTerminal = false,
+  serverStartErrors = [],
   withCommandBoundary = false
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
@@ -229,6 +230,7 @@ async function controllerHarness({
     providerRevision
   };
   const processStarts = [];
+  const serverStartCalls = [];
   const processStops = [];
   const terminalStarts = [];
   const commandEnvironmentCalls = [];
@@ -244,6 +246,7 @@ async function controllerHarness({
   const upstreamSessions = new Map();
   const outputs = new Map();
   const queuedAssistantResponses = [...assistantResponses];
+  const queuedServerStartErrors = [...serverStartErrors];
   let failNextHealth = false;
   let failNextPrompt = false;
   let listConnectionCalls = 0;
@@ -384,6 +387,11 @@ async function controllerHarness({
       }
     } : {}),
     async createServerProcess(options) {
+      serverStartCalls.push(options);
+      const startError = queuedServerStartErrors.shift();
+      if (startError) {
+        throw startError;
+      }
       const started = {
         client: client(),
         options,
@@ -489,6 +497,7 @@ async function controllerHarness({
     runtime,
     runtimeCreateCalls: () => runtimeCreateCalls,
     selection,
+    serverStartCalls,
     session,
     switchedAgents,
     switchedModels,
@@ -662,6 +671,84 @@ test("OpenCode capability discovery does not start an app server", async (t) => 
 
   assert.equal(result.engineId, "opencode");
   assert.equal(harness.processStarts.length, 0);
+});
+
+test("OpenCode retries one cold startup timeout before admitting the first message", async (t) => {
+  const timeout = Object.assign(
+    new Error("OpenCode did not become ready before the startup deadline."),
+    { code: "vibe64_opencode_start_timeout" }
+  );
+  const harness = await controllerHarness({ serverStartErrors: [timeout] });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const delivered = await harness.controller.sendMessage("session-1", {
+    message: "Hello",
+    messageId: "client-message-cold-start-retry"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(delivered.ok, true);
+  assert.equal(harness.serverStartCalls.length, 2);
+  assert.equal(harness.processStarts.length, 1);
+  assert.notEqual(
+    harness.serverStartCalls[0].privateRoot,
+    harness.serverStartCalls[1].privateRoot
+  );
+  assert.deepEqual(
+    harness.serverStartCalls.map(({ readinessTimeoutMs }) => readinessTimeoutMs),
+    [15_000, 15_000]
+  );
+  assert.deepEqual(
+    harness.userMessages.map(({ messageId }) => messageId),
+    ["client-message-cold-start-retry"]
+  );
+  await harness.controller.waitForTurn("session-1", {
+    runtime: harness.runtime,
+    session: harness.session
+  });
+});
+
+test("OpenCode returns a readable failed-message result after both cold starts time out", async (t) => {
+  const startupMessage = "OpenCode did not become ready before the startup deadline.";
+  const startupTimeout = () => Object.assign(new Error(startupMessage), {
+    code: "vibe64_opencode_start_timeout"
+  });
+  const harness = await controllerHarness({
+    serverStartErrors: [startupTimeout(), startupTimeout()]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  const result = await harness.controller.sendMessage("session-1", {
+    message: "Hello",
+    messageId: "client-message-cold-start-failed"
+  }, {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.delivered, false);
+  assert.equal(result.code, "vibe64_opencode_start_timeout");
+  assert.equal(result.error, startupMessage);
+  assert.equal(result.retryable, true);
+  assert.equal(result.turn.state, "failed");
+  assert.equal(harness.serverStartCalls.length, 2);
+  assert.equal(harness.processStarts.length, 0);
+  assert.equal(harness.userMessages.length, 0);
+  assert.deepEqual(
+    harness.agentRunEvents.map(({ run }) => run.state),
+    ["starting", "failed"]
+  );
 });
 
 test("OpenCode persists a user message and its display attachments only after upstream admission", async (t) => {

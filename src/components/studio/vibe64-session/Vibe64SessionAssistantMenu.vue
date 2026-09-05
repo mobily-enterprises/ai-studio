@@ -340,7 +340,9 @@ const emptyText = ref("");
 const assistantSelection = computed(() => props.session?.assistantSelection || null);
 const engineId = computed(() => String(assistantSelection.value?.engineId || ""));
 const accessLabel = computed(() => String(props.accessLabel || "").trim());
-const catalogActive = computed(() => Boolean(props.session?.sessionId && engineId.value));
+const catalogActive = computed(() => Boolean(
+  menuOpen.value && props.session?.sessionId && engineId.value
+));
 const catalog = useVibe64AssistantCatalog({
   active: catalogActive,
   engineId,

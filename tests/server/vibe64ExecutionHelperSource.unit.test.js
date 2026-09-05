@@ -202,13 +202,32 @@ test("execution helper centrally assigns the shared workspace TMPDIR", async () 
   const source = await helperSource();
 
   assert.match(source, /const MANAGED_ROOT = "\/var\/lib\/vibe64"/u);
-  assert.match(source, /helperChildEnv\(payload\.env \|\| \{\}, targetUser, owner\.username\)/u);
+  assert.match(source, /helperChildEnv\(payload\.env \|\| \{\}, targetUser, owner\.username, operation\)/u);
+  assert.match(source, /helperChildEnv\(payload\.env \|\| \{\}, targetUser, owner\.username, commandOperation\)/u);
   assert.match(source, /env\.TMPDIR = workspaceTempRoot\(ownerUsername\)/u);
   assert.equal(
     source.match(/Environment=TMPDIR=\$\{systemdUnitSafeValue\(workspaceTempRoot\(owner\.username\)\)\}/gu)?.length,
     2
   );
   assert.doesNotMatch(source, /actorTemp|FLOCK_PATH|mkdtemp/u);
+});
+
+test("execution helper preserves only OpenCode private environment roots", async () => {
+  const source = await helperSource();
+
+  assert.match(source, /operation === "opencode-app-server"/u);
+  assert.match(source, /managedExecutionRuntimeBase\(\{ username: ownerUsername \}\)[\s\S]+"agent-providers",[\s\S]+"opencode"/u);
+  for (const name of [
+    "HOME",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME"
+  ]) {
+    assert.match(source, new RegExp(`"${name}"`, "u"));
+  }
+  assert.match(source, /!path\.isAbsolute\(requested\) \|\| relativePathParts\(providerRoot, requested\)\.length === 0/u);
+  assert.match(source, /rejected OpenCode \$\{name\} outside its provider runtime/u);
 });
 
 test("managed executions can traverse their private workspace runtime directory", async () => {
