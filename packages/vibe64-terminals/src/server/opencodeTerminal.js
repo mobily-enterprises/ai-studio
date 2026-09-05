@@ -17,7 +17,6 @@ import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_WORKSPACE_WRITE_POLICY,
   VIBE64_ASSISTANT_ENGINE_IDS,
-  resolveVibe64AssistantSelection,
   vibe64AgentExecutionProfileAuditSnapshot,
   vibe64AssistantSelectionFromMetadata
 } from "@local/vibe64-runtime/shared";
@@ -1022,8 +1021,6 @@ function createOpenCodeTerminalController({
       const current = processes.get(context.key);
       if (
         current &&
-        catalogSnapshot &&
-        Date.now() - catalogSnapshot.readAt < OPENCODE_CATALOG_CACHE_MS &&
         current.canonicalUrl === connection.canonicalUrl &&
         current.connectionFingerprint === connection.fingerprint &&
         current.endpointCode === connection.endpointCode &&
@@ -1036,15 +1033,6 @@ function createOpenCodeTerminalController({
         current.server = openCodeServerForDirectory(shared.server, context.workdir);
         return current;
       }
-      const currentCapabilities = await capabilities({
-        limit: "1",
-        modelId: context.selection.modelId,
-        modelProviderId: context.selection.modelProviderId
-      }, options);
-      resolveVibe64AssistantSelection(currentCapabilities, {
-        ...context.selection,
-        catalogRevision: currentCapabilities.revision
-      });
       const server = openCodeServerForDirectory(shared.server, context.workdir);
       const created = current || {
         abortController: new AbortController(),
@@ -1089,57 +1077,70 @@ function createOpenCodeTerminalController({
 
   async function ensureUpstreamSession(context = {}, options = {}) {
     const target = await ensureProcess(context, options);
-    let upstream = (
-      target.upstream &&
-      sameOpenCodeSelection(target.upstreamSelection, context.selection)
-    ) ? target.upstream : null;
-    if (!upstream) {
-      try {
-        upstream = await target.server.client.readSession(target.upstreamSessionId);
-      } catch (error) {
-        if (error?.statusCode !== 404) {
-          throw error;
+    if (target.upstreamStart) {
+      return target.upstreamStart;
+    }
+    const start = Promise.resolve().then(async () => {
+      let upstream = (
+        target.upstream &&
+        sameOpenCodeSelection(target.upstreamSelection, context.selection)
+      ) ? target.upstream : null;
+      if (!upstream) {
+        try {
+          upstream = await target.server.client.readSession(target.upstreamSessionId);
+        } catch (error) {
+          if (error?.statusCode !== 404) {
+            throw error;
+          }
+        }
+        if (!upstream) {
+          upstream = await target.server.client.createSession({
+            agent: context.selection.agentId,
+            id: target.upstreamSessionId,
+            location: { directory: context.workdir },
+            model: openCodeModel(context.selection)
+          });
+        } else {
+          await target.server.client.switchModel(
+            target.upstreamSessionId,
+            openCodeModel(context.selection)
+          );
+          await target.server.client.switchAgent(
+            target.upstreamSessionId,
+            context.selection.agentId
+          );
         }
       }
-      if (!upstream) {
-        upstream = await target.server.client.createSession({
-          agent: context.selection.agentId,
-          id: target.upstreamSessionId,
-          location: { directory: context.workdir },
-          model: openCodeModel(context.selection)
+      if (
+        text(context.session?.metadata?.agent_identity_conversation_id) !== target.upstreamSessionId ||
+        text(context.session?.metadata?.agent_identity_provider) !== VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE ||
+        text(context.session?.metadata?.agent_transport_id) !== "opencode_server"
+      ) {
+        const capturedAt = new Date().toISOString();
+        await writeSessionMetadata(context, {
+          agent_identity_captured_at: capturedAt,
+          agent_identity_conversation_id: target.upstreamSessionId,
+          agent_identity_provider: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+          agent_identity_resume_strategy: "provider-native",
+          agent_identity_status: "ready",
+          agent_identity_updated_at: capturedAt,
+          agent_identity_workdir: context.workdir,
+          agent_transport_id: "opencode_server",
+          agent_transport_kind: "loopback-http"
         });
-      } else {
-        await target.server.client.switchModel(
-          target.upstreamSessionId,
-          openCodeModel(context.selection)
-        );
-        await target.server.client.switchAgent(
-          target.upstreamSessionId,
-          context.selection.agentId
-        );
+      }
+      target.upstream = upstream;
+      target.upstreamSelection = { ...context.selection };
+      return target;
+    });
+    target.upstreamStart = start;
+    try {
+      return await start;
+    } finally {
+      if (target.upstreamStart === start) {
+        delete target.upstreamStart;
       }
     }
-    if (
-      text(context.session?.metadata?.agent_identity_conversation_id) !== target.upstreamSessionId ||
-      text(context.session?.metadata?.agent_identity_provider) !== VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE ||
-      text(context.session?.metadata?.agent_transport_id) !== "opencode_server"
-    ) {
-      const capturedAt = new Date().toISOString();
-      await writeSessionMetadata(context, {
-        agent_identity_captured_at: capturedAt,
-        agent_identity_conversation_id: target.upstreamSessionId,
-        agent_identity_provider: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
-        agent_identity_resume_strategy: "provider-native",
-        agent_identity_status: "ready",
-        agent_identity_updated_at: capturedAt,
-        agent_identity_workdir: context.workdir,
-        agent_transport_id: "opencode_server",
-        agent_transport_kind: "loopback-http"
-      });
-    }
-    target.upstream = upstream;
-    target.upstreamSelection = { ...context.selection };
-    return target;
   }
 
   function terminalSnapshot(sessionId = "", terminalSessionId = "") {

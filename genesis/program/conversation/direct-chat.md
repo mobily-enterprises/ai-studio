@@ -172,9 +172,10 @@ exact Vibe64 server controller that started it; if that controller disappears,
 the provider's complete process tree stops rather than surviving as an orphan.
 An OpenCode cold start gets one full readiness window rather than churning
 through short-lived replacement processes. Prompt admission still happens only
-after that service is ready, and a startup failure remains attached to the
-unsent message as a readable retryable error rather than becoming a generic
-server response.
+after that service is ready. An immediate first message joins the same in-flight
+provider and native-session preparation instead of starting either operation
+again. A startup failure remains attached to the unsent message as a readable
+retryable error rather than becoming a generic server response.
 Conversation identity, working directory, command environment,
 model settings, and provider history remain session-specific even though the
 resident provider process is shared. Capability discovery without an open

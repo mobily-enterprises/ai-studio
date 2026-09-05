@@ -107,6 +107,7 @@ async function controllerHarness({
   messagesErrorAfterPromptCount = 1,
   providerEvents = [],
   realAttachedTerminal = false,
+  serverStartGate = null,
   serverStartErrors = [],
   withCommandBoundary = false
 } = {}) {
@@ -247,10 +248,12 @@ async function controllerHarness({
   const outputs = new Map();
   const queuedAssistantResponses = [...assistantResponses];
   const queuedServerStartErrors = [...serverStartErrors];
+  let agentCatalogCalls = 0;
   let failNextHealth = false;
   let failNextPrompt = false;
   let listConnectionCalls = 0;
   let nextSession = 1;
+  let providerCatalogCalls = 0;
   let readSessionCalls = 0;
   let runtimeCreateCalls = 0;
 
@@ -262,6 +265,7 @@ async function controllerHarness({
         }
       },
       async agents() {
+        agentCatalogCalls += 1;
         return agents;
       },
       async createSession(input = {}) {
@@ -336,6 +340,7 @@ async function controllerHarness({
         return { admittedSeq: promptCalls.length, id: input.id };
       },
       async providers() {
+        providerCatalogCalls += 1;
         return catalogProviders;
       },
       forDirectory(nextDirectory = "") {
@@ -388,6 +393,7 @@ async function controllerHarness({
     } : {}),
     async createServerProcess(options) {
       serverStartCalls.push(options);
+      await serverStartGate?.(options);
       const startError = queuedServerStartErrors.shift();
       if (startError) {
         throw startError;
@@ -469,6 +475,7 @@ async function controllerHarness({
   });
 
   return {
+    agentCatalogCalls: () => agentCatalogCalls,
     agentRunEvents,
     assistantMessages,
     catalogReadCalls,
@@ -488,6 +495,7 @@ async function controllerHarness({
     metadataWrites,
     processStarts,
     processStops,
+    providerCatalogCalls: () => providerCatalogCalls,
     promptDirectories,
     promptCalls,
     publishedSessionChanges,
@@ -692,6 +700,59 @@ test("OpenCode gives one cold start the full default readiness window", async (t
   assert.equal(harness.processStarts.length, 1);
   assert.equal(harness.userMessages.length, 0);
   assert.equal(harness.promptCalls.length, 0);
+  assert.equal(harness.agentCatalogCalls(), 0);
+  assert.equal(harness.providerCatalogCalls(), 0);
+});
+
+test("an immediate first message joins the selected view's cold start", async (t) => {
+  let releaseServerStart = () => null;
+  let serverStartReached = () => null;
+  const serverStartGate = new Promise((resolve) => {
+    releaseServerStart = resolve;
+  });
+  const serverStartReady = new Promise((resolve) => {
+    serverStartReached = resolve;
+  });
+  const harness = await controllerHarness({
+    async serverStartGate() {
+      serverStartReached();
+      await serverStartGate;
+    }
+  });
+  t.after(async () => {
+    releaseServerStart();
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const options = {
+    runtime: harness.runtime,
+    session: harness.session,
+    vibe64User: { username: "ada" }
+  };
+
+  const opened = harness.controller.ensureSession("session-1", options);
+  await serverStartReady;
+  const delivered = harness.controller.sendMessage("session-1", {
+    message: "Hello",
+    messageId: "client-message-immediate"
+  }, options);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.serverStartCalls.length, 1);
+  assert.equal(harness.processStarts.length, 0);
+  assert.equal(harness.promptCalls.length, 0);
+
+  releaseServerStart();
+  const [openedResult, deliveredResult] = await Promise.all([opened, delivered]);
+  assert.equal(openedResult.ok, true);
+  assert.equal(deliveredResult.ok, true);
+  assert.equal(harness.serverStartCalls.length, 1);
+  assert.equal(harness.processStarts.length, 1);
+  assert.equal(harness.createdSessions.length, 1);
+  assert.equal(harness.promptCalls.length, 1);
+  assert.equal(harness.agentCatalogCalls(), 0);
+  assert.equal(harness.providerCatalogCalls(), 0);
+  await harness.controller.waitForTurn("session-1", options);
 });
 
 test("OpenCode returns a readable failed-message result after a cold start times out", async (t) => {
@@ -878,7 +939,9 @@ test("OpenCode reuses an established session without repeating setup or model sw
 
   assert.equal(harness.commandEnvironmentCalls.length, 2);
   assert.equal(harness.processStarts.length, 1);
-  assert.equal(harness.listConnectionCalls(), 2);
+  assert.equal(harness.listConnectionCalls(), 1);
+  assert.equal(harness.agentCatalogCalls(), 0);
+  assert.equal(harness.providerCatalogCalls(), 0);
   assert.equal(harness.readSessionCalls(), 1);
   assert.equal(harness.createdSessions.length, 1);
   assert.deepEqual(harness.switchedModels, []);
