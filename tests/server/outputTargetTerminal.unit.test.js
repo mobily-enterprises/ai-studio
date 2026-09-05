@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,9 @@ import {
 import {
   VIBE64_RUNTIME_NAMESPACE_ENV
 } from "@local/studio-terminal-core/server/studioRuntimeIdentity";
+import {
+  previewPublicSocketPath
+} from "../../packages/vibe64-terminals/src/server/launchPreviewProxy.js";
 import {
   createLaunchRestartBaseline,
   createOutputTargetTerminalController,
@@ -186,10 +190,11 @@ async function runGit(cwd, args) {
   });
 }
 
-test("launch start awaits workspace preparation and cleanup cannot retain its preview child", async () => {
+test("launch start awaits preparation, publishes hosted ingress, and cannot retain its preview child", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-launch-workspace-"));
   const sessionId = "session-workspace";
   const projectContextRoot = path.join(root, "project-namespace");
+  const previewSocketDir = path.join(root, "preview-sockets");
   const sourceRoot = path.join(root, "sessions", "active", sessionId, "source");
   const sessionRoot = path.join(root, "state", sessionId);
   await mkdir(sourceRoot, {
@@ -276,6 +281,9 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
         },
         async readMetadataValue(_sessionId, name) {
           return name === "output_target_terminal_id" ? cleanupTerminalId : "";
+        },
+        async writeMetadataValue() {
+          return null;
         }
       }
     };
@@ -309,6 +317,13 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       targetRoot: projectContextRoot
     };
     controller = createOutputTargetTerminalController({
+      env: {
+        VIBE64_PREVIEW_PROXY_SOCKET_DIR: previewSocketDir,
+        VIBE64_PREVIEW_PUBLIC_DOMAIN: "vibe64.dev",
+        VIBE64_PUBLIC_PROTOCOL: "https",
+        VIBE64_PUBLIC_USER_DOMAIN: "users.vibe64.dev",
+        VIBE64_WORKSPACE: "merc"
+      },
       async ensureWorkspacePrepared() {
         events.push("prepare-started");
         preparationStarted();
@@ -338,7 +353,8 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
         return {
           id: "terminal-workspace",
           metadata: {
-            ...input.terminal.metadata
+            ...input.terminal.metadata,
+            launchReady: true
           },
           ok: true,
           running: true,
@@ -380,6 +396,14 @@ test("launch start awaits workspace preparation and cleanup cannot retain its pr
       "prepare-completed",
       "launch-started"
     ]);
+    const readyTerminal = await controller.startTerminal(sessionId, {
+      outputTargetId: "app"
+    });
+    const previewPublicOrigin = readyTerminal.metadata.previewPublicOrigin;
+    assert.match(previewPublicOrigin, /^https:\/\/v64preview-[a-z0-9]{12}--merc\.vibe64\.dev$/u);
+    assert.equal(existsSync(previewPublicSocketPath(previewPublicOrigin, {
+      VIBE64_PREVIEW_PROXY_SOCKET_DIR: previewSocketDir
+    })), true);
 
     const environmentStarted = new Promise((resolve) => {
       projectEnvironmentStarted = resolve;
@@ -792,6 +816,37 @@ test("preview public origin follows the Studio HTTPS protocol by default", () =>
   });
 
   assert.match(publicOrigin, /^https:\/\/v64preview-[a-z0-9]{12}--pass\.vibe64\.dev$/u);
+});
+
+test("preview public origin uses hosted workspace configuration without a request host", () => {
+  const env = {
+    VIBE64_PREVIEW_PUBLIC_DOMAIN: "vibe64.dev",
+    VIBE64_PUBLIC_PROTOCOL: "https",
+    VIBE64_PUBLIC_USER_DOMAIN: "users.vibe64.dev",
+    VIBE64_WORKSPACE: "pass"
+  };
+  const sessionId = "2026-07-10_05-25-34";
+
+  assert.equal(
+    previewPublicOriginForLaunch({ env, sessionId }),
+    previewPublicOriginForLaunch({
+      env,
+      publicHost: "pass.users.vibe64.dev",
+      sessionId
+    })
+  );
+});
+
+test("preview public origin rejects invalid hosted workspace configuration", () => {
+  assert.equal(previewPublicOriginForLaunch({
+    env: {
+      VIBE64_PREVIEW_PUBLIC_DOMAIN: "vibe64.dev",
+      VIBE64_PUBLIC_PROTOCOL: "https",
+      VIBE64_PUBLIC_USER_DOMAIN: "users.vibe64.dev",
+      VIBE64_WORKSPACE: "invalid.workspace"
+    },
+    sessionId: "2026-07-10_05-25-34"
+  }), "");
 });
 
 test("preview public origin follows the configured public protocol", () => {

@@ -117,6 +117,7 @@ const OUTPUT_METADATA = Object.freeze({
 const OUTPUT_METADATA_NAMES = Object.freeze(Object.values(OUTPUT_METADATA));
 const MAX_LAUNCH_ACTION_SCAN_LINES = 10;
 const PREVIEW_PUBLIC_HOST_PREFIX = "v64preview";
+const VIBE64_WORKSPACE_ENV = "VIBE64_WORKSPACE";
 const LAUNCH_RESTART_REASON_SOURCE_CHANGED = "server_source_changed";
 const MAX_RESTART_CHANGED_FILES = 20;
 const PREVIEW_LOG_FILE_NAME = "preview-log.jsonl";
@@ -1612,40 +1613,14 @@ async function readyLaunchPreview({
     };
   }
   try {
-    const previewTarget = await launchPreviewProxies.ensure({
-      executePreviewIdentityCommand: terminal?.metadata?.previewIdentity
-        ? async ({ selection }) => {
-            const runner = previewIdentityCommandRunnerForLaunchTerminal({
-              context,
-              runCommand: options.runCommand,
-              targetHref,
-              terminal
-            });
-            if (!runner) {
-              const error = new Error("Application preview identity command is unavailable. Restart the preview.");
-              error.code = "vibe64_preview_identity_command_unavailable";
-              error.statusCode = 409;
-              throw error;
-            }
-            return runner(selection);
-          }
-        : null,
-      previewPublicOrigin: previewPublicOriginForLaunch({
-        env: options.env,
-        previewPublicDomain: options.previewPublicDomain,
-        publicHost: options.publicHost,
-        publicProtocol: options.publicProtocol,
-        publicUserDomain: options.publicUserDomain,
-        sessionId
-      }),
-      previewAuth: previewAuthForLaunchTerminal(terminal, {
-        sessionId,
-        targetHref
-      }),
+    const previewTarget = await ensureLaunchPreviewProxy({
+      context,
+      launchPreviewProxies,
+      options,
       sessionId,
       targetHref,
-      terminalSessionId
-    }, targetHref);
+      terminal
+    });
     const restartRecovery = await launchRestartRecoveryForTerminal({
       context,
       terminal
@@ -1687,6 +1662,55 @@ async function readyLaunchPreview({
       })
     };
   }
+}
+
+async function ensureLaunchPreviewProxy({
+  context = {},
+  launchPreviewProxies = null,
+  options = {},
+  previewPublicOrigin = "",
+  sessionId = "",
+  targetHref = "",
+  terminal = null
+} = {}) {
+  return launchPreviewProxies.ensure({
+    executePreviewIdentityCommand: terminal?.metadata?.previewIdentity
+      ? async ({ selection }) => {
+          const runner = previewIdentityCommandRunnerForLaunchTerminal({
+            context,
+            runCommand: options.runCommand,
+            targetHref,
+            terminal
+          });
+          if (!runner) {
+            const error = new Error("Application preview identity command is unavailable. Restart the preview.");
+            error.code = "vibe64_preview_identity_command_unavailable";
+            error.statusCode = 409;
+            throw error;
+          }
+          return runner(selection);
+        }
+      : null,
+    previewPublicOrigin: String(
+      previewPublicOrigin ||
+      terminal?.metadata?.previewPublicOrigin ||
+      previewPublicOriginForLaunch({
+        env: options.env,
+        previewPublicDomain: options.previewPublicDomain,
+        publicHost: options.publicHost,
+        publicProtocol: options.publicProtocol,
+        publicUserDomain: options.publicUserDomain,
+        sessionId
+      })
+    ).trim(),
+    previewAuth: previewAuthForLaunchTerminal(terminal, {
+      sessionId,
+      targetHref
+    }),
+    sessionId,
+    targetHref,
+    terminalSessionId: String(terminal?.id || "").trim()
+  }, targetHref);
 }
 
 function launchExecutionProject(context = {}, terminalEnvRecords = {}) {
@@ -1965,6 +1989,49 @@ function createOutputTargetTerminalController({
   const launchReadyWrites = new Map();
   const launchStartLocks = new Map();
   const outputResultWrites = new Map();
+
+  async function ensureReadyLaunchPreviewProxy(context = {}, terminal = {}, {
+    source = "ready"
+  } = {}) {
+    const metadata = terminal?.metadata || {};
+    const targetHref = String(
+      normalizeOpenTarget(metadata.openTarget || {}).href || metadata.targetUrl || ""
+    ).trim();
+    const previewPublicOrigin = String(metadata.previewPublicOrigin || "").trim();
+    if (
+      metadata.outputPresentationKind !== "web" ||
+      !targetHref ||
+      !previewPublicOrigin
+    ) {
+      return false;
+    }
+    try {
+      await ensureLaunchPreviewProxy({
+        context,
+        launchPreviewProxies,
+        options: {
+          env,
+          projectService,
+          runCommand
+        },
+        previewPublicOrigin,
+        sessionId: context.session?.sessionId || metadata.sessionId || "",
+        targetHref,
+        terminal
+      });
+      return true;
+    } catch (error) {
+      vibe64SessionDebugLog("server.outputTargetTerminal.previewProxy.eagerEnsureError", {
+        error: vibe64SessionDebugError(error),
+        sessionId: String(context.session?.sessionId || metadata.sessionId || ""),
+        source,
+        terminalSessionId: String(terminal?.id || "")
+      }, {
+        level: "warn"
+      });
+      return false;
+    }
+  }
 
   function captureOutputResults({
     context = {},
@@ -2430,6 +2497,14 @@ function createOutputTargetTerminalController({
           readinessMarker = readinessMarkerFromSpec(spec);
           outputResultsMarker = String(spec.metadata?.outputResultsMarker || "").trim();
           const webOutput = String(spec.metadata?.outputPresentationKind || "").trim() === "web";
+          const previewPublicOrigin = webOutput
+            ? previewPublicOriginForLaunch({
+                env,
+                publicHost: input.publicHost,
+                publicProtocol: input.publicProtocol,
+                sessionId
+              })
+            : "";
           let launchReadyConfirmed = false;
           await closeStoppedLaunchTerminals(sessionId);
           const existingReusableTerminal = forceRestart
@@ -2470,6 +2545,7 @@ function createOutputTargetTerminalController({
                 ...(launchRestartBaseline ? { launchRestartBaseline } : {}),
                 outputTargetId: outputTarget.id,
                 outputTargetLabel: outputTarget.label,
+                ...(previewPublicOrigin ? { previewPublicOrigin } : {}),
                 sessionId,
                 ...terminalNoGithubActorMetadata({
                   ownerUserKey: "output-target",
@@ -2579,8 +2655,15 @@ function createOutputTargetTerminalController({
                   sessionId,
                   terminalSession: runningTerminalSession,
                   updateMetadata
-                }).then((result) => {
+                }).then(async (result) => {
                   launchReadyConfirmed = result?.ready === true;
+                  if (launchReadyConfirmed) {
+                    await ensureReadyLaunchPreviewProxy(
+                      context,
+                      result.terminal || runningTerminalSession,
+                      { source: "marker" }
+                    );
+                  }
                 }).catch((error) => {
                   vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.error", {
                     error: vibe64SessionDebugError(error),
@@ -2649,6 +2732,9 @@ function createOutputTargetTerminalController({
             status: "ready",
             terminalSessionId: terminalSession.id
           });
+          await ensureReadyLaunchPreviewProxy(context, terminalSession, {
+            source: "start"
+          });
         }
         return terminalSession;
       }));
@@ -2704,13 +2790,21 @@ function previewPublicOriginForLaunch({
   sessionId = ""
 } = {}) {
   const hostname = normalizeHostName(String(publicHost || "").trim());
-  if (!hostname || isLoopbackAddress(hostname)) {
+  if (hostname && isLoopbackAddress(hostname)) {
     return "";
   }
   const configuredUserDomain = normalizePublicHostDomain(publicUserDomain || env?.[VIBE64_PUBLIC_USER_DOMAIN_ENV] || "");
-  const studioHostMatch = studioHostMatchForPreview(hostname, {
-    publicUserDomain: configuredUserDomain
-  });
+  const configuredWorkspace = String(env?.[VIBE64_WORKSPACE_ENV] || "").trim().toLowerCase();
+  const studioHostMatch = hostname
+    ? studioHostMatchForPreview(hostname, {
+        publicUserDomain: configuredUserDomain
+      })
+    : configuredUserDomain && validPreviewWorkspace(configuredWorkspace)
+      ? {
+          baseDomain: configuredUserDomain,
+          workspace: configuredWorkspace
+        }
+      : null;
   if (!studioHostMatch) {
     return "";
   }
@@ -2728,7 +2822,10 @@ function previewPublicOriginForLaunch({
       previewPublicBaseDomain(studioHostMatch.baseDomain)
   );
   if (!configuredPreviewDomain) {
-    const requestPort = publicDomainPort(normalizePublicDomain(publicHost), protocol);
+    const requestPort = publicDomainPort(
+      normalizePublicDomain(publicHost || configuredUserDomain),
+      protocol
+    );
     if (requestPort) {
       baseDomain = `${baseDomain}:${requestPort}`;
     }

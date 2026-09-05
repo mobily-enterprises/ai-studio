@@ -340,6 +340,57 @@ test("launch preview proxy can expose previews through a Caddy-compatible Unix s
   });
 });
 
+test("launch preview proxy republishes a public socket removed outside its registry", async () => {
+  const socketDir = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-republish-"));
+  await withTargetServer(async (target) => {
+    const publicOrigin = "https://v64preview-deadbeef1234--workspace.vibe64.dev";
+    const env = {
+      VIBE64_PREVIEW_PROXY_SOCKET_DIR: socketDir
+    };
+    const registry = createLaunchPreviewProxyRegistry({ env });
+    const input = {
+      previewPublicOrigin: publicOrigin,
+      sessionId: "session-republish",
+      targetHref: `${target.origin}/home`,
+      terminalSessionId: "terminal-republish"
+    };
+    const socketPath = previewPublicSocketPath(publicOrigin, env);
+    try {
+      const first = await registry.ensure(input);
+      await rm(socketPath, {
+        force: true
+      });
+
+      const [second, concurrent] = await Promise.all([
+        registry.ensure(input),
+        registry.ensure(input)
+      ]);
+
+      assert.equal(second.href, concurrent.href);
+      assert.notEqual(
+        new URL(second.href).searchParams.get(PREVIEW_PROXY_TOKEN_QUERY_PARAM),
+        new URL(first.href).searchParams.get(PREVIEW_PROXY_TOKEN_QUERY_PARAM)
+      );
+      assert.equal((await lstat(socketPath)).isSocket(), true);
+      const response = await requestUnixSocket({
+        headers: {
+          Host: new URL(publicOrigin).host
+        },
+        path: `${new URL(second.href).pathname}${new URL(second.href).search}`,
+        socketPath
+      });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.body, /Target home/u);
+    } finally {
+      await registry.closeAll();
+      await rm(socketDir, {
+        force: true,
+        recursive: true
+      });
+    }
+  });
+});
+
 test("launch preview proxy inherits the host XDG runtime directory when scoped env omits it", async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), "vibe64-preview-runtime-"));
   await withTargetServer(async (target) => {

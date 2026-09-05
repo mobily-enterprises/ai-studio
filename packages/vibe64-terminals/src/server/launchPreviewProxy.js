@@ -10,6 +10,9 @@ import {
 } from "node:net";
 import crypto from "node:crypto";
 import {
+  lstatSync
+} from "node:fs";
+import {
   chmod,
   lstat,
   mkdir,
@@ -1331,9 +1334,12 @@ function createLaunchPreviewProxyRegistry({
       targetHref: targetUrl.toString(),
       terminalSessionId: String(scope.terminalSessionId || "")
     });
+    const existingIdentityMatches = Boolean(
+      existing && previewProxyMatchesIdentity(existing, identity)
+    );
     if (
-      existing &&
-      previewProxyMatchesIdentity(existing, identity)
+      existingIdentityMatches &&
+      existing.isPublished()
     ) {
       previewProxyDebugLog("server.launchPreviewProxy.reuse", {
         key,
@@ -1377,12 +1383,12 @@ function createLaunchPreviewProxyRegistry({
         projectScope: String(scope.projectScope || ""),
         proxyOrigin: String(existing.origin || ""),
         publicOrigin,
-        reason: "proxy_identity_changed",
+        reason: existingIdentityMatches
+          ? "proxy_listener_unpublished"
+          : "proxy_identity_changed",
         sessionId: String(scope.sessionId || ""),
         terminalSessionId: String(scope.terminalSessionId || "")
       });
-      proxies.delete(key);
-      await existing.close();
     }
 
     const pendingEntry = {
@@ -1395,7 +1401,13 @@ function createLaunchPreviewProxyRegistry({
       }
     };
     pendingStarts.set(key, pendingEntry);
+    if (existing) {
+      proxies.delete(key);
+    }
     pendingEntry.promise = (async () => {
+      if (existing) {
+        await existing.close();
+      }
       const proxy = await startLaunchPreviewProxy({
         connectUrl,
         targetUrl
@@ -1696,6 +1708,25 @@ async function startLaunchPreviewProxy({
       sockets,
       tracker
     }),
+    isPublished: () => {
+      if (!server.listening) {
+        return false;
+      }
+      if (!listen.socketPath) {
+        return true;
+      }
+      try {
+        const socket = lstatSync(listen.socketPath);
+        return socket.isSocket() &&
+          socket.dev === listen.socketDevice &&
+          socket.ino === listen.socketInode;
+      } catch (error) {
+        if (["ENOENT", "ENOTDIR"].includes(String(error?.code || ""))) {
+          return false;
+        }
+        throw error;
+      }
+    },
     origin: proxyOrigin,
     connectHref: connectUrl.toString(),
     publicOrigin,
@@ -1858,11 +1889,14 @@ async function listenOnPreviewSocket(server, {
     await listenOnPreviewSocketAfterStaleCleanup(server, socketPath);
   }
   await chmod(socketPath, 0o600);
+  const socket = await lstat(socketPath);
   return {
     kind: "socket",
     origin: publicOrigin,
     port: "",
     publicHost: new URL(publicOrigin).host,
+    socketDevice: socket.dev,
+    socketInode: socket.ino,
     socketPath
   };
 }
