@@ -193,7 +193,7 @@ test("assistant capability documents reject duplicate upstream ids", () => {
   );
 });
 
-test("the session model selector uses autocomplete only for long lists", async () => {
+test("the session model selector shows only available models and normalizes stale choices", async () => {
   const source = await readFile(new URL(
     "../../src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue",
     import.meta.url
@@ -201,6 +201,10 @@ test("the session model selector uses autocomplete only for long lists", async (
 
   assert.match(source, /<v-autocomplete[\s\S]*v-if="modelRows\.length > 6"/u);
   assert.match(source, /v-else-if="modelRows\.length"[\s\S]*v-for="model in modelRows"/u);
-  assert.match(source, /model\.status !== "available"/u);
+  assert.match(source, /filter\(\(model\) => model\.status === "available"\)/u);
+  assert.match(source, /watch\(\[menuOpen, modelProvider, modelRows\]/u);
+  assert.match(source, /model\.id === provider\.defaultModelId/u);
+  assert.doesNotMatch(source, /appendIcon: mdiLockOutline/u);
+  assert.doesNotMatch(source, /vibe64-session-assistant-menu__option--locked/u);
   assert.match(source, /!modelAccess\.managementOnly/u);
 });

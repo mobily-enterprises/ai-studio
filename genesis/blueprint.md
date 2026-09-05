@@ -30,11 +30,11 @@ OpenCode connection and identify one connected provider as the preferred
 new-session default. Workspace owners manage account credentials and add
 further connections in the separate account-management area. Each distinct
 connected OpenCode provider route remains its own choice, including separate
-plans from the same provider. A host model-access policy can leave restricted
-models visible but locked, expose one recommended recovery model, and give the
-owner a warned switch for broader access. Starting a session presents the
-configured list promptly without waiting for an AI provider to start or
-discover models. A session stays within
+plans from the same provider. The chat selector shows only models the host
+currently permits, while a host model-access policy can expose one recommended
+recovery model and give the owner a warned switch for broader access. Starting
+a session presents the configured list promptly without waiting for an AI
+provider to start or discover models. A session stays within
 the assistant application that owns its conversation. Leaving a model's
 thinking choice at its provider default leaves that choice to the provider
 instead of silently selecting another listed option. Vibe64 also respects each

@@ -120,9 +120,11 @@ the provider again returns no response, the turn fails visibly instead of
 appearing to have completed silently.
 
 The chat cog opens a compact selector for the AI used by that session. It shows
-only currently connected providers, keeps host-restricted models visible but
-greyed and unselectable, chooses a compatible conversation agent automatically,
-and offers the selected model's thinking choices when present. Up to six models
+only currently connected providers and currently available models, chooses a
+compatible conversation agent automatically, and offers the selected model's
+thinking choices when present. If a saved model is no longer available, the
+draft shown in the cog moves to that provider's available default, then its
+first available model, for the person to apply explicitly. Up to six models
 remain immediate buttons; a longer provider list becomes one searchable
 autocomplete so the selector stays compact. When a host
 exposes configurable model access, the owner sees the same warned unlock switch
@@ -132,9 +134,9 @@ a session whose prior model was already relocked can still recover because the
 target selection is checked independently. A provider-default thinking choice
 delegates that setting to the provider instead of substituting another listed
 choice.
-Hosts may mark account-wide access controls as management-only; their enabled
-and locked model results still appear in the cog, but the control itself remains
-on the host's account-management surface.
+Hosts may mark account-wide access controls as management-only; only their
+enabled model results appear in the cog, while the control itself remains on
+the host's account-management surface.
 The new-session AI chooser is a separate, preloaded view of Vibe64's saved AI
 connections. It presents one choice for Codex when connected and one choice for
 each saved OpenCode route, using each connection's verified default model. It

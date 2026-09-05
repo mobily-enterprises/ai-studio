@@ -324,7 +324,10 @@ describe("useVibe64AssistantAccess", () => {
     expect(assistantMenuSource).toContain('menuOpen.value && props.session?.sessionId && engineId.value');
     expect(assistantMenuSource).toContain('provider.connected === true');
     expect(assistantMenuSource).toContain('model.status === "available"');
-    expect(assistantMenuSource).toContain("model.status !== 'available'");
+    expect(assistantMenuSource).toContain('watch([menuOpen, modelProvider, modelRows]');
+    expect(assistantMenuSource).toContain('model.id === provider.defaultModelId');
+    expect(assistantMenuSource).not.toContain('appendIcon: mdiLockOutline');
+    expect(assistantMenuSource).not.toContain('vibe64-session-assistant-menu__option--locked');
     expect(assistantMenuSource).toContain(':icon="mdiLockOutline"');
     expect(assistantMenuSource).toContain('modelAccess.label');
     expect(assistantMenuSource).toContain('Unlock paid models');

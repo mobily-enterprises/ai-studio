@@ -66,8 +66,9 @@ by opening or creating a session or sending its first message.
 The host may contribute redacted connection metadata that marks a connection
 as built in, identifies the preferred new-session provider, and restricts it to
 one recommended model or a finite enabled-model allowlist. The sanitized
-catalogue keeps other live models visible with a locked status and host-supplied
-explanation, while selection resolution accepts only available models. A
+catalogue retains other live model records with a locked status and
+host-supplied explanation, while selection resolution and the session selector
+expose only available models. A
 generic owner-authenticated model-access operation delegates a warned unlock or
 relock to the host; a host may reserve more involved account-management actions
 for its own management surface. Public Vibe64 does not name a private provider

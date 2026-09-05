@@ -106,8 +106,7 @@
             v-if="modelRows.length > 6"
             auto-select-first="exact"
             hide-details
-            :items="modelAutocompleteItems"
-            item-props="props"
+            :items="modelRows"
             item-title="label"
             item-value="id"
             label="Choose model"
@@ -120,29 +119,21 @@
             <v-btn
               v-for="model in modelRows"
               :key="model.id"
-              :active="modelId === model.id && model.status === 'available'"
-              :aria-label="model.status === 'available'
-                ? model.label
-                : `${model.label}. Locked. ${model.lockMessage || 'This model is not available.'}`"
+              :active="modelId === model.id"
+              :aria-label="model.label"
               :aria-pressed="modelId === model.id"
               class="vibe64-session-assistant-menu__option"
-              :class="{ 'vibe64-session-assistant-menu__option--locked': model.status !== 'available' }"
-              :color="modelId === model.id && model.status === 'available' ? 'primary' : undefined"
-              :disabled="changesDisabled || model.status !== 'available'"
+              :color="modelId === model.id ? 'primary' : undefined"
+              :disabled="changesDisabled"
               rounded="lg"
               size="small"
-              :title="changesDisabled ? 'Wait for the active turn to finish before changing models.' : (model.status === 'available' ? model.label : model.lockMessage || 'This model is not available.')"
+              :title="changesDisabled ? 'Wait for the active turn to finish before changing models.' : model.label"
               type="button"
-              :variant="modelId === model.id && model.status === 'available' ? 'tonal' : 'outlined'"
+              :variant="modelId === model.id ? 'tonal' : 'outlined'"
               @click="selectModel(model.id)"
             >
               <span>{{ model.label }}</span>
-              <v-icon
-                v-if="model.status !== 'available'"
-                :icon="mdiLockOutline"
-                size="15"
-              />
-              <v-icon v-else-if="modelId === model.id" :icon="mdiCheck" size="15" />
+              <v-icon v-if="modelId === model.id" :icon="mdiCheck" size="15" />
             </v-btn>
           </div>
           <span v-else class="vibe64-session-assistant-menu__empty">No available models.</span>
@@ -151,7 +142,7 @@
             class="vibe64-session-assistant-menu__locked-note"
           >
             <v-icon :icon="mdiLockOutline" size="14" />
-            Paid models stay visible but locked in free-only mode.
+            Additional paid models are hidden until they are enabled.
           </small>
         </section>
 
@@ -396,19 +387,8 @@ const modelProvider = computed(() => (
     provider.id === modelProviderId.value && provider.connected === true
   )) || null
 ));
-const modelRows = computed(() => modelProvider.value?.models || []);
-const modelAutocompleteItems = computed(() => modelRows.value.map((model) => ({
-  ...model,
-  props: {
-    disabled: model.status !== "available",
-    ...(model.status === "available" ? {} : {
-      appendIcon: mdiLockOutline,
-      subtitle: model.lockMessage || "This model is not available."
-    })
-  }
-})));
-const availableModels = computed(() => (
-  modelRows.value.filter((model) => model.status === "available")
+const modelRows = computed(() => (
+  (modelProvider.value?.models || []).filter((model) => model.status === "available")
 ));
 const modelAccess = computed(() => (
   modelProvider.value?.modelAccess || selectedProvider.value?.modelAccess || {}
@@ -424,7 +404,7 @@ const modelAccessPendingLabel = computed(() => modelAccessUnlocked.value
   ? `Returning to ${recommendedModel.value?.label || "the recommended model"}…`
   : "Unlocking paid models…"
 );
-const selectedModel = computed(() => availableModels.value.find((model) => (
+const selectedModel = computed(() => modelRows.value.find((model) => (
   model.id === modelId.value
 )) || null);
 const compatibleAgents = computed(() => (
@@ -692,18 +672,18 @@ watch(menuOpen, (open) => {
   }
 });
 
-watch([modelProvider, availableModels, modelRows], ([provider, models, allModels]) => {
-  if (!menuOpen.value || !provider) {
+watch([menuOpen, modelProvider, modelRows], ([open, provider, models]) => {
+  if (!open || !provider) {
     return;
   }
-  if (allModels.some((model) => model.id === modelId.value)) {
+  if (models.some((model) => model.id === modelId.value)) {
     return;
   }
-  if (!models.some((model) => model.id === modelId.value)) {
-    modelId.value = models.find((model) => (
-      model.id === selectedOverviewEngine.value?.defaults?.modelId
-    ))?.id || models[0]?.id || "";
-  }
+  modelId.value = models.find((model) => (
+    model.id === provider.defaultModelId
+  ))?.id || models.find((model) => (
+    model.id === selectedOverviewEngine.value?.defaults?.modelId
+  ))?.id || models[0]?.id || "";
 }, { immediate: true });
 
 watch([compatibleAgents, modelId], ([agents]) => {
@@ -811,10 +791,6 @@ watch([selectedModel, selectedAgent], ([model, agent]) => {
   letter-spacing: 0;
   min-height: 2.5rem;
   text-transform: none;
-}
-
-.vibe64-session-assistant-menu__option--locked {
-  opacity: 0.62;
 }
 
 .vibe64-session-assistant-menu__empty,
