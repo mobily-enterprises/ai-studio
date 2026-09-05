@@ -52,7 +52,7 @@ test("OpenCode Zen discovery reads its current public model ids without credenti
   );
 });
 
-test("OpenCode cold catalog reads the complete provider API and proves process exit", async (t) => {
+test("OpenCode cold catalog unlocks complete Zen metadata with only its public identity", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-cold-catalog-"));
   const privateRoot = path.join(root, "private");
   const workdir = path.join(root, "workdir");
@@ -63,6 +63,12 @@ test("OpenCode cold catalog reads the complete provider API and proves process e
   const catalog = await readOpenCodeCatalog({
     async createServerProcess(options) {
       starts.push(options);
+      assert.deepEqual(JSON.parse(await readFile(
+        path.join(privateRoot, "data", "opencode", "auth.json"),
+        "utf8"
+      )), {
+        opencode: { key: "public", type: "api" }
+      });
       return {
         client: {
           async agents({ directory }) {

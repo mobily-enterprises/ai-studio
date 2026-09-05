@@ -245,13 +245,15 @@ an unrelated failure cannot gain an account link merely because of its wording.
   disabling OpenCode's unrelated default plugins and loading Vibe64's
   session-environment plugin for command routing. It raises OpenCode's response
   and compaction ceiling only alongside that host plugin.
-- `readOpenCodeCatalog()` starts a bounded, credential-free temporary OpenCode
-  service and reads its complete provider and agent APIs while the resident
-  session service stays asleep. The client allowlists safe provider and model
-  capability fields before they can enter the catalogue cache. Zen models are
-  additionally intersected with the ids from Zen's bounded, credential-free
-  public model endpoint before presentation or verification, and the temporary
-  service must be proven stopped before the result is returned.
+- `readOpenCodeCatalog()` starts a bounded temporary OpenCode service and reads
+  its complete provider and agent APIs while the resident session service stays
+  asleep. Its non-secret Zen `public` identity makes paid-model metadata visible
+  without loading an owner's saved key. The client allowlists safe provider and
+  model capability fields before they can enter the catalogue cache. That
+  metadata is reconciled with the ids from Zen's bounded, credential-free
+  public model endpoint before presentation or verification; a newly advertised
+  id absent from the pinned metadata receives only a minimal safe fallback. The
+  temporary service must be proven stopped before the result is returned.
 - `openCodeConfiguredAssistantCapabilities()` projects saved connection labels,
   access descriptions, preferred-provider status, and verified default models
   into the new-session choices

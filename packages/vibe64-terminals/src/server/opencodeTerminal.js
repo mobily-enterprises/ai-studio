@@ -883,11 +883,12 @@ function createOpenCodeTerminalController({
     const currentZenModelIds = new Set(Array.isArray(catalog.zenModelIds)
       ? catalog.zenModelIds
       : []);
+    const currentZenModel = modelProviderId === "opencode" && currentZenModelIds.has(modelId);
     if (
       !provider ||
-      !model ||
-      text(model.status) === "deprecated" ||
-      (modelProviderId === "opencode" && !currentZenModelIds.has(modelId))
+      (modelProviderId === "opencode"
+        ? !currentZenModel
+        : !model || text(model.status) === "deprecated")
     ) {
       throw openCodeError(
         "vibe64_assistant_catalog_stale",

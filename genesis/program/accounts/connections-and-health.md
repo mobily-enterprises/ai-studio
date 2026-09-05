@@ -42,7 +42,8 @@ an old credential-bearing process to survive silently.
 
 The assistant-capability service can read the complete provider registry from
 the pinned OpenCode runtime without a project or configured provider
-credentials. It starts a temporary credential-free OpenCode service, reads the
+credentials. It starts a temporary OpenCode service, gives only native Zen's
+non-secret `public` identity so paid definitions are not hidden, reads the
 native provider and agent APIs, proves that service stopped, and removes its
 private state. Provider data is allowlist-sanitized before caching: consumers
 receive exact provider ids, native defaults, safe model capabilities and limits,
@@ -52,12 +53,15 @@ headers, costs, or upstream connection state. Malformed and empty registries
 fail instead of becoming an authoritative empty catalogue.
 
 For OpenCode Zen, Vibe64 also reads Zen's official public `/v1/models` endpoint
-and intersects those current ids with the pinned runtime's sanitized metadata.
-The bounded request sends no provider credential, and a failed or malformed
-response remains a retryable catalogue failure instead of exposing stale Zen
-models. This live Zen result shares the existing short-lived catalogue cache;
-it is loaded only by explicit full-catalogue operations, never by opening or
-creating a session or sending its first message.
+and reconciles those current ids with the pinned runtime's complete sanitized
+metadata. A newly advertised id missing from that runtime receives only a safe
+id-and-label fallback until OpenCode supplies its metadata; an actual key check
+still decides whether it works. The bounded request sends no provider
+credential, neither catalogue operation reads a saved owner key, and a failed
+or malformed response remains a retryable catalogue failure instead of
+exposing stale Zen models. This live Zen result shares the existing short-lived
+catalogue cache; it is loaded only by explicit full-catalogue operations, never
+by opening or creating a session or sending its first message.
 
 The host may contribute redacted connection metadata that marks a connection
 as built in, identifies the preferred new-session provider, and restricts it to
@@ -70,7 +74,13 @@ for its own management surface. Public Vibe64 does not name a private provider
 policy or store provider credentials. Runtime admission remains a separate host
 check, so a durable selection cannot bypass a later restriction.
 
-The short-lived credential-free catalogue snapshot is independent of
+Zen's rotating model roster never makes its saved connection stale. Provider
+revision checks still protect connection setup and other provider definitions,
+while current Zen ids independently control which models are presented. The
+host's recommended Big Pickle entry therefore remains connected and available
+when paid models rotate or a prior session selection is no longer enabled.
+
+The short-lived private-credential-free catalogue snapshot is independent of
 credential-bearing assistant runtimes. Replacing or removing a connection
 still retires those runtimes, but does not discard an unexpired catalogue and
 force an otherwise redundant cold discovery.

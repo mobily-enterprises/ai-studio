@@ -612,7 +612,7 @@ test("OpenCode exposes a finite connection verifier through its controller", asy
   assert.equal(harness.verifyConnectionCalls.length, 1);
 });
 
-test("OpenCode refuses to verify a Zen model missing from Zen's current model list", async (t) => {
+test("OpenCode verifies Zen's live ids and rejects models removed from its current list", async (t) => {
   const zen = {
     id: "opencode",
     models: {
@@ -636,7 +636,7 @@ test("OpenCode refuses to verify a Zen model missing from Zen's current model li
       all: [zen],
       default: { opencode: "big-pickle" }
     },
-    zenModelIds: ["big-pickle"]
+    zenModelIds: ["big-pickle", "new-live-model"]
   });
   t.after(async () => {
     await harness.controller.closeAllForProject();
@@ -653,6 +653,15 @@ test("OpenCode refuses to verify a Zen model missing from Zen's current model li
     (error) => error?.code === "vibe64_assistant_catalog_stale" && error.statusCode === 409
   );
   assert.equal(harness.verifyConnectionCalls.length, 0);
+
+  await harness.controller.verifyConnection({
+    apiKey: "zen-key",
+    engineId: "opencode",
+    modelId: "new-live-model",
+    modelProviderId: "opencode"
+  });
+  assert.equal(harness.verifyConnectionCalls.length, 1);
+  assert.equal(harness.verifyConnectionCalls[0].modelId, "new-live-model");
 });
 
 test("OpenCode connections use native provider routing when no URL override exists", async (t) => {

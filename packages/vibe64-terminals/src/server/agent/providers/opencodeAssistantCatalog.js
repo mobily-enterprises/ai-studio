@@ -8,6 +8,7 @@ import {
 
 const OPENCODE_CAPABILITY_PAGE_LIMIT = 25;
 const OPENCODE_CAPABILITY_PAGE_LIMIT_MAXIMUM = 100;
+const OPENCODE_ZEN_PROVIDER_ID = "opencode";
 
 function text(value = "") {
   return String(value ?? "").trim();
@@ -223,8 +224,15 @@ function normalizedProvider(
     .map(normalizedModel)
     .filter((model) => model.id)
     .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
+  const upstreamModelById = new Map(upstreamModels.map((model) => [model.id, model]));
   const currentModels = currentModelIds instanceof Set
-    ? upstreamModels.filter((model) => currentModelIds.has(model.id))
+    ? [...currentModelIds]
+      .map((modelId) => upstreamModelById.get(modelId) || normalizedModel({
+        id: modelId,
+        name: modelId,
+        status: "active"
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id))
     : upstreamModels;
   const models = currentModels.map((model) => (
     accessRestricted && !enabledModelIds.has(model.id) && model.status === "available"
@@ -260,6 +268,7 @@ function normalizedProvider(
   const stale = Boolean(
     connection &&
     connection.builtIn !== true &&
+    id !== OPENCODE_ZEN_PROVIDER_ID &&
     connection.providerRevision !== definitionRevision
   );
   return {

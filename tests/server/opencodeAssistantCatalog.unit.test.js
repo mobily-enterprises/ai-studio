@@ -171,7 +171,7 @@ test("Zen exposes only current live models and a real key unlocks all of them", 
       all: [zen],
       default: { opencode: "opencode-model-01" }
     },
-    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
+    zenModelIds: ["big-pickle", "live-model-without-native-metadata", "opencode-model-01", "opencode-model-02"]
   });
   const connected = openCodeAssistantCapabilities({
     agents,
@@ -194,7 +194,7 @@ test("Zen exposes only current live models and a real key unlocks all of them", 
       all: [zen],
       default: { opencode: "opencode-model-01" }
     },
-    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
+    zenModelIds: ["big-pickle", "live-model-without-native-metadata", "opencode-model-01", "opencode-model-02"]
   });
   const row = connected.modelProviders[0];
 
@@ -207,6 +207,7 @@ test("Zen exposes only current live models and a real key unlocks all of them", 
   assert.equal(row.models.find(({ id }) => id === "big-pickle").status, "available");
   assert.equal(row.models.find(({ id }) => id === "opencode-model-01").status, "locked");
   assert.equal(row.models.find(({ id }) => id === "opencode-model-01").lockMessage, "Add a Zen key.");
+  assert.equal(row.models.find(({ id }) => id === "live-model-without-native-metadata").status, "locked");
   assert.equal(row.models.some(({ id }) => id === "removed-model"), false);
   assert.equal(connected.defaults.modelProviderId, "opencode");
   assert.equal(connected.defaults.modelId, "big-pickle");
@@ -231,10 +232,11 @@ test("Zen exposes only current live models and a real key unlocks all of them", 
       all: [zen],
       default: { opencode: "opencode-model-01" }
     },
-    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
+    zenModelIds: ["big-pickle", "live-model-without-native-metadata", "opencode-model-01", "opencode-model-02"]
   });
   assert.equal(checked.modelProviders[0].models.find(({ id }) => id === "opencode-model-01").status, "available");
   assert.equal(checked.modelProviders[0].models.find(({ id }) => id === "opencode-model-02").status, "locked");
+  assert.equal(checked.modelProviders[0].models.find(({ id }) => id === "live-model-without-native-metadata").status, "locked");
 
   const unlocked = openCodeAssistantCapabilities({
     agents,
@@ -254,7 +256,7 @@ test("Zen exposes only current live models and a real key unlocks all of them", 
       all: [zen],
       default: { opencode: "opencode-model-01" }
     },
-    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
+    zenModelIds: ["big-pickle", "live-model-without-native-metadata", "opencode-model-01", "opencode-model-02"]
   });
   assert.equal(unlocked.modelProviders[0].models.every(({ status }) => status === "available"), true);
 });
@@ -387,6 +389,43 @@ test("OpenCode catalog requires reconfirmation when a live provider definition c
   assert.equal(stale.modelProviders[0].connectionStatus, "reconfirmation-required");
   assert.notEqual(stale.modelProviders[0].definitionRevision, definitionRevision);
   assert.notEqual(stale.revision, connected.revision);
+});
+
+test("Zen model rotation does not disconnect its saved key or Big Pickle", () => {
+  const zen = provider("opencode", { modelCount: 3, name: "OpenCode Zen" });
+  zen.models["big-pickle"] = {
+    capabilities: { reasoning: true, toolcall: true },
+    family: "GLM",
+    id: "big-pickle",
+    name: "Big Pickle",
+    status: "active"
+  };
+  const result = openCodeAssistantCapabilities({
+    agents,
+    connections: [{
+      economyModelId: "big-pickle",
+      fingerprint: "sha256:key-a",
+      modelAccess: {
+        enabledModelIds: ["big-pickle"],
+        mode: "verified",
+        recommendedModelId: "big-pickle"
+      },
+      modelProviderId: "opencode",
+      providerRevision: `sha256:${"0".repeat(64)}`
+    }],
+    input: { connectedOnly: "true" },
+    providers: {
+      all: [zen],
+      default: { opencode: "big-pickle" }
+    },
+    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
+  });
+
+  assert.equal(result.modelProviders.length, 1);
+  assert.equal(result.modelProviders[0].connected, true);
+  assert.equal(result.modelProviders[0].connectionStatus, "connected");
+  assert.equal(result.modelProviders[0].defaultModelId, "big-pickle");
+  assert.equal(result.modelProviders[0].models.find(({ id }) => id === "big-pickle").status, "available");
 });
 
 test("OpenCode includes API-key compatibility in provider definition revisions", () => {

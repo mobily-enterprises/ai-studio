@@ -35,6 +35,8 @@ const OPENCODE_STOP_TIMEOUT_MS = 3_000;
 const OPENCODE_ZEN_CATALOG_LIMIT_BYTES = 2 * 1024 * 1024;
 const OPENCODE_ZEN_CATALOG_TIMEOUT_MS = 5_000;
 const OPENCODE_ZEN_MODELS_URL = "https://opencode.ai/zen/v1/models";
+const OPENCODE_ZEN_PROVIDER_ID = "opencode";
+const OPENCODE_ZEN_PUBLIC_API_KEY = "public";
 const OPENCODE_SESSION_ENVIRONMENT_PLUGIN_URL = new URL(
   "./opencodeSessionEnvironmentPlugin.js",
   import.meta.url
@@ -606,6 +608,18 @@ async function readOpenCodeCatalog({
   if (!text(privateRoot) || !text(workdir)) {
     throw new TypeError("OpenCode catalogue reads require private and working roots.");
   }
+  const authRoot = path.join(normalizedPrivateRoot, "data", "opencode");
+  await mkdir(authRoot, { mode: 0o700, recursive: true });
+  await writeFile(
+    path.join(authRoot, "auth.json"),
+    `${JSON.stringify({
+      [OPENCODE_ZEN_PROVIDER_ID]: {
+        key: OPENCODE_ZEN_PUBLIC_API_KEY,
+        type: "api"
+      }
+    })}\n`,
+    { mode: 0o600 }
+  );
   const server = await createServerProcess({
     cacheRoot,
     command,
