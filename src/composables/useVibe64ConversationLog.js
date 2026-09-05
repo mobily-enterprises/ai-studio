@@ -336,6 +336,24 @@ function conversationLogRecoveryStateKey(session = {}) {
   ].map((value) => String(value || "").trim()).join("|");
 }
 
+function conversationLogCompletedTurnKey(session = {}) {
+  const source = isRecord(session) ? session : {};
+  const turn = isRecord(source.agentSession?.turn) ? source.agentSession.turn : {};
+  const sessionId = String(source.sessionId || "").trim();
+  const turnId = String(turn.id || "").trim();
+  const revision = Number(source.revision);
+  if (
+    !sessionId ||
+    !turnId ||
+    turn.active !== false ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0
+  ) {
+    return "";
+  }
+  return `${sessionId}|${revision}|${turnId}`;
+}
+
 function useVibe64ConversationLog({
   active = true,
   session
@@ -386,6 +404,7 @@ function useVibe64ConversationLog({
   let reloadInFlight = null;
   let reloadQueued = false;
   let recoveredErrorKey = "";
+  let realtimeCompletionKey = "";
 
   async function reloadConversationLog() {
     if (reloadInFlight) {
@@ -462,6 +481,7 @@ function useVibe64ConversationLog({
     event: VIBE64_SESSION_CHANGED_EVENT,
     matches: (context) => conversationLogRealtimeShouldRefresh(context, sessionId.value),
     onEvent: ({ payload = {} } = {}) => {
+      realtimeCompletionKey = conversationLogCompletedTurnKey(payload) || realtimeCompletionKey;
       vibe64SessionDebugLog("client.conversationLog.realtime", {
         hasPatch: Boolean(conversationLogRealtimePatch(payload)),
         reason: String(payload.reason || ""),
@@ -475,6 +495,26 @@ function useVibe64ConversationLog({
   });
 
   const recoveryStateKey = computed(() => conversationLogRecoveryStateKey(currentSession.value));
+  const completedTurnKey = computed(() => conversationLogCompletedTurnKey(currentSession.value));
+  watch(completedTurnKey, (key) => {
+    if (!enabled.value || !key) {
+      return;
+    }
+    if (key === realtimeCompletionKey) {
+      realtimeCompletionKey = "";
+      return;
+    }
+    vibe64SessionDebugLog("client.conversationLog.completion.reconcile", {
+      completedTurnKey: key,
+      sessionId: sessionId.value
+    });
+    void reloadConversationLog().catch(() => {
+      // The ordinary resource error recovery below retries against later
+      // canonical session revisions without discarding the mounted history.
+    });
+  }, {
+    flush: "post"
+  });
   const recoveryErrorKey = computed(() => [
     enabled.value ? "enabled" : "disabled",
     sessionId.value,
@@ -612,6 +652,7 @@ function useVibe64ConversationLog({
 
 export {
   applyConversationLogPatch,
+  conversationLogCompletedTurnKey,
   conversationLogRealtimePatch,
   conversationLogRecoveryStateKey,
   conversationLogRealtimeShouldRefresh,

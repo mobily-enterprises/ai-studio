@@ -34,6 +34,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-terminals/src/server/sessionPromptHints.js`
 - `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
+- `src/composables/useVibe64ConversationLog.js`
 - `src/composables/useVibe64PromptHints.js`
 - `src/components/studio/Vibe64CodexSession.vue`
 - `src/components/studio/Vibe64InteractiveTerminal.vue`
@@ -56,6 +57,10 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+When canonical session state reports a completed turn that was not observed
+through realtime conversation delivery, the mounted conversation rereads its
+durable history. A missed notification therefore cannot leave a completed
+answer absent until the person sends another message.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
 Sent attachments remain distinct from the person's message as compact,

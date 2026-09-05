@@ -1,7 +1,65 @@
-import { describe, expect, it } from "vitest";
+import { effectScope, nextTick, ref } from "vue";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const endpointMocks = vi.hoisted(() => ({
+  resource: null,
+  useEndpointResource: vi.fn()
+}));
+const queryMocks = vi.hoisted(() => ({
+  getQueryData: vi.fn(),
+  setQueryData: vi.fn()
+}));
+const realtimeMocks = vi.hoisted(() => ({
+  events: [],
+  socket: {
+    off: vi.fn(),
+    on: vi.fn()
+  }
+}));
+
+vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
+  useEndpointResource: endpointMocks.useEndpointResource
+}));
+
+vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
+  getHttpWebClient() {
+    return { request: vi.fn() };
+  }
+}));
+
+vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
+  useRealtimeEvent(options) {
+    realtimeMocks.events.push(options);
+    return options;
+  },
+  useRealtimeSocket() {
+    return realtimeMocks.socket;
+  }
+}));
+
+vi.mock("@jskit-ai/shell-web/client/navigation/usePaths", () => ({
+  usePaths() {
+    return {
+      api: () => "/api/vibe64/sessions"
+    };
+  }
+}));
+
+vi.mock("@tanstack/vue-query", () => ({
+  useQueryClient() {
+    return queryMocks;
+  }
+}));
+
+vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
+  useVibe64ProjectSlug() {
+    return ref("project-a");
+  }
+}));
 
 import {
   applyConversationLogPatch,
+  conversationLogCompletedTurnKey,
   conversationLogReadQuery,
   conversationLogRealtimePatch,
   conversationLogRecoveryStateKey,
@@ -9,10 +67,29 @@ import {
   mergeConversationLogPages,
   normalizeConversationLog,
   normalizeConversationLogPage,
-  sessionIsAwaitingCodex
+  sessionIsAwaitingCodex,
+  useVibe64ConversationLog
 } from "../../src/composables/useVibe64ConversationLog.js";
 
 describe("useVibe64ConversationLog", () => {
+  beforeEach(() => {
+    endpointMocks.resource = {
+      data: ref({
+        conversationLog: [],
+        ok: true
+      }),
+      isLoading: ref(false),
+      loadError: ref(""),
+      reload: vi.fn(async () => null)
+    };
+    endpointMocks.useEndpointResource.mockReset();
+    endpointMocks.useEndpointResource.mockReturnValue(endpointMocks.resource);
+    queryMocks.getQueryData.mockReset();
+    queryMocks.setQueryData.mockReset();
+    realtimeMocks.events.length = 0;
+    realtimeMocks.socket.off.mockReset();
+    realtimeMocks.socket.on.mockReset();
+  });
   it("builds conversation-log page queries from the shared page limit", () => {
     expect(conversationLogReadQuery()).toEqual({
       limit: "20"
@@ -393,6 +470,102 @@ describe("useVibe64ConversationLog", () => {
       status: "active",
       updatedAt: "2026-08-14T10:00:00.000Z"
     })).toBe("session-1|active|7|2026-08-14T10:00:00.000Z|active|turn-1");
+  });
+
+  it("identifies a canonical completed turn for durable-history reconciliation", () => {
+    expect(conversationLogCompletedTurnKey({
+      agentSession: {
+        turn: {
+          active: false,
+          id: "turn-1"
+        }
+      },
+      revision: 8,
+      sessionId: "session-1"
+    })).toBe("session-1|8|turn-1");
+
+    expect(conversationLogCompletedTurnKey({
+      agentSession: {
+        turn: {
+          active: true,
+          id: "turn-1"
+        }
+      },
+      revision: 7,
+      sessionId: "session-1"
+    })).toBe("");
+
+    expect(conversationLogCompletedTurnKey({
+      revision: 8,
+      sessionId: "session-1"
+    })).toBe("");
+  });
+
+  it("reloads durable history when canonical state completes a turn missed by realtime", async () => {
+    const scope = effectScope();
+    const session = ref({
+      agentSession: {
+        turn: {
+          active: true,
+          id: "turn-1"
+        }
+      },
+      revision: 7,
+      sessionId: "session-1"
+    });
+    scope.run(() => useVibe64ConversationLog({ session }));
+
+    session.value = {
+      agentSession: {
+        turn: {
+          active: false,
+          id: "turn-1"
+        }
+      },
+      revision: 8,
+      sessionId: "session-1"
+    };
+    await nextTick();
+
+    expect(endpointMocks.resource.reload).toHaveBeenCalledTimes(1);
+    scope.stop();
+  });
+
+  it("does not duplicate the reload when realtime delivered the completed turn", async () => {
+    const scope = effectScope();
+    const session = ref({
+      agentSession: {
+        turn: {
+          active: true,
+          id: "turn-1"
+        }
+      },
+      revision: 7,
+      sessionId: "session-1"
+    });
+    scope.run(() => useVibe64ConversationLog({ session }));
+    const completionPayload = {
+      agentSession: {
+        turn: {
+          active: false,
+          id: "turn-1"
+        }
+      },
+      reason: "opencode-server-turn-idle",
+      revision: 8,
+      sessionId: "session-1"
+    };
+    const completionListener = realtimeMocks.events.find((listener) => (
+      listener.matches({ payload: completionPayload })
+    ));
+
+    const realtimeReload = completionListener.onEvent({ payload: completionPayload });
+    session.value = completionPayload;
+    await realtimeReload;
+    await nextTick();
+
+    expect(endpointMocks.resource.reload).toHaveBeenCalledTimes(1);
+    scope.stop();
   });
 
   it("refreshes only for selected-session events that can change durable chat text", () => {
