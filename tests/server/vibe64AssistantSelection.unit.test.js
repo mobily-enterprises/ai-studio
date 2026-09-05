@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -59,8 +60,10 @@ test("assistant capabilities preserve preferred-provider and locked-model guidan
     builtIn: true,
     modelAccess: {
       configurable: true,
+      enabledModelIds: ["deepseek-chat"],
       label: "Unlock all models",
-      mode: "recommended",
+      managementOnly: true,
+      mode: "verified",
       recommendedModelId: "deepseek-chat",
       warning: "Paid credit is required."
     },
@@ -79,7 +82,9 @@ test("assistant capabilities preserve preferred-provider and locked-model guidan
 
   assert.equal(defined.modelProviders[0].builtIn, true);
   assert.equal(defined.modelProviders[0].preferred, true);
-  assert.equal(defined.modelProviders[0].modelAccess.mode, "recommended");
+  assert.deepEqual(defined.modelProviders[0].modelAccess.enabledModelIds, ["deepseek-chat"]);
+  assert.equal(defined.modelProviders[0].modelAccess.managementOnly, true);
+  assert.equal(defined.modelProviders[0].modelAccess.mode, "verified");
   assert.equal(defined.modelProviders[0].models[1].lockMessage, "Unlock paid models first.");
   assert.throws(
     () => resolveVibe64AssistantSelection(value, {
@@ -186,4 +191,16 @@ test("assistant capability documents reject duplicate upstream ids", () => {
     })),
     /Duplicate assistant agent/u
   );
+});
+
+test("the session model selector uses autocomplete only for long lists", async () => {
+  const source = await readFile(new URL(
+    "../../src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue",
+    import.meta.url
+  ), "utf8");
+
+  assert.match(source, /<v-autocomplete[\s\S]*v-if="modelRows\.length > 6"/u);
+  assert.match(source, /v-else-if="modelRows\.length"[\s\S]*v-for="model in modelRows"/u);
+  assert.match(source, /model\.status !== "available"/u);
+  assert.match(source, /!modelAccess\.managementOnly/u);
 });

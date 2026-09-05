@@ -202,18 +202,32 @@ function normalizedModel(model = {}) {
   };
 }
 
-function normalizedProvider(provider = {}, connectionById = new Map(), defaultModelId = "") {
+function normalizedProvider(
+  provider = {},
+  connectionById = new Map(),
+  defaultModelId = "",
+  currentModelIds = null
+) {
   const id = text(provider.id);
   const connection = connectionById.get(id);
   const modelAccess = record(connection?.modelAccess);
   const recommendedModelId = text(modelAccess.recommendedModelId);
-  const accessRestricted = modelAccess.mode === "recommended" && recommendedModelId;
+  const accessRestricted = ["recommended", "verified"].includes(text(modelAccess.mode));
+  const enabledModelIds = new Set((Array.isArray(modelAccess.enabledModelIds)
+    ? modelAccess.enabledModelIds
+    : []).map(text).filter(Boolean));
+  if (recommendedModelId) {
+    enabledModelIds.add(recommendedModelId);
+  }
   const upstreamModels = Object.values(record(provider.models))
     .map(normalizedModel)
     .filter((model) => model.id)
     .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
-  const models = upstreamModels.map((model) => (
-    accessRestricted && model.id !== recommendedModelId && model.status === "available"
+  const currentModels = currentModelIds instanceof Set
+    ? upstreamModels.filter((model) => currentModelIds.has(model.id))
+    : upstreamModels;
+  const models = currentModels.map((model) => (
+    accessRestricted && !enabledModelIds.has(model.id) && model.status === "available"
       ? {
         ...model,
         lockMessage: text(modelAccess.warning) || "This model needs additional provider access.",
@@ -291,15 +305,20 @@ function openCodeAssistantCapabilities({
   agents: agentRows = [],
   connections = [],
   input = {},
-  providers: providerResult = {}
+  providers: providerResult = {},
+  zenModelIds = null
 } = {}) {
   const normalizedConnectionRows = normalizedConnections(connections);
   const connectionById = new Map(normalizedConnectionRows.map((connection) => [connection.id, connection]));
+  const currentZenModelIds = Array.isArray(zenModelIds)
+    ? new Set(zenModelIds.map(text).filter(Boolean))
+    : null;
   const providers = (Array.isArray(providerResult?.all) ? providerResult.all : [])
     .map((provider) => normalizedProvider(
       provider,
       connectionById,
-      providerResult?.default?.[text(provider?.id)]
+      providerResult?.default?.[text(provider?.id)],
+      text(provider?.id) === "opencode" ? currentZenModelIds : null
     ))
     .filter((provider) => provider.id)
     .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));

@@ -475,5 +475,6 @@ function createOpenCodeServerClient({
 
 export {
   OPENCODE_RESPONSE_LIMIT_BYTES,
-  createOpenCodeServerClient
+  createOpenCodeServerClient,
+  readBoundedResponse
 };

@@ -178,10 +178,19 @@ function normalizedModel(value = {}) {
 function normalizedModelAccess(value = {}) {
   const input = record(value);
   const mode = text(input.mode);
+  const enabledModelIds = [...new Set((Array.isArray(input.enabledModelIds)
+    ? input.enabledModelIds
+    : []).map((modelId) => boundedIdentifier(
+    modelId,
+    "modelProvider.modelAccess.enabledModelIds",
+    { maxLength: 256 }
+  )))];
   return Object.freeze({
     configurable: input.configurable === true,
+    enabledModelIds: Object.freeze(enabledModelIds),
     label: text(input.label),
-    mode: mode === "recommended" ? "recommended" : "all",
+    managementOnly: input.managementOnly === true,
+    mode: ["recommended", "verified"].includes(mode) ? mode : "all",
     recommendedModelId: boundedIdentifier(
       input.recommendedModelId,
       "modelProvider.modelAccess.recommendedModelId",

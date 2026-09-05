@@ -51,15 +51,24 @@ compatible, but never raw environment names, credentials, request options,
 headers, costs, or upstream connection state. Malformed and empty registries
 fail instead of becoming an authoritative empty catalogue.
 
+For OpenCode Zen, Vibe64 also reads Zen's official public `/v1/models` endpoint
+and intersects those current ids with the pinned runtime's sanitized metadata.
+The bounded request sends no provider credential, and a failed or malformed
+response remains a retryable catalogue failure instead of exposing stale Zen
+models. This live Zen result shares the existing short-lived catalogue cache;
+it is loaded only by explicit full-catalogue operations, never by opening or
+creating a session or sending its first message.
+
 The host may contribute redacted connection metadata that marks a connection
 as built in, identifies the preferred new-session provider, and restricts it to
-one recommended model. The sanitized catalogue keeps other live models visible
-with a locked status and host-supplied explanation, while selection resolution
-accepts only available models. A generic owner-authenticated model-access
-operation delegates a warned unlock or relock to the host; public Vibe64 does
-not name a private provider policy or store provider credentials. Runtime
-admission remains a separate host check, so a durable selection cannot bypass a
-later relock.
+one recommended model or a finite enabled-model allowlist. The sanitized
+catalogue keeps other live models visible with a locked status and host-supplied
+explanation, while selection resolution accepts only available models. A
+generic owner-authenticated model-access operation delegates a warned unlock or
+relock to the host; a host may reserve more involved account-management actions
+for its own management surface. Public Vibe64 does not name a private provider
+policy or store provider credentials. Runtime admission remains a separate host
+check, so a durable selection cannot bypass a later restriction.
 
 The short-lived credential-free catalogue snapshot is independent of
 credential-bearing assistant runtimes. Replacing or removing a connection
@@ -67,8 +76,9 @@ still retires those runtimes, but does not discard an unexpired catalogue and
 force an otherwise redundant cold discovery.
 
 A host may ask Vibe64 to verify one exact OpenCode provider, model, and API key.
-Vibe64 first checks that provider and model against the same current native
-catalogue, then runs one finite, tool-free request with a tiny output allowance
+Vibe64 first checks that provider and model against the same current catalogue,
+including Zen's live model ids for the native Zen provider, then runs one
+finite, tool-free request with a tiny output allowance
 in isolated temporary credential storage. Provider rejection is distinct from
 a stale catalogue or unavailable managed execution, error details do not expose
 the submitted secret, and the temporary credential state is removed on every

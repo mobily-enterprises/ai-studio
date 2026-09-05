@@ -14,9 +14,43 @@ import {
   createOpenCodeServerProcess,
   openCodeInlineConfig,
   readOpenCodeCatalog,
+  readOpenCodeZenModelIds,
   safeOpenCodeEnvironment,
   verifyOpenCodeApiKey
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
+
+test("OpenCode Zen discovery reads its current public model ids without credentials", async () => {
+  const requests = [];
+  const ids = await readOpenCodeZenModelIds({
+    async fetchImpl(url, options = {}) {
+      requests.push({ options, url: String(url) });
+      return new Response(JSON.stringify({
+        data: [
+          { id: "mimo-v2.5-free", object: "model" },
+          { id: "big-pickle", object: "model" }
+        ]
+      }), { status: 200 });
+    }
+  });
+
+  assert.deepEqual(ids, ["big-pickle", "mimo-v2.5-free"]);
+  assert.equal(requests[0].url, "https://opencode.ai/zen/v1/models");
+  assert.deepEqual(requests[0].options.headers, { accept: "application/json" });
+  assert.equal(Object.hasOwn(requests[0].options.headers, "authorization"), false);
+
+  await assert.rejects(
+    () => readOpenCodeZenModelIds({
+      async fetchImpl() {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+    }),
+    (error) => (
+      error?.code === "vibe64_opencode_zen_catalog_unavailable" &&
+      error?.retryable === true &&
+      error?.statusCode === 503
+    )
+  );
+});
 
 test("OpenCode cold catalog reads the complete provider API and proves process exit", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-opencode-cold-catalog-"));

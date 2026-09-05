@@ -109,7 +109,8 @@ async function controllerHarness({
   realAttachedTerminal = false,
   serverStartGate = null,
   serverStartErrors = [],
-  withCommandBoundary = false
+  withCommandBoundary = false,
+  zenModelIds = null
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
   const sourceRoot = path.join(root, "sessions", "active", "session-1", "source");
@@ -430,6 +431,10 @@ async function controllerHarness({
       processStarts.push(started);
       return started;
     },
+    async readZenModelsCommand() {
+      const zen = catalogProviders.all.find((provider) => provider.id === "opencode");
+      return Array.isArray(zenModelIds) ? zenModelIds : Object.keys(zen?.models || {});
+    },
     async listConnections() {
       listConnectionCalls += 1;
       return [{
@@ -605,6 +610,49 @@ test("OpenCode exposes a finite connection verifier through its controller", asy
     (error) => error?.code === "vibe64_assistant_catalog_stale" && error.statusCode === 409
   );
   assert.equal(harness.verifyConnectionCalls.length, 1);
+});
+
+test("OpenCode refuses to verify a Zen model missing from Zen's current model list", async (t) => {
+  const zen = {
+    id: "opencode",
+    models: {
+      "big-pickle": {
+        free: true,
+        id: "big-pickle",
+        name: "Big Pickle",
+        status: "active"
+      },
+      "removed-model": {
+        free: true,
+        id: "removed-model",
+        name: "Removed model",
+        status: "active"
+      }
+    },
+    name: "OpenCode Zen"
+  };
+  const harness = await controllerHarness({
+    catalogProviders: {
+      all: [zen],
+      default: { opencode: "big-pickle" }
+    },
+    zenModelIds: ["big-pickle"]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+
+  await assert.rejects(
+    () => harness.controller.verifyConnection({
+      apiKey: "zen-key",
+      engineId: "opencode",
+      modelId: "removed-model",
+      modelProviderId: "opencode"
+    }),
+    (error) => error?.code === "vibe64_assistant_catalog_stale" && error.statusCode === 409
+  );
+  assert.equal(harness.verifyConnectionCalls.length, 0);
 });
 
 test("OpenCode connections use native provider routing when no URL override exists", async (t) => {

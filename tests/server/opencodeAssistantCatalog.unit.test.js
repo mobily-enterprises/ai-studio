@@ -149,8 +149,15 @@ test("configured OpenCode choices put the host-preferred free provider first", (
   assert.equal(result.defaults.modelId, "glm-4.7-flash");
 });
 
-test("built-in and free-only connections keep recommended models available and lock the rest", () => {
+test("Zen exposes only current live models and a real key unlocks all of them", () => {
   const zen = provider("opencode", { name: "OpenCode Zen" });
+  zen.models["removed-model"] = {
+    capabilities: { reasoning: true, toolcall: true },
+    family: "retired",
+    id: "removed-model",
+    name: "Removed model",
+    status: "active"
+  };
   zen.models["big-pickle"] = {
     capabilities: { reasoning: true, toolcall: true },
     family: "GLM",
@@ -163,7 +170,8 @@ test("built-in and free-only connections keep recommended models available and l
     providers: {
       all: [zen],
       default: { opencode: "opencode-model-01" }
-    }
+    },
+    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
   });
   const connected = openCodeAssistantCapabilities({
     agents,
@@ -185,7 +193,8 @@ test("built-in and free-only connections keep recommended models available and l
     providers: {
       all: [zen],
       default: { opencode: "opencode-model-01" }
-    }
+    },
+    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
   });
   const row = connected.modelProviders[0];
 
@@ -198,8 +207,34 @@ test("built-in and free-only connections keep recommended models available and l
   assert.equal(row.models.find(({ id }) => id === "big-pickle").status, "available");
   assert.equal(row.models.find(({ id }) => id === "opencode-model-01").status, "locked");
   assert.equal(row.models.find(({ id }) => id === "opencode-model-01").lockMessage, "Add a Zen key.");
+  assert.equal(row.models.some(({ id }) => id === "removed-model"), false);
   assert.equal(connected.defaults.modelProviderId, "opencode");
   assert.equal(connected.defaults.modelId, "big-pickle");
+
+  const checked = openCodeAssistantCapabilities({
+    agents,
+    connections: [{
+      connected: true,
+      economyModelId: "big-pickle",
+      fingerprint: "sha256:real-key",
+      modelAccess: {
+        configurable: true,
+        enabledModelIds: ["big-pickle", "opencode-model-01"],
+        managementOnly: true,
+        mode: "verified",
+        recommendedModelId: "big-pickle"
+      },
+      modelProviderId: "opencode",
+      providerRevision: disconnected.modelProviders[0].definitionRevision
+    }],
+    providers: {
+      all: [zen],
+      default: { opencode: "opencode-model-01" }
+    },
+    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
+  });
+  assert.equal(checked.modelProviders[0].models.find(({ id }) => id === "opencode-model-01").status, "available");
+  assert.equal(checked.modelProviders[0].models.find(({ id }) => id === "opencode-model-02").status, "locked");
 
   const unlocked = openCodeAssistantCapabilities({
     agents,
@@ -218,7 +253,8 @@ test("built-in and free-only connections keep recommended models available and l
     providers: {
       all: [zen],
       default: { opencode: "opencode-model-01" }
-    }
+    },
+    zenModelIds: ["big-pickle", "opencode-model-01", "opencode-model-02"]
   });
   assert.equal(unlocked.modelProviders[0].models.every(({ status }) => status === "available"), true);
 });

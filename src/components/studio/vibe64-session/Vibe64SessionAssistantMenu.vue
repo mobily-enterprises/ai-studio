@@ -102,7 +102,21 @@
 
         <section aria-label="Model" class="vibe64-session-assistant-menu__section">
           <div class="vibe64-session-assistant-menu__label">Model</div>
-          <div v-if="modelRows.length" class="vibe64-session-assistant-menu__options">
+          <v-autocomplete
+            v-if="modelRows.length > 6"
+            auto-select-first="exact"
+            hide-details
+            :items="modelAutocompleteItems"
+            item-props="props"
+            item-title="label"
+            item-value="id"
+            label="Choose model"
+            :model-value="modelId"
+            no-data-text="No matching models"
+            variant="outlined"
+            @update:model-value="selectModel"
+          />
+          <div v-else-if="modelRows.length" class="vibe64-session-assistant-menu__options">
             <v-btn
               v-for="model in modelRows"
               :key="model.id"
@@ -133,7 +147,7 @@
           </div>
           <span v-else class="vibe64-session-assistant-menu__empty">No available models.</span>
           <small
-            v-if="modelAccess.configurable && !modelAccessUnlocked"
+            v-if="modelAccess.configurable && !modelAccess.managementOnly && !modelAccessUnlocked"
             class="vibe64-session-assistant-menu__locked-note"
           >
             <v-icon :icon="mdiLockOutline" size="14" />
@@ -142,7 +156,7 @@
         </section>
 
         <section
-          v-if="modelAccess.configurable"
+          v-if="modelAccess.configurable && !modelAccess.managementOnly"
           aria-label="Provider model access"
           class="vibe64-session-assistant-menu__section"
         >
@@ -383,6 +397,16 @@ const modelProvider = computed(() => (
   )) || null
 ));
 const modelRows = computed(() => modelProvider.value?.models || []);
+const modelAutocompleteItems = computed(() => modelRows.value.map((model) => ({
+  ...model,
+  props: {
+    disabled: model.status !== "available",
+    ...(model.status === "available" ? {} : {
+      appendIcon: mdiLockOutline,
+      subtitle: model.lockMessage || "This model is not available."
+    })
+  }
+})));
 const availableModels = computed(() => (
   modelRows.value.filter((model) => model.status === "available")
 ));
@@ -523,7 +547,9 @@ function selectProvider(value = "") {
 
 function selectModel(value = "") {
   if (props.changesDisabled) return;
-  modelId.value = String(value || "");
+  const id = String(value || "");
+  if (!modelRows.value.some((model) => model.id === id && model.status === "available")) return;
+  modelId.value = id;
   agentId.value = "";
   variantId.value = "";
 }

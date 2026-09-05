@@ -46,6 +46,7 @@ import {
   OPENCODE_ECONOMY_AGENT_ID,
   createOpenCodeServerProcess,
   readOpenCodeCatalog,
+  readOpenCodeZenModelIds,
   verifyOpenCodeApiKey
 } from "./opencodeServerProcess.js";
 import {
@@ -548,6 +549,7 @@ function createOpenCodeTerminalController({
   projectService,
   publishSessionChanged = async () => null,
   readCatalogCommand = readOpenCodeCatalog,
+  readZenModelsCommand = readOpenCodeZenModelIds,
   recordGitActor = recordSessionGitCommandActor,
   resolveConnection = async () => null,
   verifyConnectionCommand = verifyOpenCodeApiKey
@@ -799,17 +801,17 @@ function createOpenCodeTerminalController({
       return catalogRead;
     }
     catalogRead = Promise.resolve().then(async () => {
-      let catalog = null;
-      if (sharedProcess) {
-        const server = sharedProcess.server;
-        const [providers, agents] = await Promise.all([
-          server.client.providers({ directory: server.workdir }),
-          server.client.agents({ directory: server.workdir })
-        ]);
-        catalog = { agents, providers };
-      } else {
+      const nativeCatalog = async () => {
+        if (sharedProcess) {
+          const server = sharedProcess.server;
+          const [providers, agents] = await Promise.all([
+            server.client.providers({ directory: server.workdir }),
+            server.client.agents({ directory: server.workdir })
+          ]);
+          return { agents, providers };
+        }
         const roots = sharedRoots();
-        catalog = await readCatalogCommand({
+        return readCatalogCommand({
           cacheRoot: roots.cacheRoot,
           command,
           createServerProcess,
@@ -817,11 +819,16 @@ function createOpenCodeTerminalController({
           privateRoot: path.join(roots.root, `catalog-${randomUUID()}`),
           workdir: roots.workdir
         });
-      }
+      };
+      const [catalog, zenModelIds] = await Promise.all([
+        nativeCatalog(),
+        readZenModelsCommand()
+      ]);
       catalogSnapshot = {
         agents: catalog.agents,
         providers: catalog.providers,
-        readAt: Date.now()
+        readAt: Date.now(),
+        zenModelIds
       };
       return catalogSnapshot;
     });
@@ -852,7 +859,8 @@ function createOpenCodeTerminalController({
       agents: catalog.agents,
       connections,
       input,
-      providers: catalog.providers
+      providers: catalog.providers,
+      zenModelIds: catalog.zenModelIds
     });
   }
 
@@ -872,7 +880,15 @@ function createOpenCodeTerminalController({
       .find((candidate) => text(candidate?.id) === modelProviderId);
     const providerModels = record(provider?.models);
     const model = Object.hasOwn(providerModels, modelId) ? providerModels[modelId] : null;
-    if (!provider || !model || text(model.status) === "deprecated") {
+    const currentZenModelIds = new Set(Array.isArray(catalog.zenModelIds)
+      ? catalog.zenModelIds
+      : []);
+    if (
+      !provider ||
+      !model ||
+      text(model.status) === "deprecated" ||
+      (modelProviderId === "opencode" && !currentZenModelIds.has(modelId))
+    ) {
       throw openCodeError(
         "vibe64_assistant_catalog_stale",
         "The selected OpenCode provider model is no longer available. Refresh the provider catalogue and try again.",

@@ -17,7 +17,10 @@ import {
   stopVibe64Execution
 } from "@local/vibe64-execution/server";
 
-import { createOpenCodeServerClient } from "./opencodeServerClient.js";
+import {
+  createOpenCodeServerClient,
+  readBoundedResponse
+} from "./opencodeServerClient.js";
 
 const OPENCODE_EXPECTED_VERSION = "1.18.22";
 const OPENCODE_ECONOMY_AGENT_ID = "vibe64-economy";
@@ -29,6 +32,9 @@ const OPENCODE_VERIFY_OUTPUT_TOKEN_MAX = 16;
 const OPENCODE_VERIFY_TIMEOUT_MS = 30_000;
 const OPENCODE_READY_TIMEOUT_MS = 30_000;
 const OPENCODE_STOP_TIMEOUT_MS = 3_000;
+const OPENCODE_ZEN_CATALOG_LIMIT_BYTES = 2 * 1024 * 1024;
+const OPENCODE_ZEN_CATALOG_TIMEOUT_MS = 5_000;
+const OPENCODE_ZEN_MODELS_URL = "https://opencode.ai/zen/v1/models";
 const OPENCODE_SESSION_ENVIRONMENT_PLUGIN_URL = new URL(
   "./opencodeSessionEnvironmentPlugin.js",
   import.meta.url
@@ -68,6 +74,53 @@ const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
 
 function text(value = "") {
   return String(value ?? "").trim();
+}
+
+function openCodeZenCatalogError(cause = null) {
+  const error = new Error("OpenCode Zen's current model list could not be read. Try again.", {
+    cause
+  });
+  error.code = "vibe64_opencode_zen_catalog_unavailable";
+  error.retryable = true;
+  error.statusCode = 503;
+  return error;
+}
+
+async function readOpenCodeZenModelIds({
+  fetchImpl = globalThis.fetch,
+  timeoutMs = OPENCODE_ZEN_CATALOG_TIMEOUT_MS
+} = {}) {
+  if (typeof fetchImpl !== "function") {
+    throw new TypeError("OpenCode Zen catalogue reads require fetch().");
+  }
+  try {
+    const response = await fetchImpl(OPENCODE_ZEN_MODELS_URL, {
+      headers: { accept: "application/json" },
+      method: "GET",
+      signal: AbortSignal.timeout(Math.max(100, Math.min(30_000, Number(timeoutMs) || 0)))
+    });
+    if (!response?.ok) {
+      throw new Error(`OpenCode Zen returned HTTP ${Number(response?.status) || 0}.`);
+    }
+    const payload = JSON.parse(await readBoundedResponse(
+      response,
+      OPENCODE_ZEN_CATALOG_LIMIT_BYTES
+    ));
+    if (!Array.isArray(payload?.data) || payload.data.length === 0) {
+      throw new Error("OpenCode Zen returned an empty model list.");
+    }
+    const ids = payload.data.map((model) => text(model?.id));
+    const uniqueIds = new Set(ids);
+    if (ids.some((id) => !id) || uniqueIds.size !== ids.length) {
+      throw new Error("OpenCode Zen returned an invalid model list.");
+    }
+    return Object.freeze([...uniqueIds].sort((left, right) => left.localeCompare(right)));
+  } catch (error) {
+    if (error?.code === "vibe64_opencode_zen_catalog_unavailable") {
+      throw error;
+    }
+    throw openCodeZenCatalogError(error);
+  }
 }
 
 function canonicalProviderUrl(value = "") {
@@ -711,6 +764,7 @@ export {
   createOpenCodeServerProcess,
   openCodeInlineConfig,
   readOpenCodeCatalog,
+  readOpenCodeZenModelIds,
   safeOpenCodeEnvironment,
   verifyOpenCodeApiKey
 };
