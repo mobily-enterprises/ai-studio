@@ -69,7 +69,6 @@ const OPENCODE_AGENT_RUN_ID = "opencode_server";
 const OPENCODE_CATALOG_CACHE_MS = 10 * 60 * 1000;
 const OPENCODE_MESSAGE_POLL_MS = 250;
 const OPENCODE_REASONING_PROGRESS_MAX_CHARS = 280;
-const OPENCODE_SHARED_START_ATTEMPT_TIMEOUT_MS = 15_000;
 const OPENCODE_SESSION_PREFIX = "ses_vibe64_";
 const OPENCODE_RENEWAL_TIMEOUT_MS = 3 * 60 * 1000;
 const OPENCODE_TERMINAL_OUTPUT_SNAPSHOT_MAX_LENGTH = 256 * 1024;
@@ -751,38 +750,23 @@ function createOpenCodeTerminalController({
       const connections = await configuredConnections(context, options, selected);
       const roots = sharedRoots();
       await writeSessionEnvironmentRegistry();
-      let server = null;
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        try {
-          server = await createServerProcess({
-            cacheRoot: roots.cacheRoot,
-            command,
-            dbPath: roots.dbPath,
-            env,
-            execution: {
-              label: "OpenCode assistant",
-              operationId: "opencode-server",
-              ownerId: "opencode"
-            },
-            privateRoot: path.join(roots.root, `private-${randomUUID()}`),
-            readinessTimeoutMs: OPENCODE_SHARED_START_ATTEMPT_TIMEOUT_MS,
-            hostContextResolver: vibe64HostContextResolverPath(),
-            providerConnections: connections,
-            sessionEnvironmentRegistry: roots.registryPath,
-            shimDirs,
-            workdir: roots.workdir
-          });
-          break;
-        } catch (error) {
-          if (attempt === 2 || error?.code !== "vibe64_opencode_start_timeout") {
-            throw error;
-          }
-          vibe64SessionDebugLog("server.opencode.shared-process.start-retry", {
-            attempt,
-            error: vibe64SessionDebugError(error)
-          });
-        }
-      }
+      const server = await createServerProcess({
+        cacheRoot: roots.cacheRoot,
+        command,
+        dbPath: roots.dbPath,
+        env,
+        execution: {
+          label: "OpenCode assistant",
+          operationId: "opencode-server",
+          ownerId: "opencode"
+        },
+        privateRoot: path.join(roots.root, `private-${randomUUID()}`),
+        hostContextResolver: vibe64HostContextResolverPath(),
+        providerConnections: connections,
+        sessionEnvironmentRegistry: roots.registryPath,
+        shimDirs,
+        workdir: roots.workdir
+      });
       sharedProcess = {
         connections: new Map(connections.map((connection) => [
           connection.modelProviderId,

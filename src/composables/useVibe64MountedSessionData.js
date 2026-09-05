@@ -54,6 +54,7 @@ function refetchMountedSessionResource(resource) {
 }
 
 function useVibe64MountedSessionData({
+  active = false,
   sessionId,
   sessionsApiPath,
   summarySession = null
@@ -62,6 +63,7 @@ function useVibe64MountedSessionData({
   const detailRecord = ref(null);
   const agentTurnOverlay = ref(null);
   const agentConnectionStatus = ref("disconnected");
+  const mountedActive = computed(() => readRefOrGetterValue(active) === true);
   const activeSessionId = computed(() => String(readRefOrGetterValue(sessionId) || "").trim());
   const activeSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
   const listSession = computed(() => {
@@ -215,9 +217,10 @@ function useVibe64MountedSessionData({
   let reconciliationInFlight = null;
   let reconciliationPending = false;
 
-  // Provider recovery belongs to connection lifecycle, never passive session
-  // reads or status polling. A reconnect is the bounded point where a mounted
-  // session can resume its provider thread and settle a stale active turn.
+  // Provider preparation belongs to the selected view and connection
+  // lifecycle, never passive session reads or status polling. The selected
+  // view starts its provider before the first message, while a reconnect also
+  // resumes any provider thread that still has active work.
   async function reconcileMountedAgentSession(reason = "realtime-connect") {
     if (!realtimeSocket.connected || !activeSessionId.value || !activeSessionsApiPath.value) {
       return null;
@@ -233,7 +236,8 @@ function useVibe64MountedSessionData({
       if (!realtimeSocket.connected || generation !== connectionGeneration) {
         return null;
       }
-      if (sessionRecordHasActiveAgentWork(session.value)) {
+      const recoveringActiveAgentWork = sessionRecordHasActiveAgentWork(session.value);
+      if (mountedActive.value || recoveringActiveAgentWork) {
         const result = await getHttpWebClient().request(
           vibe64SessionPath(
             activeSessionsApiPath.value,
@@ -248,7 +252,9 @@ function useVibe64MountedSessionData({
         if (result?.ok === false) {
           throw new Error(result.error || "Assistant status could not be reconciled.");
         }
-        await refresh({ reason: "agent-session-reconciled" });
+        if (recoveringActiveAgentWork) {
+          await refresh({ reason: "agent-session-reconciled" });
+        }
       }
       if (realtimeSocket.connected && generation === connectionGeneration) {
         agentConnectionStatus.value = "connected";

@@ -160,16 +160,19 @@ sees the complete terminal rather than a collapsed status line. Closing it
 terminates and hides the terminal, and a clean terminal exit such as Ctrl-D
 hides it without affecting the durable conversation.
 
-Open sessions in one workspace share a single running Codex service and a
-single running OpenCode service according to the assistant each session has
-selected. Codex and OpenCode remain independent: a provider service runs while
+Opening the selected session view prepares that session's chosen provider and
+native thread without sending a model prompt or loading the provider catalogue.
+Creating a session by itself does not start a provider. Open sessions in one
+workspace share a single running Codex service and a single running OpenCode
+service according to the assistant each session has selected. Codex and
+OpenCode remain independent: a provider service runs while
 at least one matching session is open and stops after the final matching
 session closes. On a managed host, the provider also remains attached to the
 exact Vibe64 server controller that started it; if that controller disappears,
 the provider's complete process tree stops rather than surviving as an orphan.
-An OpenCode cold-start timeout is retried once with a fresh private process
-within the original startup budget. Prompt admission still happens only after
-that service is ready, and a final startup failure remains attached to the
+An OpenCode cold start gets one full readiness window rather than churning
+through short-lived replacement processes. Prompt admission still happens only
+after that service is ready, and a startup failure remains attached to the
 unsent message as a readable retryable error rather than becoming a generic
 server response.
 Conversation identity, working directory, command environment,

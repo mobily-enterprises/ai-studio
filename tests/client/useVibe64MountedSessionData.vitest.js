@@ -178,6 +178,7 @@ describe("useVibe64MountedSessionData", () => {
       expect(controller.agentConnectionStatus.value).toBe("connected");
     });
     expect(endpointMocks.resource.query.refetch).toHaveBeenCalledTimes(1);
+    expect(httpMocks.request).not.toHaveBeenCalled();
 
     scope.stop();
     expect(realtimeMocks.socket.off).toHaveBeenCalledWith(
@@ -237,6 +238,48 @@ describe("useVibe64MountedSessionData", () => {
     realtimeMocks.handlers.get("disconnect")();
     expect(controller.agentConnectionStatus.value).toBe("disconnected");
 
+    scope.stop();
+  });
+
+  it("prepares the selected session provider at the connection boundary without a model turn", async () => {
+    const scope = effectScope();
+    const controller = scope.run(() => useVibe64MountedSessionData({
+      active: ref(true),
+      sessionId: ref("session-a"),
+      sessionsApiPath: ref("/api/vibe64/sessions"),
+      summarySession: ref(null)
+    }));
+    endpointMocks.resource.data.value = {
+      agentSession: {
+        turn: {
+          active: false,
+          state: "idle"
+        }
+      },
+      revision: 10,
+      sessionId: "session-a"
+    };
+    endpointMocks.resource.isInitialLoading.value = false;
+    endpointMocks.resource.isLoading.value = false;
+    await nextTick();
+
+    realtimeMocks.socket.connected = true;
+    realtimeMocks.handlers.get("connect")();
+    await vi.waitFor(() => {
+      expect(httpMocks.request).toHaveBeenCalledWith(
+        "/api/vibe64/sessions/session-a/agent-session",
+        {
+          body: {},
+          method: "POST"
+        }
+      );
+    });
+    await vi.waitFor(() => {
+      expect(controller.agentConnectionStatus.value).toBe("connected");
+    });
+
+    expect(httpMocks.request).toHaveBeenCalledTimes(1);
+    expect(endpointMocks.resource.query.refetch).toHaveBeenCalledTimes(1);
     scope.stop();
   });
 

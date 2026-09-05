@@ -183,6 +183,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
     return sessions.find((session) => session.sessionId === selectedSessionId.value) || null;
   });
   const mounted = useVibe64MountedSessionData({
+    active: computed(() => Boolean(props.active)),
     sessionId: selectedSessionId,
     sessionsApiPath: props.sessionData.sessionsApiPath,
     summarySession: selectedListSession
