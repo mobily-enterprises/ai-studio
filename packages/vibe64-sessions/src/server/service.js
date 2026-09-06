@@ -669,149 +669,151 @@ function createService({
   }
 
   async function approveMessageSuggestion(sessionId, input = {}) {
-    const suggestionId = text(input.suggestionId);
-    const key = `${text(sessionId)}:${suggestionId}`;
-    const existing = activeSuggestionDeliveries.get(key);
-    if (existing) {
-      return existing;
-    }
-    const delivery = sessionResult(async () => {
+    return sessionResult(async () => {
       const vibe64User = trustedAssistantUser(input);
-      const runtime = await project.createRuntime({ inspectSource: false });
-      const prepared = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
-        const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
-        requireSuggestionOwner(vibe64User);
-        await terminals.requireAssistantAccess(sessionId, context);
-        const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
-        const current = suggestionById(state, suggestionId);
-        if (current.status === "delivered") {
-          return { alreadyDelivered: true, context, suggestion: current };
-        }
-        if (["discarded", "withdrawn"].includes(current.status)) {
-          throw suggestionError(
-            "vibe64_message_suggestion_not_pending",
-            "Only a pending suggestion can be approved.",
-            409
+      requireSuggestionOwner(vibe64User);
+      const suggestionId = text(input.suggestionId);
+      const key = `${text(sessionId)}:${suggestionId}`;
+      const existing = activeSuggestionDeliveries.get(key);
+      if (existing) {
+        return existing;
+      }
+      const delivery = (async () => {
+        const runtime = await project.createRuntime({ inspectSource: false });
+        const prepared = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const context = await suggestionTerminalContext(runtime, sessionId, vibe64User);
+          await terminals.requireAssistantAccess(sessionId, context);
+          const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+          const current = suggestionById(state, suggestionId);
+          if (current.status === "delivered") {
+            return { alreadyDelivered: true, context, suggestion: current };
+          }
+          if (["discarded", "withdrawn"].includes(current.status)) {
+            throw suggestionError(
+              "vibe64_message_suggestion_not_pending",
+              "Only a pending suggestion can be approved.",
+              409
+            );
+          }
+          const now = new Date().toISOString();
+          const next = strictSuggestion({
+            ...current,
+            decidedAt: now,
+            decidedBy: vibe64User,
+            deliveryAttempts: current.deliveryAttempts + 1,
+            lastDeliveryError: "",
+            status: "delivering",
+            updatedAt: now
+          });
+          await writeSessionMessageSuggestionState(
+            runtime.store,
+            sessionId,
+            replaceSuggestion(state, next, now)
           );
+          return { alreadyDelivered: false, context, suggestion: next };
+        });
+        if (!prepared.acquired) {
+          return prepared.value;
         }
-        const now = new Date().toISOString();
-        const next = strictSuggestion({
-          ...current,
-          decidedAt: now,
-          decidedBy: vibe64User,
-          deliveryAttempts: current.deliveryAttempts + 1,
-          lastDeliveryError: "",
-          status: "delivering",
-          updatedAt: now
-        });
-        await writeSessionMessageSuggestionState(
-          runtime.store,
-          sessionId,
-          replaceSuggestion(state, next, now)
-        );
-        return { alreadyDelivered: false, context, suggestion: next };
-      });
-      if (!prepared.acquired) {
-        return prepared.value;
-      }
-      if (prepared.value.alreadyDelivered) {
-        return { duplicate: true, ok: true, suggestion: prepared.value.suggestion };
-      }
-      const pending = prepared.value.suggestion;
-      await publishSuggestionChanged(
-        sessionId,
-        pending,
-        "session-message-suggestion-approval-started",
-        input.originId
-      );
-      let result = null;
-      let deliveryError = null;
-      try {
-        result = await terminals.sendAgentMessage(sessionId, {
-          attachmentIds: pending.attachmentIds,
-          ...(pending.displayAttachments?.length
-            ? { displayAttachments: pending.displayAttachments }
-            : {}),
-          displayMessage: [
-            `Suggested by ${pending.author.displayName} (${pending.author.username}); approved by ${pending.decidedBy.displayName} (${pending.decidedBy.username}).`,
-            pending.displayMessage || pending.message
-          ].join("\n\n"),
-          message: pending.message,
-          messageId: pending.providerMessageId,
-          originId: input.originId,
-          vibe64User
-        }, {
-          runtime,
-          vibe64User
-        });
-      } catch (error) {
-        deliveryError = error;
-      }
-      const delivered = !deliveryError && result?.ok !== false;
-      const finalized = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
-        const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
-        const current = suggestionById(state, suggestionId);
-        if (current.status === "delivered") {
-          return { context: prepared.value.context, suggestion: current };
+        if (prepared.value.alreadyDelivered) {
+          return { duplicate: true, ok: true, suggestion: prepared.value.suggestion };
         }
-        const now = new Date().toISOString();
-        const next = strictSuggestion({
-          ...current,
-          deliveredAt: delivered ? now : "",
-          lastDeliveryError: delivered
-            ? ""
-            : text(deliveryError?.message || result?.error || "Assistant delivery failed."),
-          status: delivered ? "delivered" : "pending",
-          updatedAt: now
-        });
-        await writeSessionMessageSuggestionState(
-          runtime.store,
+        const pending = prepared.value.suggestion;
+        await publishSuggestionChanged(
           sessionId,
-          replaceSuggestion(state, next, now)
+          pending,
+          "session-message-suggestion-approval-started",
+          input.originId
         );
-        return { context: prepared.value.context, suggestion: next };
-      });
-      if (!finalized.acquired) {
+        let result = null;
+        let deliveryError = null;
+        try {
+          result = await terminals.sendAgentMessage(sessionId, {
+            attachmentIds: pending.attachmentIds,
+            ...(pending.displayAttachments?.length
+              ? { displayAttachments: pending.displayAttachments }
+              : {}),
+            displayMessage: [
+              `Suggested by ${pending.author.displayName} (${pending.author.username}); approved by ${pending.decidedBy.displayName} (${pending.decidedBy.username}).`,
+              pending.displayMessage || pending.message
+            ].join("\n\n"),
+            message: pending.message,
+            messageId: pending.providerMessageId,
+            originId: input.originId,
+            vibe64User
+          }, {
+            runtime,
+            vibe64User
+          });
+        } catch (error) {
+          deliveryError = error;
+        }
+        const delivered = !deliveryError && result?.ok !== false;
+        const finalized = await runVibe64AgentWriteExclusive(runtime, sessionId, async () => {
+          const state = await readSessionMessageSuggestionState(runtime.store, sessionId);
+          const current = suggestionById(state, suggestionId);
+          if (current.status === "delivered") {
+            return { context: prepared.value.context, suggestion: current };
+          }
+          const now = new Date().toISOString();
+          const next = strictSuggestion({
+            ...current,
+            deliveredAt: delivered ? now : "",
+            lastDeliveryError: delivered
+              ? ""
+              : text(deliveryError?.message || result?.error || "Assistant delivery failed."),
+            status: delivered ? "delivered" : "pending",
+            updatedAt: now
+          });
+          await writeSessionMessageSuggestionState(
+            runtime.store,
+            sessionId,
+            replaceSuggestion(state, next, now)
+          );
+          return { context: prepared.value.context, suggestion: next };
+        });
+        if (!finalized.acquired) {
+          if (deliveryError) {
+            throw deliveryError;
+          }
+          return finalized.value;
+        }
+        if (delivered) {
+          await unpinSuggestionAttachments(finalized.value.context, finalized.value.suggestion)
+            .catch((error) => {
+              vibe64SessionDebugLog("server.sessions.messageSuggestion.unpin.error", {
+                error: vibe64SessionDebugError(error),
+                sessionId,
+                suggestionId
+              });
+            });
+        }
+        await publishSuggestionChanged(
+          sessionId,
+          finalized.value.suggestion,
+          delivered
+            ? "session-message-suggestion-delivered"
+            : "session-message-suggestion-delivery-failed",
+          input.originId
+        );
         if (deliveryError) {
           throw deliveryError;
         }
-        return finalized.value;
+        return {
+          ...(result || {}),
+          ok: delivered,
+          suggestion: finalized.value.suggestion
+        };
+      })();
+      activeSuggestionDeliveries.set(key, delivery);
+      try {
+        return await delivery;
+      } finally {
+        if (activeSuggestionDeliveries.get(key) === delivery) {
+          activeSuggestionDeliveries.delete(key);
+        }
       }
-      if (delivered) {
-        await unpinSuggestionAttachments(finalized.value.context, finalized.value.suggestion)
-          .catch((error) => {
-            vibe64SessionDebugLog("server.sessions.messageSuggestion.unpin.error", {
-              error: vibe64SessionDebugError(error),
-              sessionId,
-              suggestionId
-            });
-          });
-      }
-      await publishSuggestionChanged(
-        sessionId,
-        finalized.value.suggestion,
-        delivered
-          ? "session-message-suggestion-delivered"
-          : "session-message-suggestion-delivery-failed",
-        input.originId
-      );
-      if (deliveryError) {
-        throw deliveryError;
-      }
-      return {
-        ...(result || {}),
-        ok: delivered,
-        suggestion: finalized.value.suggestion
-      };
     }, "Vibe64 could not approve this message suggestion.");
-    activeSuggestionDeliveries.set(key, delivery);
-    try {
-      return await delivery;
-    } finally {
-      if (activeSuggestionDeliveries.get(key) === delivery) {
-        activeSuggestionDeliveries.delete(key);
-      }
-    }
   }
 
   return Object.freeze({

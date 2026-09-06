@@ -192,6 +192,88 @@ test("message suggestions retain preferred-name attribution and attachments thro
   });
 });
 
+test("coalesced suggestion approvals still authorize each caller", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = await createSuggestionRuntime(targetRoot);
+    const entered = Promise.withResolvers();
+    const delivery = Promise.withResolvers();
+    const harness = queueHarness(runtime, {
+      deliveryResult: () => {
+        entered.resolve();
+        return delivery.promise;
+      }
+    });
+    const owner = { displayName: "Ada", role: "owner", username: "ada" };
+    const created = await harness.service.suggestAgentMessage("session-1", {
+      message: "Only the owner may approve this.",
+      vibe64User: { displayName: "Grace", role: "member", username: "grace" }
+    });
+    const approval = { suggestionId: created.suggestion.id, vibe64User: owner };
+    const firstOwner = harness.service.approveMessageSuggestion("session-1", approval);
+    await entered.promise;
+    const member = harness.service.approveMessageSuggestion("session-1", {
+      suggestionId: created.suggestion.id,
+      vibe64User: { displayName: "Linus", role: "member", username: "linus" }
+    });
+    const secondOwner = harness.service.approveMessageSuggestion("session-1", approval);
+    delivery.resolve({ delivered: true, ok: true });
+    const [first, unauthorized, second] = await Promise.all([firstOwner, member, secondOwner]);
+
+    assert.equal(unauthorized.ok, false);
+    assert.equal(unauthorized.code, "vibe64_message_suggestion_owner_required");
+    assert.equal(unauthorized.suggestion, undefined);
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.deepEqual(first.suggestion, second.suggestion);
+    assert.equal(harness.deliveries.length, 1);
+  });
+});
+
+test("coalesced owner approvals share thrown failures and permit an idempotent retry", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const runtime = await createSuggestionRuntime(targetRoot);
+    const entered = Promise.withResolvers();
+    const delivery = Promise.withResolvers();
+    let failing = true;
+    const harness = queueHarness(runtime, {
+      deliveryResult: () => {
+        entered.resolve();
+        return failing ? delivery.promise : { delivered: true, ok: true };
+      }
+    });
+    const created = await harness.service.suggestAgentMessage("session-1", {
+      message: "Keep this request available after the connection fails.",
+      vibe64User: { displayName: "Grace", role: "member", username: "grace" }
+    });
+    const approval = {
+      suggestionId: created.suggestion.id,
+      vibe64User: { displayName: "Ada", role: "owner", username: "ada" }
+    };
+    const firstOwner = harness.service.approveMessageSuggestion("session-1", approval);
+    await entered.promise;
+    const secondOwner = harness.service.approveMessageSuggestion("session-1", approval);
+    const failure = new Error("Provider connection lost.");
+    failure.code = "provider_connection_lost";
+    delivery.reject(failure);
+    const results = await Promise.all([firstOwner, secondOwner]);
+
+    assert.equal(results[0].ok, false);
+    assert.equal(results[0].code, "provider_connection_lost");
+    assert.deepEqual(results[0], results[1]);
+    assert.equal(harness.deliveries.length, 1);
+    const persisted = await readSessionMessageSuggestionState(runtime.store, "session-1");
+    assert.equal(persisted.entries[0].status, "pending");
+    assert.equal(persisted.entries[0].lastDeliveryError, "Provider connection lost.");
+
+    failing = false;
+    const retried = await harness.service.approveMessageSuggestion("session-1", approval);
+    assert.equal(retried.ok, true);
+    assert.equal(retried.suggestion.status, "delivered");
+    assert.equal(harness.deliveries.length, 2);
+    assert.equal(harness.deliveries[0].messageId, harness.deliveries[1].messageId);
+  });
+});
+
 test("provider failure leaves a recoverable pending suggestion", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = await createSuggestionRuntime(targetRoot);

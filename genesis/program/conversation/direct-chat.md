@@ -84,6 +84,9 @@ and each owner decision capture that person's preferred name, falling back to
 their trusted account name. Those stored names do not change when a person
 later edits their preference. Normal approved delivery sends the authored
 message unchanged; its visible attribution names the author and approving owner.
+Each approval checks its current caller, including requests that arrive while
+an owner's delivery is already pending. Duplicate owner approvals share that
+delivery; a failed delivery remains retryable with the same provider message id.
 
 Vibe64 expands the session's opening project request with Genesis guidance once.
 Ordinary follow-ups and active-turn steering remain ordinary conversation
