@@ -11,6 +11,7 @@ import {
 } from "@local/vibe64-core/server/sessionSourcePath";
 import { runVibe64Command } from "@local/vibe64-execution/server";
 import {
+  exactFileDiffPathspecs,
   parseGitNameStatusZ,
   parseGitNumstatZ,
   safeChangePath
@@ -244,7 +245,9 @@ async function inspectRepositoryHistory({
 async function assertReachableCommit(context, commit, snapshot, runCommand) {
   commit = commitObjectId(commit);
   snapshot = commitObjectId(snapshot, "vibe64_repository_history_snapshot_invalid");
-  const resolved = await gitText(context, ["rev-parse", "--verify", `${commit}^{commit}`], { runCommand });
+  const resolved = commit === snapshot
+    ? snapshot
+    : await gitText(context, ["rev-parse", "--verify", `${commit}^{commit}`], { runCommand });
   if (resolved !== commit || !/^[a-f0-9]{40,64}$/u.test(resolved)) {
     throw repositoryError("Choose a version from this project history.", "vibe64_repository_history_commit_invalid");
   }
@@ -329,7 +332,7 @@ async function repositoryVersionFileDiff({
   const filePath = safeChangePath(requestedPath);
   const result = comparison.parent
     ? await git(context, [
-        "--literal-pathspecs",
+        "--no-literal-pathspecs",
         "diff",
         "--no-ext-diff",
         "--find-renames",
@@ -337,10 +340,10 @@ async function repositoryVersionFileDiff({
         comparison.parent,
         commit,
         "--",
-        filePath
+        ...exactFileDiffPathspecs(filePath)
       ], { runCommand })
     : await git(context, [
-        "--literal-pathspecs",
+        "--no-literal-pathspecs",
         "show",
         "--format=",
         "--no-ext-diff",
@@ -348,7 +351,7 @@ async function repositoryVersionFileDiff({
         "--unified=3",
         commit,
         "--",
-        filePath
+        ...exactFileDiffPathspecs(filePath)
       ], { runCommand });
   const lines = output(result).replaceAll("\r\n", "\n").split("\n");
   const boundedLimit = boundedInteger(lineLimit, DEFAULT_DIFF_LINE_LIMIT, MAX_DIFF_LINE_LIMIT);

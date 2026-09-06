@@ -57,8 +57,10 @@ async function source(relativePath) {
 function passthroughComponent(element) {
   return Vue.defineComponent({
     inheritAttrs: false,
-    setup(_props, { attrs, slots }) {
-      return () => element === "dialog" && !attrs.modelValue
+    // Match VDialog's declared prop so Vue normalizes :model-value and v-model alike.
+    props: element === "dialog" ? { modelValue: Boolean } : {},
+    setup(props, { attrs, slots }) {
+      return () => element === "dialog" && !props.modelValue
         ? null
         : Vue.h(element, {
             ...attrs,
@@ -142,9 +144,9 @@ function mountHistoryWorkspace() {
       for (let step = 0; step < 10; step += 1) await Promise.resolve();
       await Vue.nextTick();
     },
-    async close() {
+    async close(pendingResponse = { ok: true }) {
       app.unmount();
-      for (const request of requests) request.resolve({ ok: true });
+      for (const request of requests) request.resolve(pendingResponse);
       await Promise.all(requests.map((request) => request.promise));
       resetHttpWebClientForTests();
     }
@@ -168,6 +170,86 @@ const firstVersionDiff = {
 };
 
 describe("Vibe64 Repository workspace", () => {
+  it.each(["header", "modal"])("retires pending version files on %s dismissal without starting a hidden diff", async (dismissal) => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      fixture.button(historyVersion.message).props.onClick();
+      await Vue.nextTick();
+      expect(fixture.requests[2].path).toContain(`/history/${historyCommit}/files`);
+      const dialog = findNode(fixture.container, (node) => node.type === "dialog");
+      expect(dialog).not.toBeNull();
+      if (dismissal === "header") {
+        findNode(dialog, (node) => node.props["aria-label"] === "Close version details").props.onClick();
+      } else {
+        // Vuetify reports Escape/back/outside dismissal through this model event.
+        for (const handler of [dialog.props["onUpdate:modelValue"]].flat()) handler(false);
+      }
+      await Vue.nextTick();
+      expect(findNode(fixture.container, (node) => node.type === "dialog")).toBeNull();
+      await fixture.respond(2, { files: [firstVersionFile], ok: true, totalCount: 1, truncated: false });
+      expect(fixture.requests).toHaveLength(3);
+      expect(findNode(fixture.container, (node) => node.type === "dialog")).toBeNull();
+      expect(fixture.button(historyVersion.message)).not.toBeNull();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.each(["success", "failure"])("preserves reopened version B when dismissed A's files settle with %s", async (outcome) => {
+    const fixture = mountHistoryWorkspace();
+    const secondVersion = { ...historyVersion, commit: "b".repeat(40), message: "Reopened version B" };
+    try {
+      await fixture.respond(0, {
+        historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion, secondVersion]
+      });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      fixture.button(historyVersion.message).props.onClick();
+      await Vue.nextTick();
+      findNode(fixture.container, (node) => node.props["aria-label"] === "Close version details").props.onClick();
+      await Vue.nextTick();
+      fixture.button(secondVersion.message).props.onClick();
+      await Vue.nextTick();
+      expect(fixture.requests[3].path).toContain(`/history/${secondVersion.commit}/files`);
+      await fixture.respond(2, outcome === "success"
+        ? { files: [firstVersionFile], ok: true, totalCount: 1, truncated: false }
+        : { error: "Dismissed version A failed.", ok: false });
+      expect(fixture.requests).toHaveLength(4);
+      const dialog = findNode(fixture.container, (node) => node.type === "dialog");
+      expect(nodeText(dialog)).toContain(secondVersion.message);
+      expect(nodeText(dialog)).not.toContain("Dismissed version A failed.");
+      expect(fixture.button("a.txt")).toBeNull();
+      expect(findNode(dialog, (node) => node.type === "progress")).not.toBeNull();
+      await fixture.respond(3, { files: [secondVersionFile], ok: true, totalCount: 1, truncated: false });
+      expect(new URL(fixture.requests[4].path, "http://vibe64.test").searchParams.get("path")).toBe("b.txt");
+      await fixture.respond(4, {
+        diff: "diff --git a/b.txt b/b.txt\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+reopened version B content\n",
+        ok: true,
+        path: "b.txt"
+      });
+      expect(fixture.button("b.txt").props["aria-current"]).toBe("true");
+      expect(fixture.renderedDiff()).toContain("reopened version B content");
+      expect(fixture.requests).toHaveLength(5);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("does not start a version diff when pending files arrive after unmount", async () => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      fixture.button(historyVersion.message).props.onClick();
+      expect(fixture.requests).toHaveLength(3);
+    } finally {
+      await fixture.close({ files: [firstVersionFile], ok: true, totalCount: 1, truncated: false });
+    }
+    expect(fixture.requests).toHaveLength(3);
+    expect(findNode(fixture.container, (node) => node.type === "dialog")).toBeNull();
+  });
+
   it("offers an explicit pending-aware retry after the first history request fails", async () => {
     const fixture = mountHistoryWorkspace();
     try {

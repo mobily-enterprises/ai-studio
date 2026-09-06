@@ -382,6 +382,72 @@ test("current changes returns a bounded canonical file list and one selected-fil
   }
 });
 
+test("current changes isolates a deleted file from its replacement directory", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-change-file-directory-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const project = githubProject(root, fixture.remote);
+    await git(session.sourcePath, ["rm", "shared.txt"]);
+    await mkdir(path.join(session.sourcePath, "shared.txt"));
+    await writeFile(path.join(session.sourcePath, "shared.txt", "child.txt"), "replacement child\n", "utf8");
+    const requests = [];
+    const changes = await inspectSessionChanges({
+      project,
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
+      session
+    });
+    assert.deepEqual(changes.files, [
+      { added: 0, deleted: 1, path: "shared.txt", status: "D" },
+      { added: 1, deleted: 0, path: "shared.txt/child.txt", status: "A" }
+    ]);
+    assert.equal(changes.totalCount, 2);
+    assert.deepEqual(new Set(changes.changedPaths), new Set(["shared.txt", "shared.txt/child.txt"]));
+
+    await t.test("initialDiff contains only the selected deleted file from the same snapshot", () => {
+      assert.equal(requests.length, 1);
+      assert.equal(requests[0].command, "node");
+      assert.equal(changes.initialDiff.path, changes.files[0].path);
+      assert.equal(changes.initialDiff.worktreeTree, changes.worktreeTree);
+      assert.ok(changes.initialDiff.diff.split("\n").includes("-initial"));
+      assert.equal(changes.initialDiff.diff.includes("replacement child"), false, changes.initialDiff.diff);
+      assert.equal(changes.initialDiff.diff.split("\n").filter((line) => line.startsWith("diff --git ")).length, 1);
+    });
+
+    for (const [filePath, expectedLine, excludedLine] of [
+      ["shared.txt", "-initial", "+replacement child"],
+      ["shared.txt/child.txt", "+replacement child", "-initial"]
+    ]) {
+      await t.test(`explicit diff for ${filePath} stays within that exact entry in one job`, async () => {
+        const selectedRequests = [];
+        const diff = await inspectSessionChangeDiff({
+          path: filePath,
+          project,
+          runCommand: async (request) => {
+            selectedRequests.push(request);
+            return commandRunner(request);
+          },
+          session
+        });
+        assert.equal(selectedRequests.length, 1);
+        assert.equal(selectedRequests[0].command, "node");
+        assert.equal(diff.path, filePath);
+        assert.equal(diff.canonicalCommit, fixture.baseCommit);
+        assert.equal(diff.worktreeTree, changes.worktreeTree);
+        const lines = diff.diff.split("\n");
+        assert.ok(lines.includes(expectedLine), diff.diff);
+        assert.equal(lines.includes(excludedLine), false, diff.diff);
+        assert.equal(lines.filter((line) => line.startsWith("diff --git ")).length, 1);
+      });
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 for (const entry of [
   { label: "wildcard", path: "[ab].txt", otherPath: "a.txt" },
   { label: "leading-colon", path: ":literal.txt", otherPath: "literal.txt" },

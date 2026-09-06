@@ -67,6 +67,14 @@ History file paging and differences belong to the selected commit. Selecting
 another version clears the previous version's loading and error state. Late
 results from that previous selection cannot change the new view or prevent it
 from loading more files.
+Closing version details retires that selection, including a pending file list;
+its later response cannot start an unused diff behind the closed dialog.
+After Save, History refreshes before a separate authority-check result is applied,
+including a check already in flight. A check for the displayed version does not
+load it again; a newer version still refreshes the list, and a failed check does
+not discard the successfully refreshed history.
+A replaced Save request does not keep the current authority check busy after
+the latest History response has arrived.
 Loaded history and version files remain usable if a later page fails, and the
 same page can be retried without discarding earlier content. A failed first load
 offers an explicit retry. Once a version's file list arrives, its files are
@@ -74,7 +82,9 @@ selectable while the independently owned first diff is still loading.
 In both History and Current Changes, a selected filename is literal, not a Git
 search pattern, even when it contains wildcard or colon characters. Whitespace,
 tabs and literal backslashes remain part of the exact filename through listing,
-selection and diff requests.
+selection and diff requests. An exact file diff never includes descendant files,
+including when a deleted file has been replaced by a directory; Git submodule
+entries remain independently readable.
 The full-screen history view scrolls its file list independently from the diff,
 so long versions keep later files and their Load more action reachable without
 moving the selected difference out of view.
@@ -111,3 +121,6 @@ moving the selected difference out of view.
 - Concurrent update checks for one session share the same exact server
   operation, and repeated repository refresh events collapse into one bounded
   follow-up Current Changes inspection.
+- History validates its pinned Git snapshot once per files or diff request. When
+  that exact commit is selected, its object resolution is reused; older selected
+  commits still receive their own resolution and reachability checks.

@@ -1620,6 +1620,84 @@ test("one exact update check is shared, cached, and invalidates every sibling se
   ]);
 });
 
+test("repository history facades require a stored session from the selected project before terminal admission", async (t) => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const selectedRoot = `${targetRoot}/alpha`;
+    const foreignRoot = `${targetRoot}/beta`;
+    const selectedStore = createVibe64SessionStore({
+      projectContextRoot: selectedRoot,
+      projectRuntimeRoot: projectRuntimeRoot(selectedRoot)
+    });
+    const foreignStore = createVibe64SessionStore({
+      projectContextRoot: foreignRoot,
+      projectRuntimeRoot: projectRuntimeRoot(foreignRoot)
+    });
+    await selectedStore.createSession({ runtimeKind: "genesis", sessionId: "history-alpha" });
+    await foreignStore.createSession({ runtimeKind: "genesis", sessionId: "history-beta" });
+    assert.equal((await foreignStore.readSession("history-beta")).projectContextRoot, foreignRoot);
+
+    const commit = "a".repeat(40);
+    for (const [operation, input] of [
+      ["inspectRepositoryHistory", { cursor: "", limit: "1" }],
+      ["inspectRepositoryVersionFiles", { commit, historySnapshotCommit: commit, limit: "1", offset: "0" }],
+      ["inspectRepositoryVersionFileDiff", { commit, historySnapshotCommit: commit, lineLimit: "10", path: "first.txt" }]
+    ]) {
+      await t.test(operation, async () => {
+        const calls = [];
+        const loaded = [];
+        const service = createService({
+          project: {
+            async createRuntime(options) {
+              calls.push(["runtime", options]);
+              return {
+                async getSession(sessionId, sessionOptions) {
+                  calls.push(["session", sessionId, sessionOptions]);
+                  const session = await selectedStore.readSession(sessionId);
+                  loaded.push(session);
+                  return session;
+                }
+              };
+            }
+          },
+          terminals: {
+            async [operation](terminalInput) {
+              calls.push(["terminal", terminalInput]);
+              return { ok: true };
+            }
+          }
+        });
+
+        const missing = await service[operation](input);
+        assert.equal(missing.ok, false);
+        assert.equal(missing.code, "vibe64_repository_history_session_required");
+        assert.deepEqual(calls, []);
+
+        const foreign = await service[operation]({ ...input, sessionId: "history-beta" });
+        assert.equal(foreign.ok, false);
+        assert.equal(foreign.code, "vibe64_session_not_found");
+        assert.deepEqual(calls, [
+          ["runtime", { inspectSource: false }],
+          ["session", "history-beta", { inspectSource: false }]
+        ]);
+        assert.deepEqual(loaded, []);
+
+        calls.length = 0;
+        const selectedInput = { ...input, sessionId: "history-alpha" };
+        const selected = await service[operation](selectedInput);
+        assert.equal(selected.ok, true);
+        assert.equal(loaded.length, 1);
+        assert.equal(loaded[0].projectContextRoot, selectedRoot);
+        assert.deepEqual(calls, [
+          ["runtime", { inspectSource: false }],
+          ["session", "history-alpha", { inspectSource: false }],
+          ["terminal", { ...selectedInput, session: loaded[0] }]
+        ]);
+        assert.equal(calls[2][1].session, loaded[0]);
+      });
+    }
+  });
+});
+
 test("repository history returns the last successful update check from session state", async () => {
   const checkedAt = "2026-08-19T07:15:00.000Z";
   const service = createService({

@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { effectScope, nextTick, ref } from "vue";
-import { VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT } from "../../src/lib/vibe64SessionRequestConfig.js";
+import {
+  VIBE64_SESSION_CHANGED_EVENT,
+  VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT
+} from "../../src/lib/vibe64SessionRequestConfig.js";
 
 const mocks = vi.hoisted(() => ({
   changes: null,
   changesHandler: null,
   diff: null,
+  historyHandler: null,
   historyUpdateCheck: null,
   updateCheckHandler: null,
   updateCheck: null,
@@ -33,6 +37,7 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
           return mocks.versionDiffHandler(path, options);
         }
         if (String(path).includes("/history")) {
+          if (typeof mocks.historyHandler === "function") return mocks.historyHandler(path, options);
           return {
             historySnapshotCommit: mocks.historyUpdateCheck?.canonicalCommit || "a".repeat(40),
             nextCursor: "",
@@ -93,6 +98,7 @@ describe("useVibe64RepositoryWorkspace", () => {
     mocks.changes = null;
     mocks.changesHandler = null;
     mocks.diff = null;
+    mocks.historyHandler = null;
     mocks.historyUpdateCheck = null;
     mocks.updateCheckHandler = null;
     mocks.updateCheck = null;
@@ -271,6 +277,214 @@ describe("useVibe64RepositoryWorkspace", () => {
       unsaved: true
     }));
     expect(refreshSessionWork.mock.calls[0][0]).not.toHaveProperty("initialDiff");
+  });
+
+  it.each([
+    { label: "the saved History response arrives first", order: "history-first", newer: false, failed: false, reads: 1 },
+    { label: "the update-check result is available first", order: "check-first", newer: false, failed: false, reads: 1 },
+    { label: "a pre-existing check reports the already displayed tip", order: "pre-existing", newer: false, failed: false, reads: 1 },
+    { label: "a pre-existing check reports the saved tip before its History response", order: "pre-existing-check-first", newer: false, failed: false, reads: 1 },
+    { label: "a pre-existing check reports a newer tip before the saved History response", order: "pre-existing-check-first", newer: true, failed: false, reads: 2 },
+    { label: "a pre-existing check fails before the saved History response", order: "pre-existing-check-first", newer: false, failed: true, reads: 1 },
+    { label: "the check discovers a genuinely newer tip", order: "history-first", newer: true, failed: false, reads: 2 },
+    { label: "the separate authority check fails", order: "history-first", newer: false, failed: true, reads: 1 }
+  ])("owns History refreshes after Save when $label", async ({ order, newer, failed, reads }) => {
+    const savedCommit = "b".repeat(40);
+    const savedHistory = { historySnapshotCommit: savedCommit, ok: true, versions: [{ commit: savedCommit }] };
+    const finalCommit = newer ? "c".repeat(40) : savedCommit;
+    const finalHistory = { historySnapshotCommit: finalCommit, ok: true, versions: [{ commit: finalCommit }] };
+    const historyResponse = Promise.withResolvers();
+    const checkResponse = Promise.withResolvers();
+    const checkResult = failed
+      ? { error: "Authority check failed after Save.", ok: false }
+      : { canonicalCommit: finalCommit, ok: true };
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("history") }));
+    let eventTask;
+    let previousCheck;
+    try {
+      await nextTick();
+      await flushPromises();
+      mocks.historyHandler = vi.fn()
+        .mockImplementationOnce(() => historyResponse.promise)
+        .mockResolvedValue(finalHistory);
+      mocks.updateCheckHandler = vi.fn(() => checkResponse.promise);
+      if (order.startsWith("pre-existing")) previousCheck = workspace.checkForUpdates({ force: false });
+      const sessionChanged = mocks.realtimeEvents.find(({ event }) => event === VIBE64_SESSION_CHANGED_EVENT);
+      const event = { payload: { reason: "session-save-completed", sessionId: "session-1" } };
+      expect(sessionChanged.matches(event)).toBe(true);
+      eventTask = sessionChanged.onEvent(event);
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(1);
+      if (order === "check-first" || order === "pre-existing-check-first") {
+        // Do not wait for consumption: corrected ordering may start this check only after History.
+        if (order === "pre-existing-check-first") {
+          expect(mocks.updateCheckHandler).toHaveBeenCalledTimes(1);
+          expect(workspace.history.payload.historySnapshotCommit).toBe("a".repeat(40));
+          expect(workspace.history.loading).toBe(true);
+        }
+        checkResponse.resolve(checkResult);
+        await flushPromises();
+      }
+      historyResponse.resolve(savedHistory);
+      await flushPromises();
+      if (order !== "pre-existing-check-first" || !newer) {
+        expect(workspace.history.payload.historySnapshotCommit).toBe(savedCommit);
+      }
+      checkResponse.resolve(checkResult);
+      await Promise.all([eventTask, previousCheck]);
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(reads);
+      expect(workspace.history).toMatchObject({
+        error: "", loading: false, payload: failed ? savedHistory : finalHistory
+      });
+      expect(mocks.updateCheckHandler).toHaveBeenCalledTimes(1);
+      expect(workspace.updates.error).toBe(failed ? checkResult.error : "");
+      expect(mocks.updateCheckHandler.mock.calls[0][1]).toMatchObject({ body: { force: false }, method: "POST" });
+    } finally {
+      scope.stop();
+      historyResponse.resolve(savedHistory);
+      checkResponse.resolve(checkResult);
+      await Promise.all([eventTask, previousCheck]);
+      await flushPromises();
+    }
+  });
+
+  it.each(["context replacement", "disposal"])("retires a pending Save history refresh after %s", async (change) => {
+    const savedCommit = "b".repeat(40);
+    const nextCommit = "c".repeat(40);
+    const savedHistory = { historySnapshotCommit: savedCommit, ok: true, versions: [{ commit: savedCommit }] };
+    const nextHistory = { historySnapshotCommit: nextCommit, ok: true, versions: [{ commit: nextCommit }] };
+    const historyResponse = Promise.withResolvers();
+    const checkResponse = Promise.withResolvers();
+    const nextApiPath = "/api/app/other/vibe64/sessions";
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const dashboard = ref({ sessionId: "session-1", sessionsApiPath: "/api/app/sample/vibe64/sessions" });
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(dashboard, { view: ref("history") }));
+    let eventTask;
+    let previousCheck;
+    try {
+      await nextTick();
+      await flushPromises();
+      mocks.historyHandler = vi.fn((path) => path.startsWith("/api/app/other/") ? nextHistory : historyResponse.promise);
+      mocks.updateCheckHandler = vi.fn((path) => path.startsWith(nextApiPath)
+        ? { canonicalCommit: nextCommit, ok: true }
+        : checkResponse.promise);
+      previousCheck = workspace.checkForUpdates({ force: false });
+      const sessionChanged = mocks.realtimeEvents.find(({ event }) => event === VIBE64_SESSION_CHANGED_EVENT);
+      eventTask = sessionChanged.onEvent({ payload: { reason: "session-save-completed", sessionId: "session-1" } });
+      checkResponse.resolve({ error: "Obsolete Save check failed.", ok: false });
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(1);
+      expect(workspace.updates.checking).toBe(true);
+      expect(workspace.updates.error).toBe("");
+      if (change === "context replacement") {
+        dashboard.value = { sessionId: "session-2", sessionsApiPath: nextApiPath };
+        await nextTick();
+        await flushPromises();
+        expect(workspace.history.payload).toEqual(nextHistory);
+        expect(mocks.updateCheckHandler.mock.calls.filter(([path]) => path.startsWith(nextApiPath))).toHaveLength(1);
+      } else {
+        scope.stop();
+      }
+      const requestsBeforeSettlement = mocks.requestCalls.length;
+      const historyBeforeSettlement = { ...workspace.history, versions: [...workspace.history.versions] };
+      historyResponse.resolve(savedHistory);
+      await Promise.all([eventTask, previousCheck]);
+      await flushPromises();
+      expect(mocks.requestCalls).toHaveLength(requestsBeforeSettlement);
+      expect(workspace.history).toEqual(historyBeforeSettlement);
+      expect(workspace.updates.error).toBe("");
+      if (change === "context replacement") {
+        expect(workspace.sessionId.value).toBe("session-2");
+        expect(workspace.updates.payload.canonicalCommit).toBe(nextCommit);
+      }
+    } finally {
+      scope.stop();
+      historyResponse.resolve(savedHistory);
+      checkResponse.resolve({ ok: true });
+      await Promise.all([eventTask, previousCheck]);
+      await flushPromises();
+    }
+  });
+
+  it.each(["older first", "newer first"])("keeps one check owner across repeated Saves settling %s", async (order) => {
+    const savedCommit = "b".repeat(40);
+    const nextCommit = "c".repeat(40);
+    const savedHistory = { historySnapshotCommit: savedCommit, ok: true, versions: [{ commit: savedCommit }] };
+    const nextHistory = { historySnapshotCommit: nextCommit, ok: true, versions: [{ commit: nextCommit }] };
+    const savedResponse = Promise.withResolvers();
+    const nextResponse = Promise.withResolvers();
+    const checkResponse = Promise.withResolvers();
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1", sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("history") }));
+    const eventTasks = [];
+    let previousCheck;
+    try {
+      await nextTick();
+      await flushPromises();
+      mocks.historyHandler = vi.fn()
+        .mockImplementationOnce(() => savedResponse.promise)
+        .mockImplementationOnce(() => nextResponse.promise)
+        .mockResolvedValue(nextHistory);
+      mocks.updateCheckHandler = vi.fn(() => checkResponse.promise);
+      previousCheck = workspace.checkForUpdates({ force: false });
+      const sessionChanged = mocks.realtimeEvents.find(({ event }) => event === VIBE64_SESSION_CHANGED_EVENT);
+      const event = { payload: { reason: "session-save-completed", sessionId: "session-1" } };
+      eventTasks.push(sessionChanged.onEvent(event));
+      checkResponse.resolve({ canonicalCommit: nextCommit, ok: true });
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(1);
+      expect(workspace.updates.checking).toBe(true);
+      eventTasks.push(sessionChanged.onEvent(event));
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(2);
+
+      if (order === "older first") savedResponse.resolve(savedHistory);
+      else nextResponse.resolve(nextHistory);
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(2);
+      expect(mocks.updateCheckHandler).toHaveBeenCalledTimes(1);
+      expect(workspace.history.payload.historySnapshotCommit).toBe(order === "older first"
+        ? "a".repeat(40)
+        : nextCommit);
+      expect(workspace.history.loading).toBe(order === "older first");
+      if (order === "newer first") {
+        expect(workspace.updates.checking).toBe(false);
+      }
+
+      savedResponse.resolve(savedHistory);
+      nextResponse.resolve(nextHistory);
+      await Promise.all([...eventTasks, previousCheck]);
+      await flushPromises();
+      expect(mocks.historyHandler).toHaveBeenCalledTimes(2);
+      expect(mocks.updateCheckHandler).toHaveBeenCalledTimes(1);
+      expect(workspace.history).toMatchObject({ error: "", loading: false, payload: nextHistory });
+      expect(workspace.updates).toMatchObject({
+        checking: false, error: "", payload: { canonicalCommit: nextCommit }
+      });
+    } finally {
+      scope.stop();
+      savedResponse.resolve(savedHistory);
+      nextResponse.resolve(nextHistory);
+      checkResponse.resolve({ canonicalCommit: nextCommit, ok: true });
+      await Promise.all([...eventTasks, previousCheck]);
+      await flushPromises();
+    }
   });
 
   it("restores the last successful update check while loading repository history", async () => {

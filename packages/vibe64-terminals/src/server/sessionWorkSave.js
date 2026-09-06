@@ -600,6 +600,12 @@ function safeChangePath(value = "") {
   return filePath;
 }
 
+function exactFileDiffPathspecs(filePath) {
+  // Literal pathspecs still include descendants; exclude those, not the entry itself.
+  const escapedPath = filePath.replace(/[*?[\]\\]/gu, "\\$&");
+  return [`:(literal)${filePath}`, `:(glob,exclude)${escapedPath}/**`];
+}
+
 async function sessionChangeDiff(runCommand, context, work, requestedPath, {
   commandOptions = {},
   lineLimit = DEFAULT_CHANGE_DIFF_LINE_LIMIT,
@@ -610,7 +616,7 @@ async function sessionChangeDiff(runCommand, context, work, requestedPath, {
     throw saveError("That file is not part of the current saved-work difference.", "vibe64_session_change_not_found");
   }
   const result = await git(runCommand, context, [
-    "--literal-pathspecs",
+    "--no-literal-pathspecs",
     "diff",
     "--no-ext-diff",
     "--find-renames",
@@ -618,7 +624,7 @@ async function sessionChangeDiff(runCommand, context, work, requestedPath, {
     work.changeBaseCommit,
     work.worktreeTree,
     "--",
-    filePath
+    ...exactFileDiffPathspecs(filePath)
   ], {
     commandOptions,
     project
@@ -2879,6 +2885,7 @@ async function recoverSessionWorkSave({
 export {
   checkSessionUpdates,
   checkSessionUpdatesDirect,
+  exactFileDiffPathspecs,
   inspectSessionChangeDiff,
   inspectSessionChangeDiffDirect,
   inspectSessionChanges,

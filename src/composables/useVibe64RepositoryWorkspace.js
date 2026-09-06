@@ -68,6 +68,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   const updateChecks = new Map();
   const forcedUpdateFollowups = new Set();
   let activeChangesRefresh = null;
+  let activeSaveHistoryRefresh = null;
   let disposed = false;
 
   const context = computed(() => dashboardContext.value || {});
@@ -118,6 +119,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
       "changes",
       "currentDiff",
       "history",
+      "saveHistory",
       "updates",
       "versionDiff",
       "versionFiles"
@@ -446,13 +448,20 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     updates.errorCode = "";
     const promise = (async () => {
       try {
-        const previousHistorySnapshot = String(history.payload?.historySnapshotCommit || "").trim();
         const result = await requestJson(vibe64SessionCheckUpdatesPath(
         sessionsApiPath.value,
         sessionId.value
         ), {
           body: { force },
           method: "POST"
+        }).finally(async () => {
+          // Keep failed checks registered too, so Save does not immediately retry them.
+          while (
+            updateRequestIsCurrent(request) &&
+            activeSaveHistoryRefresh?.contextKey === request.contextKey
+          ) {
+            await activeSaveHistoryRefresh.settled;
+          }
         });
         if (!updateRequestIsCurrent(request)) {
           return false;
@@ -469,7 +478,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
           }
         } else if (
           !history.payload ||
-          String(result.canonicalCommit || "").trim() !== previousHistorySnapshot
+          String(result.canonicalCommit || "").trim() !== String(history.payload?.historySnapshotCommit || "").trim()
         ) {
           await loadHistory();
         }
@@ -577,6 +586,8 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     [sessionsApiPath, sessionId, activeView],
     async ([apiPath]) => {
       invalidateRequests();
+      activeSaveHistoryRefresh?.settle();
+      activeSaveHistoryRefresh = null;
       changes.error = "";
       changes.loading = false;
       changes.loadingMore = false;
@@ -662,7 +673,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
       repositoryStatusSessionId(payload) === sessionId.value &&
       repositoryStatusRealtimeShouldRefresh(payload)
     ),
-    onEvent: ({ payload = {} } = {}) => {
+    onEvent: async ({ payload = {} } = {}) => {
       const reason = String(payload?.reason || "").trim();
       const checkCanonical = repositoryStatusRealtimeNeedsCanonicalCheck(payload) || [
         "session-repository-checked",
@@ -673,7 +684,24 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         updates.canonicalChangePending = true;
       }
       if (activeView.value === "history" && reason === "session-save-completed") {
-        void loadHistory();
+        const refresh = beginRequest("saveHistory");
+        // Replacing or retiring this Save releases its waiting checks immediately.
+        refresh.settled = new Promise((resolve) => {
+          refresh.settle = resolve;
+        });
+        activeSaveHistoryRefresh?.settle();
+        activeSaveHistoryRefresh = refresh;
+        try {
+          await loadHistory();
+        } finally {
+          if (activeSaveHistoryRefresh === refresh) {
+            activeSaveHistoryRefresh = null;
+          }
+          refresh.settle();
+        }
+        if (!requestIsCurrent(refresh)) {
+          return;
+        }
       } else if (activeView.value === "changes" && !checkCanonical) {
         void requestChangesRefresh();
       }
@@ -687,6 +715,8 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
     disposed = true;
     invalidateRequests();
     activeChangesRefresh = null;
+    activeSaveHistoryRefresh?.settle();
+    activeSaveHistoryRefresh = null;
     updateChecks.clear();
     forcedUpdateFollowups.clear();
   });

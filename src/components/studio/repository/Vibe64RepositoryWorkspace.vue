@@ -271,11 +271,12 @@
     </section>
 
     <v-dialog
-      v-model="versionSheetOpen"
+      :model-value="versionSheetOpen"
       class="vibe64-repository-version-dialog"
       fullscreen
       scrollable
       transition="dialog-bottom-transition"
+      @update:model-value="!$event && closeVersion()"
     >
       <v-card class="vibe64-repository-version-dialog__card">
         <v-card-title class="vibe64-repository-version-dialog__header">
@@ -662,6 +663,7 @@ async function openVersion(version) {
 
 function closeVersion() {
   versionSheetOpen.value = false;
+  void selectVersion(null);
 }
 </script>
 
