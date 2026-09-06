@@ -61,6 +61,11 @@ authority in the background. Save remains unavailable until that authority
 check succeeds. The initially selected file difference comes from the same
 immutable worktree snapshot as the file list.
 
+History file paging and differences belong to the selected commit. Selecting
+another version clears the previous version's loading and error state. Late
+results from that previous selection cannot change the new view or prevent it
+from loading more files.
+
 ## Implementation map
 
 - The source-editor service owns explanation cache lookup, temporary conversation

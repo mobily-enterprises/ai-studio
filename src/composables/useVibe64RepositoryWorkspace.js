@@ -256,15 +256,20 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   }
 
   async function selectVersion(version) {
+    const request = beginRequest("versionFiles");
+    beginRequest("versionDiff");
     selectedVersion.value = version || null;
     selectedVersionPath.value = "";
     versionFiles.error = "";
+    versionFiles.loading = false;
+    versionFiles.loadingMore = false;
     versionFiles.payload = null;
+    versionDiff.error = "";
+    versionDiff.loading = false;
     versionDiff.payload = null;
     if (!version?.commit || !history.payload?.historySnapshotCommit) {
       return;
     }
-    const request = beginRequest("versionFiles");
     versionFiles.loading = true;
     try {
       const result = await requestJson(vibe64RepositoryVersionFilesPath(

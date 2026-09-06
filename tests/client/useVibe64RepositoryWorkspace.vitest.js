@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { nextTick, ref } from "vue";
+import { effectScope, nextTick, ref } from "vue";
 import { VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT } from "../../src/lib/vibe64SessionRequestConfig.js";
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   historyUpdateCheck: null,
   updateCheckHandler: null,
   updateCheck: null,
+  versionFilesHandler: null,
+  versionDiffHandler: null,
   realtimeEvents: [],
   requestCalls: []
 }));
@@ -24,6 +26,12 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
     return {
       async request(path, options = {}) {
         mocks.requestCalls.push({ options, path });
+        if (typeof mocks.versionFilesHandler === "function" && /\/history\/[^/]+\/files(?:\?|$)/u.test(String(path))) {
+          return mocks.versionFilesHandler(path, options);
+        }
+        if (typeof mocks.versionDiffHandler === "function" && /\/history\/[^/]+\/diff(?:\?|$)/u.test(String(path))) {
+          return mocks.versionDiffHandler(path, options);
+        }
         if (String(path).includes("/history")) {
           return {
             historySnapshotCommit: mocks.historyUpdateCheck?.canonicalCommit || "a".repeat(40),
@@ -88,6 +96,8 @@ describe("useVibe64RepositoryWorkspace", () => {
     mocks.historyUpdateCheck = null;
     mocks.updateCheckHandler = null;
     mocks.updateCheck = null;
+    mocks.versionFilesHandler = null;
+    mocks.versionDiffHandler = null;
     mocks.realtimeEvents.length = 0;
     mocks.requestCalls.length = 0;
   });
@@ -258,6 +268,208 @@ describe("useVibe64RepositoryWorkspace", () => {
       "/api/app/sample/vibe64/repository/history?sessionId=session-1",
       "/api/app/sample/vibe64/sessions/session-1/updates/check"
     ]);
+  });
+
+  it("releases previous version paging state and preserves a newer pending page", async () => {
+    const firstCommit = "a".repeat(40);
+    const secondCommit = "b".repeat(40);
+    const firstPage = Promise.withResolvers();
+    const secondPage = Promise.withResolvers();
+    const firstPageResult = { commit: firstCommit, files: [{ path: "a-next.txt" }], ok: true, truncated: false };
+    const secondPageResult = { commit: secondCommit, files: [{ path: "b-next.txt" }], ok: true, truncated: false };
+    const secondDiffResult = { commit: secondCommit, diff: "+current version B", ok: true, path: "b.txt" };
+    mocks.versionFilesHandler = vi.fn()
+      .mockResolvedValueOnce({ commit: firstCommit, files: [{ path: "a.txt" }], ok: true, truncated: true })
+      .mockImplementationOnce(() => firstPage.promise)
+      .mockResolvedValueOnce({ commit: secondCommit, files: [{ path: "b.txt" }], ok: true, truncated: true })
+      .mockImplementationOnce(() => secondPage.promise);
+    mocks.versionDiffHandler = vi.fn()
+      .mockResolvedValueOnce({ commit: firstCommit, diff: "+version A", ok: true, path: "a.txt" })
+      .mockResolvedValueOnce(secondDiffResult);
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("history") }));
+    let firstPaging;
+    let secondPaging;
+    try {
+      await nextTick();
+      await flushPromises();
+      await workspace.selectVersion({ commit: firstCommit });
+      firstPaging = workspace.loadMoreVersionFiles();
+      expect(mocks.versionFilesHandler).toHaveBeenCalledTimes(2);
+      expect(workspace.versionFiles.loadingMore).toBe(true);
+
+      await workspace.selectVersion({ commit: secondCommit });
+      expect(workspace.selectedVersion.value.commit).toBe(secondCommit);
+      expect(workspace.versionFiles.loading).toBe(false);
+      expect(workspace.versionFiles.loadingMore).toBe(false);
+      expect(workspace.selectedVersionPath.value).toBe("b.txt");
+      expect(workspace.versionDiff).toMatchObject({ error: "", loading: false, payload: secondDiffResult });
+
+      secondPaging = workspace.loadMoreVersionFiles();
+      expect(mocks.versionFilesHandler).toHaveBeenCalledTimes(4);
+      const secondPageUrl = new URL(mocks.versionFilesHandler.mock.calls[3][0], "http://vibe64.test");
+      expect(secondPageUrl.pathname).toBe(`/api/app/sample/vibe64/repository/history/${secondCommit}/files`);
+      expect(Object.fromEntries(secondPageUrl.searchParams)).toEqual({
+        historySnapshotCommit: firstCommit,
+        offset: "1",
+        sessionId: "session-1"
+      });
+
+      firstPage.resolve(firstPageResult);
+      await firstPaging;
+      expect(workspace.versionFiles.loadingMore).toBe(true);
+      expect(workspace.versionFiles.payload.files).toEqual([{ path: "b.txt" }]);
+
+      secondPage.resolve(secondPageResult);
+      await secondPaging;
+      expect(workspace.versionFiles.loadingMore).toBe(false);
+      expect(workspace.versionFiles.payload).toMatchObject({
+        commit: secondCommit,
+        files: [{ path: "b.txt" }, { path: "b-next.txt" }],
+        truncated: false
+      });
+      expect(workspace.versionDiff).toMatchObject({ error: "", loading: false, payload: secondDiffResult });
+    } finally {
+      firstPage.resolve(firstPageResult);
+      secondPage.resolve(secondPageResult);
+      await Promise.all([firstPaging, secondPaging]);
+      scope.stop();
+    }
+  });
+
+  it.each([
+    ["a pending diff when opening another version", { commit: "b".repeat(40) }, false],
+    ["a pending diff when clearing version selection", null, false],
+    ["a failed diff when opening another version", { commit: "b".repeat(40) }, true]
+  ])("retires %s", async (_scenario, nextVersion, settleFirst) => {
+    const oldDiff = Promise.withResolvers();
+    const oldFailure = { error: "The previous version diff failed.", ok: false };
+    mocks.versionFilesHandler = vi.fn()
+      .mockResolvedValueOnce({ files: [{ path: "a.txt" }], ok: true, truncated: false })
+      .mockResolvedValue({ files: [], ok: true, truncated: false });
+    mocks.versionDiffHandler = vi.fn(() => oldDiff.promise);
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("history") }));
+    let selectingFirst;
+    try {
+      await nextTick();
+      await flushPromises();
+      selectingFirst = workspace.selectVersion({ commit: "a".repeat(40) });
+      await flushPromises();
+      expect(mocks.versionDiffHandler).toHaveBeenCalledTimes(1);
+      expect(workspace.versionDiff.loading).toBe(true);
+      if (settleFirst) {
+        oldDiff.resolve(oldFailure);
+        await selectingFirst;
+        expect(workspace.versionDiff.error).toBe(oldFailure.error);
+      }
+
+      await workspace.selectVersion(nextVersion);
+      const afterSelection = {
+        diffError: workspace.versionDiff.error,
+        diffLoading: workspace.versionDiff.loading,
+        filesLoading: workspace.versionFiles.loading
+      };
+      oldDiff.resolve(oldFailure);
+      await selectingFirst;
+
+      expect({
+        afterSelection,
+        diffErrorAfterSettlement: workspace.versionDiff.error,
+        diffLoadingAfterSettlement: workspace.versionDiff.loading
+      }).toEqual({
+        afterSelection: { diffError: "", diffLoading: false, filesLoading: false },
+        diffErrorAfterSettlement: "",
+        diffLoadingAfterSettlement: false
+      });
+      expect(workspace.selectedVersion.value).toEqual(nextVersion);
+      expect(workspace.selectedVersionPath.value).toBe("");
+      expect(workspace.versionDiff.payload).toBeNull();
+      expect(workspace.versionFiles.error).toBe("");
+      expect(mocks.versionDiffHandler).toHaveBeenCalledTimes(1);
+    } finally {
+      oldDiff.resolve(oldFailure);
+      await selectingFirst;
+      scope.stop();
+    }
+  });
+
+  it("shows the current version diff failure and accepts a successful retry", async () => {
+    const firstCommit = "a".repeat(40);
+    const secondCommit = "b".repeat(40);
+    const currentDiff = Promise.withResolvers();
+    const retryDiff = Promise.withResolvers();
+    const currentFailure = { error: "The current version diff failed.", ok: false };
+    const retryResult = { commit: secondCommit, diff: "+retried version B", ok: true, path: "b.txt" };
+    mocks.versionFilesHandler = vi.fn()
+      .mockResolvedValueOnce({ commit: firstCommit, files: [{ path: "a.txt" }], ok: true, truncated: false })
+      .mockResolvedValueOnce({ commit: secondCommit, files: [{ path: "b.txt" }], ok: true, truncated: false });
+    mocks.versionDiffHandler = vi.fn()
+      .mockResolvedValueOnce({ commit: firstCommit, diff: "+version A", ok: true, path: "a.txt" })
+      .mockImplementationOnce(() => currentDiff.promise)
+      .mockImplementationOnce(() => retryDiff.promise);
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("history") }));
+    let selectingCurrent;
+    let retrying;
+    try {
+      await nextTick();
+      await flushPromises();
+      await workspace.selectVersion({ commit: firstCommit });
+      expect(workspace.versionDiff.payload).toMatchObject({ commit: firstCommit, path: "a.txt" });
+
+      selectingCurrent = workspace.selectVersion({ commit: secondCommit });
+      await flushPromises();
+      expect(mocks.versionDiffHandler).toHaveBeenCalledTimes(2);
+      expect(workspace.selectedVersion.value.commit).toBe(secondCommit);
+      expect(workspace.selectedVersionPath.value).toBe("b.txt");
+      expect(workspace.versionDiff).toMatchObject({ error: "", loading: true, payload: null });
+
+      currentDiff.resolve(currentFailure);
+      await selectingCurrent;
+      expect(workspace.versionDiff).toMatchObject({ error: currentFailure.error, loading: false, payload: null });
+      expect(workspace.versionFiles).toMatchObject({ error: "", loading: false });
+
+      retrying = workspace.selectVersionFile({ path: "b.txt" });
+      expect(mocks.versionDiffHandler).toHaveBeenCalledTimes(3);
+      expect(workspace.versionDiff).toMatchObject({ error: "", loading: true, payload: null });
+      const retryUrl = new URL(mocks.versionDiffHandler.mock.calls[2][0], "http://vibe64.test");
+      expect(retryUrl.pathname).toBe(`/api/app/sample/vibe64/repository/history/${secondCommit}/diff`);
+      expect(Object.fromEntries(retryUrl.searchParams)).toEqual({
+        historySnapshotCommit: firstCommit,
+        path: "b.txt",
+        sessionId: "session-1"
+      });
+
+      retryDiff.resolve(retryResult);
+      await retrying;
+      expect(workspace.selectedVersion.value.commit).toBe(secondCommit);
+      expect(workspace.selectedVersionPath.value).toBe("b.txt");
+      expect(workspace.versionDiff).toMatchObject({ error: "", loading: false, payload: retryResult });
+    } finally {
+      currentDiff.resolve(currentFailure);
+      retryDiff.resolve(retryResult);
+      await Promise.all([selectingCurrent, retrying]);
+      scope.stop();
+    }
   });
 
   it("keeps cached repository state quiet while renewal owns the source and refreshes on release", async () => {
