@@ -68,21 +68,23 @@ vi.mock("@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue", 
 }));
 
 import Vibe64TemporaryAiWorkspace from "../../src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
+import Vibe64EphemeralConversationMessages from "../../src/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue";
 
-const workspaceComponentPath = path.resolve(
-  "src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"
-);
-const workspaceComponentSource = fs.readFileSync(workspaceComponentPath, "utf8");
-const { descriptor: workspaceDescriptor } = parse(workspaceComponentSource, {
-  filename: workspaceComponentPath
-});
-const workspaceScript = compileScript(workspaceDescriptor, { id: "temporary-ai-workspace-test" });
-const workspaceTemplate = compile(workspaceDescriptor.template.content, {
-  bindingMetadata: workspaceScript.bindings,
-  mode: "function",
-  prefixIdentifiers: true
-});
-Vibe64TemporaryAiWorkspace.render = new Function("Vue", workspaceTemplate.code)(VueRuntime);
+for (const [name, component] of [
+  ["Vibe64TemporaryAiWorkspace", Vibe64TemporaryAiWorkspace],
+  ["Vibe64EphemeralConversationMessages", Vibe64EphemeralConversationMessages]
+]) {
+  const componentPath = path.resolve(`src/components/studio/vibe64-session/${name}.vue`);
+  const componentSource = fs.readFileSync(componentPath, "utf8");
+  const { descriptor } = parse(componentSource, { filename: componentPath });
+  const script = compileScript(descriptor, { id: `${name}-test` });
+  const template = compile(descriptor.template.content, {
+    bindingMetadata: script.bindings,
+    mode: "function",
+    prefixIdentifiers: true
+  });
+  component.render = new Function("Vue", template.code)(VueRuntime);
+}
 
 function deferred() {
   let resolve;
@@ -323,6 +325,77 @@ describe("Temporary AI recovery workspace accessibility", () => {
     app.unmount();
   });
 
+  it("renders labeled assistant progress in order and updates it without exposing user-message progress", async () => {
+    const temporary = temporaryAiTestState(deferred());
+    temporary.tasks.value = [{
+      agentSettings: {},
+      busy: true,
+      draft: "",
+      error: "",
+      id: "recovery-task",
+      messages: [
+        {
+          id: "user-1",
+          progressUpdates: [{ id: "user-progress", text: "This is not assistant progress." }],
+          role: "user",
+          text: "Check this repair."
+        },
+        {
+          id: "assistant-1",
+          progressUpdates: [
+            { id: "progress-1", text: "Inspecting the conflict." },
+            { id: "progress-2", text: "Checking the repair." }
+          ],
+          role: "assistant",
+          status: "inProgress",
+          text: ""
+        }
+      ],
+      policy: "workspace_write",
+      title: "Fix workspace preparation"
+    }];
+    temporary.activeTaskId.value = "recovery-task";
+    temporary.open.value = true;
+    temporaryProvider.value = temporary;
+    const container = { children: [], parent: null, type: "root" };
+    const { app } = mountWorkspace(container, {
+      sessionId: "session-1",
+      sessionsApiPath: "/api/vibe64/sessions"
+    });
+    try {
+      await flushWorkspaceReveal();
+      const progress = findNode(container, (node) => (
+        node.props?.["aria-label"] === "Temporary AI progress"
+      ));
+      expect(progress).toBeTruthy();
+      expect(nodeText(progress)).toBe("Inspecting the conflict. Checking the repair.");
+
+      const userMessage = findNode(container, (node) => (
+        node.type === "article" && nodeText(node).includes("Check this repair.")
+      ));
+      expect(userMessage).toBeTruthy();
+      expect(findNode(userMessage, (node) => (
+        node.props?.["aria-label"] === "Temporary AI progress"
+      ))).toBeNull();
+      expect(nodeText(container)).not.toContain("This is not assistant progress.");
+
+      temporary.tasks.value[0].messages[1].progressUpdates.push({
+        id: "progress-3",
+        text: "The repair is ready for verification."
+      });
+      await nextTick();
+      const updatedProgress = findNode(container, (node) => (
+        node.props?.["aria-label"] === "Temporary AI progress"
+      ));
+      expect(nodeText(updatedProgress)).toBe(
+        "Inspecting the conflict. Checking the repair. The repair is ready for verification."
+      );
+      expect(nodeText(container)).not.toContain("This is not assistant progress.");
+    } finally {
+      app.unmount();
+    }
+  });
+
   it("makes independent product verification the recovery headline", async () => {
     const startResult = deferred();
     const temporary = temporaryAiTestState(startResult);
@@ -454,6 +527,10 @@ describe("Temporary AI recovery workspace accessibility", () => {
     expect(temporary.closeTask).not.toHaveBeenCalled();
     expect(temporary.tasks.value).toHaveLength(2);
     expect(temporary.activeTaskId.value).toBe("first");
+    const workspaceComponentSource = fs.readFileSync(
+      path.resolve("src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue"),
+      "utf8"
+    );
     expect(workspaceComponentSource).toContain("position: sticky");
     app.unmount();
   });

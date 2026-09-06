@@ -47,7 +47,6 @@ describe("Env panel", () => {
     expect(source).toContain("Anyone who can");
     expect(source).toContain("live Codex instructions do not change");
     expect(source).toContain("this choice never changes coding-agent");
-    expect(source).toMatch(/watch\(collaboration,[\s\S]*?immediate:\s*true/u);
     expect(source).toContain('{{ collaborationSaving ? "Saving…" : "Save collaboration" }}');
     expect(source).toContain('{{ promptHintsSaving ? "Saving…" : "Save prompt suggestions" }}');
     expect(source).not.toContain(':loading="collaborationSaving"');

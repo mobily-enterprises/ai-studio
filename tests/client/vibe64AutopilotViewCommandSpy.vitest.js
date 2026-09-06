@@ -165,7 +165,6 @@ describe("Vibe64 direct session view", () => {
     expect(temporaryAi).toContain('v-for="task in temporary.tasks.value"');
     expect(temporaryAi).toContain("<Vibe64AgentSettingsMenu");
     expect(temporaryAi).toContain("<Vibe64AutopilotPromptTextarea");
-    expect(temporaryAi).toContain('aria-label="Temporary AI progress"');
     expect(temporaryAi).toContain("data-temporary-ai-recovery");
     expect(temporaryAi).toContain("AI repair in progress");
     expect(temporaryAi).toContain("Repair verified");
@@ -175,7 +174,6 @@ describe("Vibe64 direct session view", () => {
     expect(temporaryAi).toContain('role="status"');
     expect(temporaryAi).toContain("vibe64.temporary-ai.feedback");
     expect(temporaryAi).toContain("finished. Review the result before continuing.");
-    expect(temporaryAi).toContain('v-for="update in message.progressUpdates"');
     expect(temporaryAi).not.toContain("Attach visible preview");
     expect(temporaryAi).not.toContain("console & network");
     expect(temporaryAiComposable).toContain("beforeunload");
