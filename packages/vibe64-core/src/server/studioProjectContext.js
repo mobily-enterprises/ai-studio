@@ -826,6 +826,7 @@ function createStudioProjectContext({
       };
     }
 
+    const listingTargetRoot = selectedTargetRoot;
     const listed = await listWorkspaceProjects();
     const projects = listed.projects
       .map((entry) => {
@@ -845,7 +846,17 @@ function createStudioProjectContext({
         };
       })
       .sort((left, right) => left.slug.localeCompare(right.slug));
-    const selected = projects.find((project) => project.selected) || await currentProjectRecord();
+    const catalogSelection = projects.find((project) => project.selected);
+    if (
+      !catalogSelection &&
+      listingTargetRoot &&
+      selectedTargetRoot === listingTargetRoot &&
+      targetIsCatalogProjectHome(listingTargetRoot)
+    ) {
+      selectedTargetRoot = "";
+      selectionSource = "";
+    }
+    const selected = catalogSelection || await currentProjectRecord();
     return {
       ok: true,
       currentProject: selected,
@@ -904,7 +915,7 @@ function createStudioProjectContext({
       const runtimeRoot = projectRuntimeRootForSlug(entry.name);
       if (await pathExists(resolveProjectRecordPath({
         projectRuntimeRoot: runtimeRoot
-      }))) {
+      })) && !await pathExists(projectContextRootForSlug(entry.name))) {
         await rm(runtimeRoot, {
           force: true,
           recursive: true

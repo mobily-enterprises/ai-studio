@@ -41,7 +41,11 @@ inspection runs application verification or workspace preparation.
 
 The hosted project namespace is the catalog authority. When that namespace has
 been removed outside Vibe64, the next catalog read removes its stale private
-project state so the deleted project cannot remain or block recreation.
+project state so the deleted project cannot remain or block recreation. If it
+was selected, that read retires the selection as well; an explicit external
+source folder remains independent of the hosted catalog. Cleanup rechecks the
+exact namespace before deleting suspected orphan state, and a listing cannot
+retire a different target selected while it was reading.
 
 Durable project mutations publish one shared project refresh event. Consumers
 use it only to invalidate their project list, selection, settings, repository,

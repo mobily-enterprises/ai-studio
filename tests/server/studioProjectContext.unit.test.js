@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -29,6 +31,9 @@ import {
 import {
   resolveVibe64Roots
 } from "../../packages/vibe64-core/src/server/studioRoots.js";
+import {
+  createService as createProjectService
+} from "../../packages/vibe64-project/src/server/service.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -786,6 +791,126 @@ test("Studio project listing removes private state whose hosted namespace is gon
   });
 });
 
+for (const selectionSource of ["workspace", "explicit"]) {
+  test(`Studio project listing clears a deleted hosted ${selectionSource} selection from the context and public service`, async () => {
+    await withTemporaryRoot(async (root) => {
+      const projectsRoot = path.join(root, "projects");
+      const slug = "removed-selected-project";
+      const projectRoot = path.join(projectsRoot, slug);
+      const context = createStudioProjectContext({
+        explicitManagedSourceRoot: path.join(root, "managed-source"),
+        explicitProjectsRoot: projectsRoot,
+        explicitSystemRoot: path.join(root, "system"),
+        explicitTargetRoot: selectionSource === "explicit" ? projectRoot : "",
+        env: {},
+        home: root
+      });
+      const service = createProjectService({ env: {}, projectContext: context });
+      await context.createWorkspaceProjectRecord({ slug });
+      const selected = selectionSource === "workspace"
+        ? await service.selectProject({ slug })
+        : await service.listProjects();
+      const runtimeRoot = context.projectRuntimeRootForSlug(slug);
+      const staleSessionPath = path.join(runtimeRoot, "sessions", "stale.txt");
+      assert.equal(selected.ok, true);
+      assert.equal(selected.currentProject.path, projectRoot);
+      assert.equal(context.targetRoot, projectRoot);
+      assert.equal(context.selectionSource, selectionSource);
+      await writeTestFile(staleSessionPath, "stale\n");
+      await rm(projectRoot, { recursive: true });
+
+      const publicList = await service.listProjects();
+      const contextList = await context.listProjects();
+
+      assert.equal(publicList.ok, true);
+      assert.equal(publicList.hasSelection, false);
+      assert.equal(publicList.currentProject, null);
+      assert.equal(publicList.targetRoot, "");
+      assert.deepEqual(publicList.projects, []);
+      assert.equal(contextList.ok, true);
+      assert.equal(contextList.hasSelection, false);
+      assert.equal(contextList.currentProject, null);
+      assert.equal(contextList.targetRoot, "");
+      assert.deepEqual(contextList.projects, []);
+      assert.equal(context.targetRoot, "");
+      assert.equal(context.selectionSource, "");
+      assert.equal(context.selectedProject, null);
+      assert.equal(context.hasSelection(), false);
+      assert.throws(() => context.requireSelectedTargetRoot(), { code: "vibe64_project_not_selected" });
+      await assert.rejects(() => access(runtimeRoot), { code: "ENOENT" });
+
+      const recreated = await service.createProject({ slug });
+      assert.equal(recreated.ok, true);
+      assert.equal(recreated.currentProject.slug, slug);
+      assert.equal(recreated.hasSelection, true);
+      assert.equal(context.targetRoot, projectRoot);
+      assert.equal(context.selectionSource, "workspace");
+      assert.deepEqual(recreated.projects.map((project) => project.slug), [slug]);
+      await access(context.projectRecordPathForSlug(slug));
+      await assert.rejects(() => access(staleSessionPath), { code: "ENOENT" });
+    });
+  });
+}
+
+test("an older catalog listing cannot retire a newly created and selected project", async (t) => {
+  await withTemporaryRoot(async (root) => {
+    const projectsRoot = path.join(root, "projects");
+    const context = createStudioProjectContext({
+      explicitManagedSourceRoot: path.join(root, "managed-source"),
+      explicitProjectsRoot: projectsRoot,
+      explicitSystemRoot: path.join(root, "system"),
+      env: {},
+      home: root
+    });
+    await context.createWorkspaceProject({ slug: "earlier-project" });
+    await rm(path.join(projectsRoot, "earlier-project"), { recursive: true });
+    const captured = Promise.withResolvers();
+    const resume = Promise.withResolvers();
+    const realReaddir = fs.promises.readdir;
+    let holdNextCatalogRead = true;
+    const readdirMock = t.mock.method(fs.promises, "readdir", async (...args) => {
+      const entries = await realReaddir(...args);
+      if (args[0] === projectsRoot && holdNextCatalogRead) {
+        holdNextCatalogRead = false;
+        captured.resolve(entries);
+        await resume.promise;
+      }
+      return entries;
+    });
+    syncBuiltinESMExports();
+    let earlierListing;
+    try {
+      earlierListing = context.listProjects();
+      assert.deepEqual(await captured.promise, []);
+      await context.createWorkspaceProjectRecord({ slug: "newly-selected-project" });
+      const selected = await context.selectWorkspaceProject({ slug: "newly-selected-project" });
+      const currentTarget = path.join(projectsRoot, "newly-selected-project");
+      const currentRecordPath = context.projectRecordPathForSlug("newly-selected-project");
+      assert.equal(selected.currentProject.path, currentTarget);
+      const currentMetadata = await readFile(currentRecordPath, "utf8");
+
+      resume.resolve();
+      await earlierListing;
+
+      assert.equal(context.targetRoot, currentTarget);
+      assert.equal(context.selectionSource, "workspace");
+      assert.equal(context.hasSelection(), true);
+      assert.equal(context.selectedProject.slug, "newly-selected-project");
+      assert.equal(await readFile(currentRecordPath, "utf8"), currentMetadata);
+      const service = createProjectService({ env: {}, projectContext: context });
+      const publicList = await service.listProjects();
+      assert.equal(publicList.hasSelection, true);
+      assert.equal(publicList.currentProject.path, currentTarget);
+      assert.deepEqual(publicList.projects.map((project) => project.slug), ["newly-selected-project"]);
+    } finally {
+      readdirMock.mock.restore();
+      syncBuiltinESMExports();
+      resume.resolve();
+      await earlierListing?.catch(() => {});
+    }
+  });
+});
+
 test("Studio project context accepts explicit targets without treating them as workspace projects", async () => {
   await withTemporaryRoot(async (root) => {
     const projectsRoot = path.join(root, "projects");
@@ -802,14 +927,26 @@ test("Studio project context accepts explicit targets without treating them as w
       env: {},
       home: root
     });
+    await context.createWorkspaceProjectRecord({ slug: "removed-other-project" });
+    await rm(path.join(projectsRoot, "removed-other-project"), { recursive: true });
     const listed = await context.listProjects();
+    const service = createProjectService({ env: {}, projectContext: context });
+    const publicList = await service.listProjects();
 
     assert.equal(context.targetRoot, externalTarget);
+    assert.equal(context.selectionSource, "explicit");
+    assert.equal(context.hasSelection(), true);
     assert.equal(listed.hasSelection, true);
     assert.equal(listed.currentProject.path, externalTarget);
     assert.equal(listed.currentProject.external, true);
     assert.equal(listed.currentProject.slug, "external-app");
     assert.deepEqual(listed.projects, []);
+    assert.equal(publicList.ok, true);
+    assert.equal(publicList.hasSelection, true);
+    assert.equal(publicList.currentProject.path, externalTarget);
+    assert.equal(publicList.currentProject.sourceRoot, externalTarget);
+    assert.deepEqual(publicList.projects.map((project) => project.path), [externalTarget]);
+    await assert.rejects(() => access(context.projectRuntimeRootForSlug("removed-other-project")), { code: "ENOENT" });
 
     const requestContext = await resolveProjectRequestContext({
       projectContext: context,
