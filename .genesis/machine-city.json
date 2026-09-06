@@ -14521,7 +14521,7 @@
       "title": "useVibe64SessionTypingPresence.js"
     },
     {
-      "bytes": 57533,
+      "bytes": 57409,
       "districtId": "directory:src/composables",
       "extractors": [
         "javascript"
@@ -14617,14 +14617,13 @@
         "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.saveDirtyBuffers:function:1713:3",
         "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.saveNow:function:1756:3",
         "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.openRequest:function:1767:3",
-        "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.refresh:function:1778:3",
-        "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.handleWindowFocus:function:1783:3"
+        "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.refresh:function:1778:3"
       ],
-      "hash": "sha256:5caa8b3b068ca427f3a242adfbfad9a28b98db816ad28298934399690d7560bf",
+      "hash": "sha256:8f4c79de81dcf7021c3740ebdbeb5a03de9fbca670577a05e61ddf72fd772067",
       "id": "file:src/composables/useVibe64SourceEditor.js",
-      "internalFunctionCount": 90,
+      "internalFunctionCount": 89,
       "language": "javascript",
-      "lines": 1913,
+      "lines": 1907,
       "mode": 33188,
       "path": "src/composables/useVibe64SourceEditor.js",
       "presentationCampusId": "presentation-campus:source:src/composables",
@@ -17029,7 +17028,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:afc1b6fa86feb6dcd5fbcfceeb20f94bff93903ce61dd913460bf565dd07deaf",
+  "codeHash": "sha256:ee1b8b7f32c9f6584943f86c155c525029f5be41edc4f2b245d12e032e9c4a46",
   "diagnostics": [],
   "districts": [
     {
@@ -156586,25 +156585,6 @@
       "parameters": [],
       "path": "src/composables/useVibe64SourceEditor.js",
       "qualifiedName": "useVibe64SourceEditor.refresh",
-      "role": "source",
-      "static": false,
-      "visibility": "internal"
-    },
-    {
-      "async": false,
-      "column": 3,
-      "container": "useVibe64SourceEditor",
-      "extractor": "javascript",
-      "fileId": "file:src/composables/useVibe64SourceEditor.js",
-      "generator": false,
-      "id": "function:src/composables/useVibe64SourceEditor.js:useVibe64SourceEditor.handleWindowFocus:function:1783:3",
-      "kind": "function",
-      "language": "javascript",
-      "line": 1783,
-      "name": "handleWindowFocus",
-      "parameters": [],
-      "path": "src/composables/useVibe64SourceEditor.js",
-      "qualifiedName": "useVibe64SourceEditor.handleWindowFocus",
       "role": "source",
       "static": false,
       "visibility": "internal"
