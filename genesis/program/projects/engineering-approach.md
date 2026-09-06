@@ -22,6 +22,11 @@ standalone source or the chosen hosted session source, so it follows ordinary
 source history; Genesis preserves any project-specific requirements already in
 that document.
 
+Refreshing the same source preserves an unsaved profile choice. Selecting a
+different project or source loads that source's choice instead. Save remains
+pending until its canonical refresh finishes, so a newly enabled choice cannot
+be overwritten by the previous save's refresh.
+
 When a hosted project has no available source, the setting stays visibly
 unavailable instead of treating the project metadata namespace as source. An
 active session is selected automatically when needed, then recorded in the URL

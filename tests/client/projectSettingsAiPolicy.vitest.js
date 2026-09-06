@@ -8,6 +8,7 @@ import {
   defineComponent,
   h,
   nextTick,
+  reactive,
   ref,
   ssrContextKey
 } from "vue";
@@ -19,6 +20,7 @@ const projectSettingsMocks = vi.hoisted(() => ({
   dialog: vi.fn(),
   endpointOptions: [],
   engineeringResource: null,
+  projectSlug: null,
   realtimeOptions: [],
   resource: null,
   route: { query: {} },
@@ -61,7 +63,7 @@ vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
 
 vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
   useVibe64ProjectSlug() {
-    return ref("project-a");
+    return projectSettingsMocks.projectSlug;
   }
 }));
 
@@ -394,9 +396,10 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     projectSettingsMocks.dialog.mockReset();
     projectSettingsMocks.endpointOptions.length = 0;
     projectSettingsMocks.engineeringResource = createEngineeringResource();
+    projectSettingsMocks.projectSlug = ref("project-a");
     projectSettingsMocks.realtimeOptions.length = 0;
     projectSettingsMocks.resource = createResource();
-    projectSettingsMocks.route.query = { sessionId: "session-a" };
+    projectSettingsMocks.route = reactive({ query: { sessionId: "session-a" } });
     projectSettingsMocks.router.replace.mockReset();
     projectSettingsMocks.sessionEventMatches.mockClear();
   });
@@ -742,6 +745,171 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(projectSettingsMocks.engineeringResource.reload).toHaveBeenCalledOnce();
 
     app.unmount();
+  });
+
+  it.each(["focused.v1", "high-assurance.v1"])(
+    "preserves an unsaved engineering choice when the same source refreshes with %s",
+    async (profile) => {
+      const { app, container } = mountPanel();
+      try {
+        findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+        await nextTick();
+        projectSettingsMocks.engineeringResource.data.value = createEngineeringResource({ profile }).data.value;
+        await nextTick();
+
+        expect(findField(container, "Engineering profile").props.modelValue).toBe("durable.v1");
+        expect(findButton(container, "Save engineering approach").props.disabled).toBe(false);
+      } finally {
+        app.unmount();
+      }
+    }
+  );
+
+  it("preserves an engineering draft across an unresolved query transition for the same source", async () => {
+    const { app, container } = mountPanel();
+    try {
+      findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      projectSettingsMocks.engineeringResource.isLoading.value = true;
+      projectSettingsMocks.engineeringResource.data.value = undefined;
+      await nextTick();
+      projectSettingsMocks.engineeringResource.data.value = createEngineeringResource().data.value;
+      projectSettingsMocks.engineeringResource.isLoading.value = false;
+      await nextTick();
+
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(false);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  it("keeps the engineering save pending until its canonical refresh finishes", async () => {
+    const refreshStarted = createDeferred();
+    const refresh = createDeferred();
+    const { app, container } = mountPanel();
+    let saving;
+    try {
+      findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      projectSettingsMocks.engineeringResource.reload.mockImplementationOnce(async () => {
+        refreshStarted.resolve();
+        await refresh.promise;
+        const data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+        projectSettingsMocks.engineeringResource.data.value = data;
+        return { data };
+      });
+      saving = findButton(container, "Save engineering approach").props.onClick();
+      await refreshStarted.promise;
+      await nextTick();
+
+      expect(projectSettingsMocks.commands[3].isRunning).toBe(false);
+      expect(findField(container, "Engineering profile").props.disabled).toBe(true);
+      expect(findButton(container, "Saving…").props.disabled).toBe(true);
+      await findButton(container, "Saving…").props.onClick();
+      expect(projectSettingsMocks.commands[3].run).toHaveBeenCalledOnce();
+      refresh.resolve();
+      await saving;
+      await nextTick();
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findField(container, "Engineering profile").props.disabled).toBe(false);
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      refresh.resolve();
+      await saving;
+      app.unmount();
+    }
+  });
+
+  it.each(["save", "refresh"])("releases the engineering action after a %s failure and permits retry", async (stage) => {
+    const { app, container } = mountPanel();
+    try {
+      const failure = new Error(`Controlled engineering ${stage} failure`);
+      if (stage === "save") projectSettingsMocks.commands[3].run.mockRejectedValueOnce(failure);
+      else projectSettingsMocks.engineeringResource.reload.mockRejectedValueOnce(failure);
+      findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+
+      await expect(findButton(container, "Save engineering approach").props.onClick()).rejects.toBe(failure);
+      await nextTick();
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findField(container, "Engineering profile").props.disabled).toBe(false);
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(false);
+      await findButton(container, "Save engineering approach").props.onClick();
+      expect(projectSettingsMocks.commands[3].run).toHaveBeenCalledTimes(2);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  it("updates a clean engineering choice and marks a saved draft clean", async () => {
+    const { app, container } = mountPanel();
+    try {
+      projectSettingsMocks.engineeringResource.data.value = createEngineeringResource({
+        profile: "high-assurance.v1"
+      }).data.value;
+      await nextTick();
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("high-assurance.v1");
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
+
+      findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      projectSettingsMocks.engineeringResource.reload.mockImplementationOnce(async () => {
+        const data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+        projectSettingsMocks.engineeringResource.data.value = data;
+        return { data };
+      });
+      await findButton(container, "Save engineering approach").props.onClick();
+      await nextTick();
+
+      expect(projectSettingsMocks.commands[3].run).toHaveBeenCalledWith({
+        profile: "durable.v1",
+        sessionId: "session-a"
+      });
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  it("does not carry a dirty engineering choice into another session source", async () => {
+    const { app, container } = mountPanel();
+    try {
+      findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      projectSettingsMocks.route.query = { sessionId: "session-b" };
+      projectSettingsMocks.engineeringResource.data.value = createEngineeringResource({
+        profile: "high-assurance.v1",
+        sessionId: "session-b"
+      }).data.value;
+      await nextTick();
+
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("high-assurance.v1");
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      app.unmount();
+    }
+  });
+
+  it("does not carry a dirty engineering choice between projects with the same local source identity", async () => {
+    projectSettingsMocks.engineeringResource = createEngineeringResource({ sessionId: "" });
+    projectSettingsMocks.engineeringResource.data.value.engineering.source.rootKind = "standalone-source";
+    const { app, container } = mountPanel();
+    try {
+      findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      projectSettingsMocks.projectSlug.value = "project-b";
+      const data = createEngineeringResource({ profile: "high-assurance.v1", sessionId: "" }).data.value;
+      data.engineering.source.rootKind = "standalone-source";
+      projectSettingsMocks.engineeringResource.data.value = data;
+      await nextTick();
+
+      expect(findField(container, "Engineering profile").props.modelValue).toBe("high-assurance.v1");
+      expect(findButton(container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      app.unmount();
+    }
   });
 
   it("keeps an unavailable source error in the engineering section", () => {

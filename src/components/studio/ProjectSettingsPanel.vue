@@ -514,7 +514,7 @@ const loadError = computed(() => String(
 const databaseSaving = computed(() => databaseSaveCommand.isRunning === true);
 const collaborationSaving = computed(() => collaborationSaveCommand.isRunning === true);
 const promptHintsSaving = computed(() => promptHintsSaveCommand.isRunning === true);
-const engineeringSaving = computed(() => engineeringSaveCommand.isRunning === true);
+const engineeringSaving = ref(false);
 const databaseChanged = computed(() => (
   managed.value && scopeDraft.value !== developmentDatabase.value.scope
 ));
@@ -555,10 +555,20 @@ watch(() => promptHints.value.enabled, (value) => {
   immediate: true
 });
 
-watch(engineering, (value) => {
+let engineeringSource = null;
+watch([projectSlug, engineering], ([slug, value]) => {
+  // A query-key transition can temporarily clear the same source's result.
+  if (!value.source) return;
+  const sourceChanged = !engineeringSource ||
+    engineeringSource.projectSlug !== slug ||
+    engineeringSource.rootKind !== value.source.rootKind ||
+    engineeringSource.sessionId !== value.source.sessionId;
   const profile = String(value.profile?.id || "").trim();
-  engineeringProfileDraft.value = profile;
+  if (sourceChanged || engineeringProfileDraft.value === savedEngineeringProfile.value) {
+    engineeringProfileDraft.value = profile;
+  }
   savedEngineeringProfile.value = profile;
+  engineeringSource = { projectSlug: slug, ...value.source };
   const sourceSessionId = String(value.source?.sessionId || "").trim();
   if (!routeSessionId.value && sourceSessionId) {
     void router.replace({
@@ -652,11 +662,16 @@ async function saveEngineeringProfile() {
   if (!engineeringChanged.value || engineeringSaving.value) {
     return;
   }
-  await engineeringSaveCommand.run({
-    profile: engineeringProfileDraft.value,
-    sessionId: routeSessionId.value || String(engineering.value.source?.sessionId || "").trim()
-  });
-  await engineeringResource.reload();
+  engineeringSaving.value = true;
+  try {
+    await engineeringSaveCommand.run({
+      profile: engineeringProfileDraft.value,
+      sessionId: routeSessionId.value || String(engineering.value.source?.sessionId || "").trim()
+    });
+    await engineeringResource.reload();
+  } finally {
+    engineeringSaving.value = false;
+  }
 }
 
 function openPersonalSettings() {
