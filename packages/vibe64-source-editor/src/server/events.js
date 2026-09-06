@@ -10,7 +10,9 @@ function createSourceEditorPublisher(events, {
   if (!events || typeof events.publish !== "function") {
     throw new TypeError("Source editor event publication requires runtime.events.");
   }
-  return async function publishSourceEditorEvent(result = {}) {
+  return async function publishSourceEditorEvent(result = {}, {
+    operation = "updated"
+  } = {}) {
     const payload = toPayload({ result });
     const sessionId = String(payload.sessionId || "").trim();
     const path = String(payload.path || "").trim();
@@ -21,7 +23,7 @@ function createSourceEditorPublisher(events, {
       type: "entity.changed",
       source: "vibe64",
       entity: "source_editor_file",
-      operation: "updated",
+      operation,
       entityId: `${sessionId}:${path}`,
       scope: Object.freeze({
         kind: "global",

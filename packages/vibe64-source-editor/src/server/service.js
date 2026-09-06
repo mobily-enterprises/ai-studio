@@ -786,6 +786,7 @@ function createService({
           const file = await createSourceEditorFile(context, input);
           return {
             file,
+            fileChange: sourceEditorFileChange(context, input, file),
             revealTree: await sourceEditorFileRevealTree(context, file.path),
             ok: true
           };

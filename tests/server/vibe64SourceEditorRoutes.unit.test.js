@@ -71,3 +71,68 @@ test("source explanation routes use the authenticated Vibe64 actor", async () =>
     });
   });
 });
+
+test("source file creation publishes a created refresh after the durable write", async () => {
+  await withLocalRequestBypass(async () => {
+    await withRouteProject(async ({ apiRouteBase, projectContext }) => {
+      const calls = [];
+      const created = {
+        file: { path: "src/new.js" },
+        fileChange: {
+          hash: "hash-1",
+          originId: "tab-1",
+          path: "src/new.js",
+          projectSlug: "unit_project",
+          sessionId: "session-1"
+        },
+        ok: true
+      };
+      const sourceEditor = {
+        async createFile(input) {
+          calls.push(["create", input]);
+          return created;
+        },
+        async readTree() {
+          return { ok: true, tree: [] };
+        }
+      };
+      const app = testRouteApp();
+      registerRoutes(app.http, {
+        async publishFileChanged(result, options) {
+          calls.push(["publish", result, options]);
+        },
+        projectContext,
+        routeRelativePath: "vibe64",
+        routeSurface: "app",
+        sourceEditor
+      });
+      const route = findRegisteredRoute(app, {
+        method: "POST",
+        path: `${apiRouteBase}/vibe64/sessions/:sessionId/source-editor/file`
+      });
+
+      const reply = testReply();
+      await route.handler({
+        input: {
+          body: {
+            originId: "tab-1",
+            path: "src/new.js",
+            projectSlug: "unit_project"
+          }
+        },
+        params: routeProjectParams({ sessionId: "session-1" })
+      }, reply);
+
+      assert.equal(reply.payload, created);
+      assert.deepEqual(calls, [
+        ["create", {
+          originId: "tab-1",
+          path: "src/new.js",
+          projectSlug: "unit_project",
+          sessionId: "session-1"
+        }],
+        ["publish", created, { operation: "created" }]
+      ]);
+    });
+  });
+});

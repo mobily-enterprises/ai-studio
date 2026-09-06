@@ -10,6 +10,7 @@ import {
   ACTION_SAVE_COLLABORATION_SETTINGS,
   ACTION_SAVE_ENGINEERING_PROFILE,
   ACTION_SAVE_PROJECT_PROMPT_HINTS,
+  createVibe64ProjectChangedPublisher,
   createProjectActions
 } from "../../packages/vibe64-project/src/server/actions.js";
 
@@ -177,7 +178,7 @@ test("collaboration and prompt-hint mutations publish project realtime invalidat
   }
 });
 
-test("Env save action forwards user-owned values", async () => {
+test("Env save action forwards user-owned values and publishes a project refresh", async () => {
   const calls = [];
   const project = {
     async saveEnvUserValues(...args) {
@@ -196,7 +197,37 @@ test("Env save action forwards user-owned values", async () => {
     scope: "development"
   };
 
-  await action.execute(input, {});
+  const result = await action.execute(input, {});
+  const event = await action.events[0]({ context: {}, input, result });
 
   assert.deepEqual(calls, [[input]]);
+  assert.equal(event.realtime.event, "vibe64.project.changed");
+  assert.equal(event.entityId, "projects");
+});
+
+test("project change publisher emits the shared project refresh contract", async () => {
+  const published = [];
+  const publishProjectChanged = createVibe64ProjectChangedPublisher({
+    events: {
+      async publish(event) {
+        published.push(event);
+        return event;
+      }
+    }
+  });
+
+  await publishProjectChanged({ projectSlug: "catalogue" }, {
+    actorId: "17",
+    operation: "deleted",
+    reason: "project-archived"
+  });
+
+  assert.equal(published.length, 1);
+  assert.equal(published[0].actorId, "17");
+  assert.equal(published[0].entityId, "catalogue");
+  assert.equal(published[0].realtime.event, "vibe64.project.changed");
+  assert.deepEqual(published[0].realtime.payload, {
+    projectSlug: "catalogue",
+    reason: "project-archived"
+  });
 });

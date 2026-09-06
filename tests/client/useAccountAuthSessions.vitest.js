@@ -214,7 +214,14 @@ describe("useAccountAuthSessions", () => {
   it("updates auth-session state from scoped realtime events", async () => {
     const accounts = {
       loadError: "",
-      readAuthSession: vi.fn(),
+      readAuthSession: vi.fn().mockResolvedValue({
+        account: {
+          id: "codex"
+        },
+        id: "auth-session-1",
+        mode: "device",
+        status: "connected"
+      }),
       refresh: vi.fn(),
       startAuth: vi.fn().mockResolvedValue({
         account: {
@@ -261,21 +268,8 @@ describe("useAccountAuthSessions", () => {
     });
     await flushAsyncWork();
 
-    expect(accounts.refresh).not.toHaveBeenCalled();
-    realtimeHandler({
-      session: {
-        account: {
-          id: "codex"
-        },
-        id: "auth-session-1",
-        mode: "device",
-        status: "connected"
-      },
-      sessionId: "auth-session-1"
-    });
-    await flushAsyncWork();
-
-    expect(accounts.readAuthSession).not.toHaveBeenCalled();
+    expect(accounts.readAuthSession).toHaveBeenCalledTimes(1);
+    expect(accounts.readAuthSession).toHaveBeenCalledWith("auth-session-1");
     expect(accounts.refresh).toHaveBeenCalledTimes(1);
     expect(authSessions.activeSessionFor("codex")).toBe(null);
   });

@@ -39,7 +39,7 @@
         "surfaces": [
           {
             "subpath": "./server/actions",
-            "summary": "Exports the project operation action factory and action identifiers."
+            "summary": "Exports project actions, identifiers, and the shared project-change publisher."
           },
           {
             "subpath": "./server/managedProject",

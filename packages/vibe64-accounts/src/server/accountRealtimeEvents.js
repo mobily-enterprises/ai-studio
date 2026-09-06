@@ -76,9 +76,14 @@ function vibe64AccountAuthSessionRealtimePayload(session = {}) {
     ...(sessionId ? { sessionId } : {}),
     ...(source.outputVersion ? { outputVersion: source.outputVersion } : {}),
     ...(source.status ? { status: normalizeAccountValue(source.status) } : {}),
-    ...(source.terminalStatus ? { terminalStatus: normalizeAccountValue(source.terminalStatus) } : {}),
-    session: source
+    ...(source.terminalStatus ? { terminalStatus: normalizeAccountValue(source.terminalStatus) } : {})
   };
+}
+
+function authSessionRealtimeAudience({ context = {} } = {}) {
+  return normalizeAccountValue(context?.actor?.id)
+    ? "actor_user"
+    : VIBE64_ACCOUNT_REALTIME_AUDIENCE;
 }
 
 function vibe64AccountsChangedActionEvent({ operation = "updated" } = {}) {
@@ -103,7 +108,7 @@ function vibe64AccountAuthSessionChangedActionEvent({ operation = "updated" } = 
     entityId: ({ result = {} } = {}) => authSessionIdFromResult(result),
     realtime: {
       event: VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
-      audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
+      audience: authSessionRealtimeAudience,
       payload: ({ result = {} } = {}) => vibe64AccountAuthSessionRealtimePayload(result)
     }
   });
@@ -251,10 +256,12 @@ function createVibe64AccountAuthSessionChangedPublisher({ events = null } = {}) 
   }
 
   return async function publishVibe64AccountAuthSessionChanged(session = {}, {
+    actorId = "",
     operation = "updated",
     reason = ""
   } = {}) {
     const payload = vibe64AccountAuthSessionRealtimePayload(session);
+    const normalizedActorId = normalizeAccountValue(actorId);
     if (!payload.sessionId) {
       return null;
     }
@@ -263,6 +270,7 @@ function createVibe64AccountAuthSessionChangedPublisher({ events = null } = {}) 
       entity: "account-auth-session",
       operation: normalizeAccountValue(operation) || "updated",
       entityId: payload.sessionId,
+      actorId: normalizedActorId || null,
       scope: {
         kind: "global",
         id: null
@@ -270,7 +278,7 @@ function createVibe64AccountAuthSessionChangedPublisher({ events = null } = {}) 
       occurredAt: new Date().toISOString(),
       realtime: {
         event: VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
-        audience: VIBE64_ACCOUNT_REALTIME_AUDIENCE,
+        audience: normalizedActorId ? "actor_user" : VIBE64_ACCOUNT_REALTIME_AUDIENCE,
         payload: {
           ...payload,
           ...(reason ? { reason } : {})

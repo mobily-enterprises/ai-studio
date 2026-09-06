@@ -330,6 +330,30 @@ describe("useVibe64SourceEditor", () => {
     expect(mocks.requestCalls.some(([url]) => url.endsWith("/source-editor/open-file"))).toBe(false);
   });
 
+  it("reloads the source tree after another tab creates a file", async () => {
+    const currentText = ref("");
+    await createLoadedEditor({ currentText });
+    const payload = {
+      operation: "created",
+      originId: "other-tab",
+      path: "src/new.js",
+      projectSlug: "beepollen",
+      sessionId: "session-1"
+    };
+    const realtime = realtimeForEvent("vibe64.source-editor.file.changed");
+    const requestCount = mocks.requestCalls.length;
+    mocks.requestResults.push(treeResponse());
+
+    expect(realtime.matches({ payload })).toBe(true);
+    realtime.onEvent({ payload });
+    await flushPromises();
+
+    expect(mocks.requestCalls.slice(requestCount)).toEqual([[
+      "/api/app/vibe64/sessions/session-1/source-editor/tree?limit=20",
+      {}
+    ]]);
+  });
+
   it("requests abandoned explanation cleanup after startup", async () => {
     const currentText = ref("");
     const {

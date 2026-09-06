@@ -39,6 +39,7 @@ import {
 import {
   ACTION_LOGOUT_ACCOUNT,
   ACTION_READ_ACCOUNTS,
+  ACTION_START_ACCOUNT_AUTH,
   createActions
 } from "../../packages/vibe64-accounts/src/server/actions.js";
 import {
@@ -333,11 +334,29 @@ test("accounts actions capture the feature API and keep auth-session reads event
   });
   const readAction = actions.find((action) => action.id === ACTION_READ_ACCOUNTS);
   const logoutAction = actions.find((action) => action.id === ACTION_LOGOUT_ACCOUNT);
+  const startAction = actions.find((action) => action.id === ACTION_START_ACCOUNT_AUTH);
 
   assert.equal(Object.hasOwn(readAction, "events"), false);
   assert.equal(logoutAction.events.length, 2);
   assert.deepEqual(await readAction.execute({ refresh: true }), { ok: true });
   assert.deepEqual(calls, [{ refresh: true }]);
+
+  const authSessionEvent = startAction.events
+    .map((buildEvent) => buildEvent({
+      context: {
+        actor: { id: "1001" }
+      },
+      result: {
+        account: { id: "codex" },
+        id: "auth-session-1",
+        outputVersion: 1,
+        status: "authenticating"
+      }
+    }))
+    .find((event) => event?.realtime?.event === VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT);
+  assert.equal(authSessionEvent.actorId, "1001");
+  assert.equal(authSessionEvent.realtime.audience, "actor_user");
+  assert.equal(Object.hasOwn(authSessionEvent.realtime.payload, "session"), false);
 });
 
 test("connection readiness contains only the accounts required by the current project", async () => {
@@ -521,6 +540,7 @@ test("auth-session publisher emits a scoped session event", async () => {
     status: "authenticating",
     terminalStatus: "running"
   }, {
+    actorId: "1001",
     reason: "terminal-output"
   });
 
@@ -528,20 +548,13 @@ test("auth-session publisher emits a scoped session event", async () => {
   assert.equal(events[0].entity, "account-auth-session");
   assert.equal(events[0].entityId, "auth-session-1");
   assert.equal(Object.hasOwn(events[0], "meta"), false);
+  assert.equal(events[0].actorId, "1001");
   assert.equal(events[0].realtime.event, VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT);
+  assert.equal(events[0].realtime.audience, "actor_user");
   assert.deepEqual(events[0].realtime.payload, {
     accountId: "codex",
     outputVersion: 2,
     reason: "terminal-output",
-    session: {
-      account: {
-        id: "codex"
-      },
-      id: "auth-session-1",
-      outputVersion: 2,
-      status: "authenticating",
-      terminalStatus: "running"
-    },
     sessionId: "auth-session-1",
     status: "authenticating",
     terminalStatus: "running"
@@ -936,6 +949,7 @@ test("GitHub auth terminal finalization checks and publishes the same OS user co
     assert.equal(connected.event.authSessionId, session.id);
     assert.equal(hostCommands.length, 5);
     assert.ok(publishedSessions.some((entry) => entry.session.id === session.id && entry.session.account?.connected === true));
+    assert.equal(publishedSessions.every((entry) => entry.event.actorId === "1001"), true);
   });
 });
 

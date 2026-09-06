@@ -129,4 +129,21 @@ test("source editor publishes explicit top-level realtime events", async () => {
   assert.equal(published[0].entityId, "session-1:src/app.js");
   assert.equal(published[0].realtime.event, "vibe64.source-editor.file.changed");
   assert.equal(published.every((event) => event.type === "entity.changed"), true);
+
+  await publishChanged({
+    fileChange: {
+      hash: "hash-2",
+      originId: "tab-2",
+      path: "src/new.js",
+      projectSlug: "example",
+      sessionId: "session-1",
+      updatedAt: "2026-08-16T00:01:00.000Z"
+    },
+    ok: true
+  }, {
+    operation: "created"
+  });
+
+  assert.equal(published[1].operation, "created");
+  assert.equal(published[1].entityId, "session-1:src/new.js");
 });

@@ -29,9 +29,12 @@ of workspace access, account readiness, command-line tools, Genesis, and the
 managed browser runtime. Failures identify the concrete host capability that is
 missing without attempting project-specific repairs.
 
-Account sign-in completion arrives through realtime events when available. A
-bounded fallback check remains available for missed events, but repeated
-failures back off instead of keeping the browser in a tight retry loop.
+Account sign-in completion arrives through actor-scoped realtime refresh hints
+when available. The hint contains only the session identity and status version;
+the browser rereads the protected auth-session endpoint for output and account
+state. A bounded fallback check remains available for missed events, but
+repeated failures back off instead of keeping the browser in a tight retry
+loop.
 
 Account sign-in and sign-out are account-wide operations and do not require a
 selected project. When Codex authentication changes, Vibe64 retires active and

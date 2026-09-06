@@ -26,3 +26,7 @@ is treated as inspectable source.
 The hosted project namespace is the catalog authority. When that namespace has
 been removed outside Vibe64, the next catalog read removes its stale private
 project state so the deleted project cannot remain or block recreation.
+
+Durable project mutations publish one shared project refresh event. Consumers
+use it only to invalidate their project list, selection, settings, repository,
+or access reads; the HTTP resources remain authoritative.

@@ -281,14 +281,18 @@ function registerRoutes(
   routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/file", {
     bodyLimit: 32 * 1024,
     summary: "Create a new editable source file in a Vibe64 session."
-  }, (request) => {
+  }, async (request) => {
     const body = routes.requestBody(request);
-    return sourceEditor.createFile({
+    const result = await sourceEditor.createFile({
       originId: body.originId,
       path: body.path,
       projectSlug: body.projectSlug,
       sessionId: request.params.sessionId
     });
+    await publishFileChanged(result, {
+      operation: "created"
+    });
+    return result;
   });
 
   routes.serviceRoute("PUT", "/sessions/:sessionId/source-editor/file", {

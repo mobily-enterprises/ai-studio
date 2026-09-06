@@ -641,19 +641,29 @@ function useVibe64SourceEditor({
   useRealtimeEvent({
     enabled: computed(() => Boolean(
       canLoad.value &&
-      currentProjectSlug.value &&
-      selectedPath.value
+      currentProjectSlug.value
     )),
     event: VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
-    matches: ({ payload = {} } = {}) => sourceEditorFileChangePayloadMatches({
-      originId,
-      path: selectedPath.value,
-      payload,
-      projectSlug: currentProjectSlug.value,
-      sessionId: currentSessionId.value
-    }),
+    matches: ({ payload = {} } = {}) => (
+      (
+        payload.operation === "created" &&
+        payload.originId !== originId &&
+        payload.projectSlug === currentProjectSlug.value &&
+        payload.sessionId === currentSessionId.value
+      ) ||
+      sourceEditorFileChangePayloadMatches({
+        originId,
+        path: selectedPath.value,
+        payload,
+        projectSlug: currentProjectSlug.value,
+        sessionId: currentSessionId.value
+      })
+    ),
     onEvent: ({ payload = {} } = {}) => {
       void applyRemoteFileChange(payload);
+      if (payload.operation === "created") {
+        void loadTree();
+      }
     }
   });
 

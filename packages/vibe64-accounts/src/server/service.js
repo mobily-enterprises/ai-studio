@@ -1106,12 +1106,15 @@ function authError(code, message, extra = {}) {
   };
 }
 
-function authTerminalMetadata(accountId, mode, githubContext = null) {
+function authTerminalMetadata(accountId, mode, githubContext = null, actorId = "") {
   const metadata = {
     accountId,
     credentialScope: ACCOUNT_DEFINITIONS[accountId]?.scope || "",
     mode,
   };
+  if (actorId) {
+    metadata.actorId = String(actorId);
+  }
   if (accountId === "github" && githubContext?.userKey) {
     metadata.userKey = githubContext.userKey;
   }
@@ -1565,6 +1568,7 @@ function createService({
 
     const metadata = {
       accountId,
+      actorId: String(terminal.metadata?.actorId || ""),
       githubContext,
       mode,
       startedAt: terminal.createdAt || "",
@@ -1852,6 +1856,7 @@ function createService({
       terminal
     });
     return publishAuthSessionChanged(session, {
+      actorId: metadata.actorId || "",
       reason
     });
   }
@@ -1964,6 +1969,7 @@ function createService({
   }
 
   async function startAuthTerminal(accountId, mode, githubContext = null, gitIdentity = {}, authSecrets = {}, options = {}) {
+    const actorId = String(options.actorId || "");
     const providerContext = accountId === "github" ? githubContext : codexContextForInput();
     await ensureToolHomeSource(providerContext);
     const hostCommandOptions = hostCommandOptionsForCredentialContext(providerContext);
@@ -2000,7 +2006,7 @@ function createService({
         commandPreview: authCommandPreview(args),
         helperPayloadRoot: resolvedSystemRoot,
         maxRunning: 1,
-        metadata: authTerminalMetadata(accountId, mode, githubContext),
+        metadata: authTerminalMetadata(accountId, mode, githubContext, actorId),
         namespace: ACCOUNT_AUTH_NAMESPACE,
         onClose: createAuthTerminalCloseHandler({
           accountId,
@@ -2009,7 +2015,7 @@ function createService({
         }),
         onOutput: ({ session } = {}) => {
           publishAuthTerminalOutput({
-            metadata: authTerminalMetadata(accountId, mode, githubContext),
+            metadata: authTerminalMetadata(accountId, mode, githubContext, actorId),
             terminal: session
           });
         },
@@ -2031,6 +2037,7 @@ function createService({
     if (!authSessions.has(terminal.id)) {
       authSessions.set(terminal.id, {
         accountId,
+        actorId,
         githubContext: accountId === "github" ? githubContext : null,
         mode,
         startedAt: new Date().toISOString(),
@@ -2124,6 +2131,7 @@ function createService({
           authSecrets[CODEX_API_KEY_ENV] = apiKey;
         }
         const terminal = await startAuthTerminal(accountId, mode, githubContext, gitIdentity, authSecrets, {
+          actorId: input.vibe64User?.uid || "",
           previousGithub: previousGithubForInput(input)
         });
         if (terminal.ok === false) {

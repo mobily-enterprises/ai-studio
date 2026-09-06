@@ -76,7 +76,8 @@ function useAccountAuthSessions(
       return Boolean(sessionId) && activeAuthSessionIds.value.has(sessionId);
     },
     async onEvent({ payload } = {}) {
-      const session = authSessionFromRealtimePayload(payload);
+      const sessionId = authSessionIdFromRealtimePayload(payload);
+      const session = await accounts.readAuthSession(sessionId);
       if (!isPlainAuthSession(session) || !session.id) {
         return;
       }
@@ -478,13 +479,6 @@ function authSessionUserCode(session = {}) {
 function authSessionAccountId(session = {}) {
   const normalizedSession = plainAuthSession(session);
   return String(normalizedSession.account?.id || normalizedSession.account || "").trim();
-}
-
-function authSessionFromRealtimePayload(payload = {}) {
-  const source = payload && typeof payload === "object" && !Array.isArray(payload)
-    ? payload
-    : {};
-  return isPlainAuthSession(source.session) ? source.session : source;
 }
 
 function authSessionIdFromRealtimePayload(payload = {}) {

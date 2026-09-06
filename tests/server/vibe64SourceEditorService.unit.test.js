@@ -485,6 +485,11 @@ test("source editor creates new files without overwriting existing or excluded p
     assert.equal(createResponse.ok, true);
     assert.equal(createResponse.file.path, "src/features/new-view.ts");
     assert.equal(createResponse.file.text, "");
+    assert.equal(createResponse.fileChange.hash, createResponse.file.hash);
+    assert.equal(createResponse.fileChange.originId, "tab-1");
+    assert.equal(createResponse.fileChange.path, "src/features/new-view.ts");
+    assert.equal(createResponse.fileChange.projectSlug, "beepollen");
+    assert.equal(createResponse.fileChange.sessionId, "session-1");
     assert.equal(createResponse.revealTree.children[0].path, "src");
     assert.equal(createResponse.revealTree.children[0].children[0].path, "src/features");
     assert.equal(

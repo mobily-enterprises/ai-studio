@@ -20,6 +20,10 @@ from saved project work, and inspect one exact file change at a time.
 The source browser lists, searches, opens, edits, and saves allowed project
 files inside the selected session source. It rejects paths outside that source
 and reports concurrent changes rather than silently overwriting them. The
+source editor publishes successful creates and saves with project, session,
+path, hash, and originating-tab identity. A foreign create refreshes the file
+tree, while a foreign save refreshes a clean matching file or warns without
+overwriting a dirty draft. The
 Repository presents the session's complete current changes against saved project
 work, even when those changes are already committed inside the session. It can
 open an exact changed file without exposing staging mechanics to the user.

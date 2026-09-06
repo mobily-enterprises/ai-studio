@@ -79,6 +79,43 @@ function projectRealtimePayload(value = {}) {
   };
 }
 
+function createVibe64ProjectChangedPublisher({ events = null } = {}) {
+  if (!events || typeof events.publish !== "function") {
+    return async function publishNoop() {
+      return null;
+    };
+  }
+
+  return async function publishVibe64ProjectChanged(value = {}, {
+    actorId = null,
+    operation = "updated",
+    reason = ""
+  } = {}) {
+    const slug = projectSlug(value);
+    return events.publish({
+      type: "entity.changed",
+      source: "vibe64",
+      entity: "project",
+      operation,
+      entityId: slug || "projects",
+      scope: {
+        kind: "global",
+        id: null
+      },
+      actorId,
+      occurredAt: new Date().toISOString(),
+      realtime: {
+        audience: "all_clients",
+        event: VIBE64_PROJECT_CHANGED_EVENT,
+        payload: {
+          ...projectRealtimePayload(value),
+          ...(reason ? { reason: String(reason).trim() } : {})
+        }
+      }
+    });
+  };
+}
+
 function action({ events = [], execute, id, input, kind }) {
   return Object.freeze({
     id,
@@ -132,6 +169,7 @@ function createProjectActions({ project } = {}) {
       id: ACTION_SAVE_ENV_USER_VALUES,
       kind: "command",
       input: projectEnvUserValuesInputValidator,
+      events: [projectChangedEvent()],
       execute: (input) => project.saveEnvUserValues(input)
     }),
     action({
@@ -204,5 +242,6 @@ export {
   ACTION_SAVE_DEVELOPMENT_DATABASE_SCOPE,
   ACTION_SAVE_PREVIEW_APPLICATION_IDENTITIES,
   ACTION_SELECT_PROJECT,
+  createVibe64ProjectChangedPublisher,
   createProjectActions
 };
