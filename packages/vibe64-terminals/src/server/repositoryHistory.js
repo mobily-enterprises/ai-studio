@@ -248,7 +248,7 @@ async function assertReachableCommit(context, commit, snapshot, runCommand) {
   const resolved = commit === snapshot
     ? snapshot
     : await gitText(context, ["rev-parse", "--verify", `${commit}^{commit}`], { runCommand });
-  if (resolved !== commit || !/^[a-f0-9]{40,64}$/u.test(resolved)) {
+  if (resolved !== commit) {
     throw repositoryError("Choose a version from this project history.", "vibe64_repository_history_commit_invalid");
   }
   const reachable = await git(context, ["merge-base", "--is-ancestor", commit, snapshot], {

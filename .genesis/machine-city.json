@@ -10246,7 +10246,7 @@
       "title": "registerRoutes.js"
     },
     {
-      "bytes": 12654,
+      "bytes": 12614,
       "districtId": "directory:packages/vibe64-terminals/src/server",
       "extractors": [
         "javascript"
@@ -10269,7 +10269,7 @@
         "function:packages/vibe64-terminals/src/server/repositoryHistory.js:repositoryVersionFiles:function:272:1",
         "function:packages/vibe64-terminals/src/server/repositoryHistory.js:repositoryVersionFileDiff:function:314:1"
       ],
-      "hash": "sha256:b16e9870404ce935c6445095dc35a8d2c01bcdacb6c4775ab7800d501f395191",
+      "hash": "sha256:8bd680372ae9432a03b7388e9ca6255176250a1a1ab9271c543c3c708e1ef84c",
       "id": "file:packages/vibe64-terminals/src/server/repositoryHistory.js",
       "internalFunctionCount": 12,
       "language": "javascript",
@@ -17035,7 +17035,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:18f51a1c4afecd82bc7c1e7008f073048939f345d6f01406ed2859cb30bdb05e",
+  "codeHash": "sha256:bbdcda90b1061961c9c6bebe423339488e8edcd7a7e95d6803cec2936af27cbf",
   "diagnostics": [],
   "districts": [
     {
