@@ -14134,7 +14134,7 @@
       "title": "useVibe64PromptHints.js"
     },
     {
-      "bytes": 22375,
+      "bytes": 22541,
       "districtId": "directory:src/composables",
       "extractors": [
         "javascript"
@@ -14154,22 +14154,22 @@
         "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadChanges:function:170:3",
         "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.requestChangesRefresh:function:228:3",
         "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.selectVersion:function:258:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadMoreVersionFiles:function:297:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.selectVersionFile:function:339:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadHistory:function:378:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.checkForUpdates:function:418:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.applyUpdates:function:493:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.saveWork:function:538:3",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:651:14",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:655:14",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:687:14",
-        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:688:14"
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadMoreVersionFiles:function:302:3",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.selectVersionFile:function:344:3",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadHistory:function:383:3",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.checkForUpdates:function:423:3",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.applyUpdates:function:498:3",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.saveWork:function:543:3",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:656:14",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:660:14",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:692:14",
+        "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:693:14"
       ],
-      "hash": "sha256:b04a8edc694720d865e681992f3b09d7533f4c972b9c2e4b765abbff9c40931e",
+      "hash": "sha256:08723de50fea7f7d9b36bdd7fff2ec5098ec1a6452491b03ca4f3d3f9babcfcb",
       "id": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "internalFunctionCount": 23,
       "language": "javascript",
-      "lines": 720,
+      "lines": 725,
       "mode": 33188,
       "path": "src/composables/useVibe64RepositoryWorkspace.js",
       "presentationCampusId": "presentation-campus:source:src/composables",
@@ -15129,7 +15129,7 @@
       "title": "studioGateApi.js"
     },
     {
-      "bytes": 9851,
+      "bytes": 9970,
       "districtId": "directory:src/lib",
       "extractors": [
         "javascript"
@@ -15149,14 +15149,14 @@
         "function:src/lib/studioLongTextBlocks.js:closingMarkdownBracketIndex:function:284:1",
         "function:src/lib/studioLongTextBlocks.js:closingMarkdownDestinationIndex:function:304:1",
         "function:src/lib/studioLongTextBlocks.js:normalizeMarkdownLinkHref:function:317:1",
-        "function:src/lib/studioLongTextBlocks.js:markdownLinkAt:function:323:1",
-        "function:src/lib/studioLongTextBlocks.js:parseLongTextInlineParts:function:348:1"
+        "function:src/lib/studioLongTextBlocks.js:markdownLinkAt:function:324:1",
+        "function:src/lib/studioLongTextBlocks.js:parseLongTextInlineParts:function:349:1"
       ],
-      "hash": "sha256:433a85f26be6bb0116fdecdbb310fc5ada1325e35da6b9017899466391db0c09",
+      "hash": "sha256:79d9e92e971b70a579aff4f02338340a2b7cdbeeeb79707adc151c032e3268f4",
       "id": "file:src/lib/studioLongTextBlocks.js",
       "internalFunctionCount": 14,
       "language": "javascript",
-      "lines": 399,
+      "lines": 400,
       "mode": 33188,
       "path": "src/lib/studioLongTextBlocks.js",
       "presentationCampusId": "presentation-campus:source:src/lib",
@@ -17034,7 +17034,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:5e8a110529bb47539f5a23dce713431281a35b6f1031169b7fea8e71119f83b0",
+  "codeHash": "sha256:e115ff2a3577c9a2d1901a08824c6511ad54277c69b31494317b7ede3e0d63a9",
   "diagnostics": [],
   "districts": [
     {
@@ -150930,10 +150930,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadMoreVersionFiles:function:297:3",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadMoreVersionFiles:function:302:3",
       "kind": "function",
       "language": "javascript",
-      "line": 297,
+      "line": 302,
       "name": "loadMoreVersionFiles",
       "parameters": [],
       "path": "src/composables/useVibe64RepositoryWorkspace.js",
@@ -150949,10 +150949,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.selectVersionFile:function:339:3",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.selectVersionFile:function:344:3",
       "kind": "function",
       "language": "javascript",
-      "line": 339,
+      "line": 344,
       "name": "selectVersionFile",
       "parameters": [
         "file"
@@ -150970,10 +150970,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadHistory:function:378:3",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.loadHistory:function:383:3",
       "kind": "function",
       "language": "javascript",
-      "line": 378,
+      "line": 383,
       "name": "loadHistory",
       "parameters": [
         "{ append = false } = {}"
@@ -150991,10 +150991,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.checkForUpdates:function:418:3",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.checkForUpdates:function:423:3",
       "kind": "function",
       "language": "javascript",
-      "line": 418,
+      "line": 423,
       "name": "checkForUpdates",
       "parameters": [
         "{ force = true } = {}"
@@ -151012,10 +151012,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.applyUpdates:function:493:3",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.applyUpdates:function:498:3",
       "kind": "function",
       "language": "javascript",
-      "line": 493,
+      "line": 498,
       "name": "applyUpdates",
       "parameters": [],
       "path": "src/composables/useVibe64RepositoryWorkspace.js",
@@ -151031,10 +151031,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.saveWork:function:538:3",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.saveWork:function:543:3",
       "kind": "function",
       "language": "javascript",
-      "line": 538,
+      "line": 543,
       "name": "saveWork",
       "parameters": [],
       "path": "src/composables/useVibe64RepositoryWorkspace.js",
@@ -151050,10 +151050,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:651:14",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:656:14",
       "kind": "function",
       "language": "javascript",
-      "line": 651,
+      "line": 656,
       "name": "matches",
       "parameters": [
         "{ payload = {} } = {}"
@@ -151071,10 +151071,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:655:14",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:660:14",
       "kind": "function",
       "language": "javascript",
-      "line": 655,
+      "line": 660,
       "name": "onEvent",
       "parameters": [
         "{ payload = {} } = {}"
@@ -151092,10 +151092,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:687:14",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.matches:function:692:14",
       "kind": "function",
       "language": "javascript",
-      "line": 687,
+      "line": 692,
       "name": "matches",
       "parameters": [
         "{ payload = {} } = {}"
@@ -151113,10 +151113,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64RepositoryWorkspace.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:688:14",
+      "id": "function:src/composables/useVibe64RepositoryWorkspace.js:useVibe64RepositoryWorkspace.onEvent:function:693:14",
       "kind": "function",
       "language": "javascript",
-      "line": 688,
+      "line": 693,
       "name": "onEvent",
       "parameters": [],
       "path": "src/composables/useVibe64RepositoryWorkspace.js",
@@ -160643,10 +160643,10 @@
       "extractor": "javascript",
       "fileId": "file:src/lib/studioLongTextBlocks.js",
       "generator": false,
-      "id": "function:src/lib/studioLongTextBlocks.js:markdownLinkAt:function:323:1",
+      "id": "function:src/lib/studioLongTextBlocks.js:markdownLinkAt:function:324:1",
       "kind": "function",
       "language": "javascript",
-      "line": 323,
+      "line": 324,
       "name": "markdownLinkAt",
       "parameters": [
         "text = \"\"",
@@ -160665,10 +160665,10 @@
       "extractor": "javascript",
       "fileId": "file:src/lib/studioLongTextBlocks.js",
       "generator": false,
-      "id": "function:src/lib/studioLongTextBlocks.js:parseLongTextInlineParts:function:348:1",
+      "id": "function:src/lib/studioLongTextBlocks.js:parseLongTextInlineParts:function:349:1",
       "kind": "function",
       "language": "javascript",
-      "line": 348,
+      "line": 349,
       "name": "parseLongTextInlineParts",
       "parameters": [
         "value = \"\""
