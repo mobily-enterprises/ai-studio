@@ -1553,8 +1553,15 @@ function useVibe64AutopilotView(props, emit, {
     const toolId = vibe64SessionToolIdFromRouteSegment(segment);
     return DIRECT_SESSION_TOOL_IDS.has(toolId) ? toolId : "";
   });
+  const sourceToolLoading = computed(() => Boolean(
+    projectPaneValue.value === "dashboard" &&
+    STANDALONE_SESSION_TOOL_IDS.has(routeSessionToolId.value) &&
+    !sessionSourceRoot.value &&
+    props.page?.launchBusy
+  ));
   const dashboardShellVisible = computed(() => Boolean(
     projectPaneValue.value === "dashboard" &&
+    !sourceToolLoading.value &&
     !STANDALONE_SESSION_TOOL_IDS.has(rightPaneTab.value)
   ));
   const dashboardRouteVisible = computed(() => [
@@ -1735,14 +1742,20 @@ function useVibe64AutopilotView(props, emit, {
   }
 
   watch(() => [
+    props.active,
     projectPaneValue.value,
     route.path,
     routeSessionToolId.value,
     sessionSourceRoot.value,
+    sourceToolLoading.value,
     assistantAccessPending.value,
     assistantDirectAllowed.value
   ].join("|"), () => {
-    if (projectPaneValue.value === "preview") {
+    if (!props.active || projectPaneValue.value === "preview") {
+      return;
+    }
+    if (sourceToolLoading.value) {
+      emit("project-attention");
       return;
     }
     if (routeSessionToolId.value) {
@@ -1858,6 +1871,7 @@ function useVibe64AutopilotView(props, emit, {
     dashboardSessionContext,
     dashboardRouteVisible,
     dashboardShellVisible,
+    sourceToolLoading,
     dismissSaveWorkActivity,
     dismissNumberedQuestions,
     dismissSavedCommitDeslop,

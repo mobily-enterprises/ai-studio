@@ -48,6 +48,16 @@ inactively; returning to Files keeps its selected file and draft. A cold Preview
 does not mount a source tool, and explicitly choosing another dashboard tool
 still unmounts the previous one.
 
+When its source is not yet known, opening Files or another source-backed tool
+directly waits for the selected session's initial detail read. The Project pane
+shows its existing loading skeleton during that wait, keeping the requested route
+and bringing the pane into view on compact screens. A ready source opens the
+tool; settled missing or failed detail uses the normal environment fallback.
+Navigating elsewhere while detail loads is respected. Only the active session
+host hydrates or redirects the
+shared tool route; a retained hidden host waits until reactivation to reconsider
+its source and the current route.
+
 A source explanation is temporary assistance for a selected code range or file.
 A matching cached answer can appear without starting a provider conversation;
 its first follow-up starts an independently owned conversation through the same

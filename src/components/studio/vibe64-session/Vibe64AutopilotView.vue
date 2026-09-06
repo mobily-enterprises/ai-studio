@@ -473,6 +473,12 @@
     </section>
 
     <section class="studio-autopilot__project-panel" aria-label="Project">
+      <Vibe64AsyncModuleState
+        v-if="sourceToolLoading"
+        class="studio-autopilot__right-pane-page"
+        label="session source"
+        loading
+      />
       <Vibe64DashboardShell
         v-if="props.projectPane === 'dashboard'"
         v-show="dashboardShellVisible"
@@ -687,6 +693,7 @@ import {
   mdiStopCircleOutline
 } from "@mdi/js";
 import Vibe64AssistantAccessPanel from "@/components/studio/vibe64-session/Vibe64AssistantAccessPanel.vue";
+import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue";
 import Vibe64ProjectOnboarding from "@/components/studio/vibe64-session/Vibe64ProjectOnboarding.vue";
 import Vibe64SessionAssistantMenu from "@/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
@@ -887,6 +894,7 @@ const {
   dashboardSessionContext,
   dashboardRouteVisible,
   dashboardShellVisible,
+  sourceToolLoading,
   dismissSaveWorkActivity,
   dismissNumberedQuestions,
   dismissSavedCommitDeslop,

@@ -2185,6 +2185,65 @@ test("the chat cog stays available and delivery actions stay aligned during an a
   ))).toBe(true);
 });
 
+for (const viewport of [{ width: 1280, height: 577 }, { width: 390, height: 844 }]) {
+  test(`cold Files waits for remembered-session detail at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await mockLaunchTerminalSocket(page);
+    await mockLaunchSession(page, {
+      sourceEditorFiles: { "src/App.js": "export const ready = true;\n" }
+    });
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/onboarding?sessionId=${SESSION_ID}`, async (route) => {
+      await fulfillJson(route, {
+        available: true,
+        inspection: { diagnostics: [], state: "ready", templateEligible: false },
+        ok: true,
+        source: { rootKind: "session-source", sessionId: SESSION_ID },
+        templates: []
+      });
+    });
+    const filesUrl = `${BASE_URL}${DASHBOARD_PATH}/files`;
+    await page.goto(filesUrl);
+    await expect(page.getByLabel("Session source editor")).toBeVisible();
+
+    // Normal selection above remembers the session; reload must not wait for its list entry.
+    const sessionsUrl = `${BASE_URL}${SCOPED_API_PREFIX}/vibe64/sessions`;
+    const sessionReads = new RegExp(`^${escapeRegExp(sessionsUrl)}(?:/${SESSION_ID})?(?:\\?.*)?$`, "u");
+    const releaseReads = Promise.withResolvers<void>();
+    const heldReads: string[] = [];
+    await page.route(sessionReads, async (route) => {
+      heldReads.push(route.request().url());
+      await releaseReads.promise;
+      await route.fallback();
+    });
+    try {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect.poll(() => heldReads.includes(`${sessionsUrl}/${SESSION_ID}`)).toBe(true);
+      await expect(page).toHaveURL(filesUrl);
+      const loading = page.locator(".studio-autopilot__project-panel > .vibe64-async-module-state");
+      await expect(loading).toBeVisible();
+      await expect(loading).toHaveAttribute("aria-busy", "true");
+      await expect(loading.locator(".v-skeleton-loader")).toHaveAttribute("aria-label", "Loading session source...");
+      await expect(page.getByLabel("Session source editor")).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "Dashboard sections" })).toBeHidden();
+      const project = page.getByRole("region", { name: "Project", exact: true });
+      const pendingBounds = await project.boundingBox();
+      expect(pendingBounds).not.toBeNull();
+      expect(await loading.boundingBox()).toEqual(pendingBounds);
+      await page.screenshot({ path: testInfo.outputPath("source-tool-pending.png") });
+
+      releaseReads.resolve();
+      await expect(page.getByLabel("Session source editor")).toBeVisible();
+      await expect(loading).toHaveCount(0);
+      await expect(page).toHaveURL(filesUrl);
+      expect(await project.boundingBox()).toEqual(pendingBounds);
+      await page.screenshot({ path: testInfo.outputPath("source-tool-ready.png") });
+    } finally {
+      releaseReads.resolve();
+      await page.unroute(sessionReads);
+    }
+  });
+}
+
 test("chat source links open the editor and editor autosaves file changes", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const sourceEditor = await mockLaunchSession(page, {

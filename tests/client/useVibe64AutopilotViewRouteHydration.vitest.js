@@ -86,7 +86,9 @@ describe("useVibe64AutopilotView route hydration", () => {
     scope = effectScope();
     route.path = "/app/project/chat-test/dashboard/files";
     router.push.mockReset();
-    router.replace.mockReset();
+    router.replace.mockReset().mockImplementation(async (path) => {
+      route.path = path;
+    });
   });
   afterEach(() => scope.stop());
 
@@ -220,16 +222,36 @@ describe("useVibe64AutopilotView route hydration", () => {
 
   it("opens a directly routed source tool when the selected source arrives", async () => {
     const props = viewProps();
+    const selectedSession = props.session;
+    const emit = vi.fn();
+    // A remembered session mounts its host before either list or detail is available.
+    props.session = null;
+    props.page.launchBusy = true;
     const { useVibe64AutopilotView } = await import(
       "../../src/composables/useVibe64AutopilotView.js"
     );
-    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, emit)));
 
     expect(view.sessionSourceRoot.value).toBe("");
     expect(view.rightPaneTab.value).not.toBe("editor");
+    expect(view.sourceToolLoading.value).toBe(true);
+    expect(view.dashboardShellVisible.value).toBe(false);
+    expect(emit).toHaveBeenCalledWith("project-attention");
+    expect(route.path).toBe("/app/project/chat-test/dashboard/files");
+    expect(router.replace).not.toHaveBeenCalled();
+    const autopilot = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64AutopilotView.vue", import.meta.url
+    ), "utf8");
+    const loadingTag = autopilot.match(/<Vibe64AsyncModuleState\b[\s\S]*?\/>/u)?.[0];
+    expect(autopilot).toContain('import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue"');
+    expect(loadingTag).toContain('v-if="sourceToolLoading"');
+    expect(loadingTag).toContain('class="studio-autopilot__right-pane-page"');
+    expect(loadingTag).toMatch(/\sloading\s/u);
+    const shellTag = autopilot.match(/<Vibe64DashboardShell\b[^>]*>/u)?.[0];
+    expect(shellTag).toContain('v-show="dashboardShellVisible"');
 
     props.session = {
-      ...props.session,
+      ...selectedSession,
       metadata: {
         source_kind: "session_clone",
         source_path: "/tmp/sessions/active/session-1/source",
@@ -237,11 +259,21 @@ describe("useVibe64AutopilotView route hydration", () => {
       },
       source: "/tmp/sessions/active/session-1/source"
     };
+    props.page.launchBusy = false;
     await nextTick();
 
     expect(view.sessionSourceRoot.value).toBe("/tmp/sessions/active/session-1/source");
     expect(view.rightPaneTab.value).toBe("editor");
+    expect(view.sourceToolLoading.value).toBe(false);
     expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(route.path).toBe("/app/project/chat-test/dashboard/files");
+
+    props.page.launchBusy = true;
+    await nextTick();
+    expect(view.sourceToolLoading.value).toBe(false);
+    expect(view.rightPaneTabMounted("editor")).toBe(true);
+    props.page.launchBusy = false;
 
     route.path = "/app/project/chat-test/dashboard/env";
     await nextTick();
@@ -250,6 +282,159 @@ describe("useVibe64AutopilotView route hydration", () => {
     route.path = "/app/project/chat-test/dashboard/files";
     await nextTick();
     expect(view.rightPaneTab.value).toBe("editor");
+  });
+
+  it.each([
+    { outcome: "source unavailable", error: "" },
+    { outcome: "detail error", error: "Session could not load." }
+  ])("waits for session detail before falling back from Files on $outcome", async ({ error }) => {
+    const props = viewProps();
+    if (error) props.session = null;
+    props.page = { busy: true, error: "", launchBusy: true };
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
+
+    expect(view.sessionSourceRoot.value).toBe("");
+    expect(view.rightPaneTabMounted("editor")).toBe(false);
+    expect(view.sourceToolLoading.value).toBe(true);
+    expect(view.dashboardShellVisible.value).toBe(false);
+    expect(route.path).toBe("/app/project/chat-test/dashboard/files");
+    expect(router.replace).not.toHaveBeenCalled();
+
+    // No source-path dependency changes; detail settlement must reconsider the route.
+    // Unrelated dialog busy state is not session-detail readiness.
+    props.page.error = error;
+    props.page.launchBusy = false;
+    await nextTick();
+
+    expect(props.page.busy).toBe(true);
+    expect(props.page.error).toBe(error);
+    expect(view.sessionSourceRoot.value).toBe("");
+    expect(view.rightPaneTab.value).toBe("dashboard");
+    expect(view.sourceToolLoading.value).toBe(false);
+    expect(view.dashboardShellVisible.value).toBe(true);
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith("/app/project/chat-test/dashboard/env");
+    expect(route.path).toBe("/app/project/chat-test/dashboard/env");
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(["Health", "Preview"])("does not restore the cold Files route after navigating to %s while detail loads", async (destination) => {
+    const props = viewProps();
+    const selectedSession = props.session;
+    props.session = null;
+    props.page.launchBusy = true;
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
+
+    expect(view.sourceToolLoading.value).toBe(true);
+    expect(view.dashboardShellVisible.value).toBe(false);
+    expect(route.path).toBe("/app/project/chat-test/dashboard/files");
+    expect(router.replace).not.toHaveBeenCalled();
+    const nextPath = destination === "Health"
+      ? "/app/project/chat-test/dashboard/health"
+      : "/app/project/chat-test";
+    route.path = nextPath;
+    props.projectPane = destination === "Health" ? "dashboard" : "preview";
+    await nextTick();
+    expect(view.sourceToolLoading.value).toBe(false);
+    expect(view.dashboardShellVisible.value).toBe(destination === "Health");
+    expect(view.rightPaneTab.value).toBe(destination === "Health" ? "dashboard" : "preview");
+
+    props.session = {
+      ...selectedSession,
+      metadata: {
+        source_kind: "session_clone",
+        source_path: "/tmp/sessions/active/session-1/source",
+        source_path_authority: "managed_session_source"
+      }
+    };
+    props.page.launchBusy = false;
+    await nextTick();
+
+    expect(view.sessionSourceRoot.value).toBe("/tmp/sessions/active/session-1/source");
+    expect(route.path).toBe(nextPath);
+    expect(view.sourceToolLoading.value).toBe(false);
+    expect(view.rightPaneTab.value).toBe(destination === "Health" ? "dashboard" : "preview");
+    expect(view.rightPaneTabMounted("editor")).toBe(false);
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "error", "ready"])("keeps B's Files route when hidden A settles %s and reconsiders A on return", async (outcome) => {
+    const propsA = viewProps();
+    const sessionA = propsA.session;
+    const emitA = vi.fn();
+    propsA.session = null;
+    propsA.page.launchBusy = true;
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const viewA = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(propsA, emitA)));
+    expect(viewA.sourceToolLoading.value).toBe(true);
+    expect(emitA).toHaveBeenCalledWith("project-attention");
+    const pendingSelectionA = viewA.rightPaneTab.value;
+    emitA.mockClear();
+
+    propsA.active = false;
+    const propsB = viewProps();
+    propsB.session = {
+      ...propsB.session,
+      sessionId: "session-2",
+      sessionRoot: "/tmp/state/session-2",
+      metadata: {
+        source_kind: "session_clone",
+        source_path: "/tmp/sessions/active/session-2/source",
+        source_path_authority: "managed_session_source"
+      }
+    };
+    // The second retained host has its own scope but uses the same live route/router.
+    const scopeB = scope.run(() => effectScope());
+    const viewB = app.runWithContext(() => scopeB.run(() => useVibe64AutopilotView(propsB, vi.fn())));
+    await nextTick();
+    expect(viewB.rightPaneTabMounted("editor")).toBe(true);
+    expect(viewB.sessionId.value).toBe("session-2");
+
+    propsA.session = outcome === "error" ? null : {
+      ...sessionA,
+      ...(outcome === "ready" ? {
+        metadata: {
+          source_kind: "session_clone",
+          source_path: "/tmp/sessions/active/session-1/source",
+          source_path_authority: "managed_session_source"
+        }
+      } : {})
+    };
+    propsA.page.error = outcome === "error" ? "Session A could not load." : "";
+    propsA.page.launchBusy = false;
+    await nextTick();
+
+    expect(route.path).toBe("/app/project/chat-test/dashboard/files");
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(viewB.rightPaneTabMounted("editor")).toBe(true);
+    expect(viewB.sessionSourceRoot.value).toBe("/tmp/sessions/active/session-2/source");
+    expect(viewA.rightPaneTab.value).toBe(pendingSelectionA);
+    expect(emitA).not.toHaveBeenCalledWith("project-attention");
+
+    propsB.active = false;
+    propsA.active = true;
+    await nextTick();
+
+    if (outcome === "ready") {
+      expect(route.path).toBe("/app/project/chat-test/dashboard/files");
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(viewA.rightPaneTabMounted("editor")).toBe(true);
+      expect(emitA.mock.calls.filter(([event]) => event === "project-attention")).toEqual([["project-attention"]]);
+    } else {
+      expect(route.path).toBe("/app/project/chat-test/dashboard/env");
+      expect(router.replace).toHaveBeenCalledExactlyOnceWith("/app/project/chat-test/dashboard/env");
+      expect(viewA.rightPaneTab.value).toBe("dashboard");
+    }
+    expect(viewB.rightPaneTabMounted("editor")).toBe(true);
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it("rehydrates the session Database route when warm source state is already available", async () => {
