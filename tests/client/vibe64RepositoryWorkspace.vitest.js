@@ -1,15 +1,343 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-
+import { compile } from "@vue/compiler-dom";
+import { compileScript, parse } from "@vue/compiler-sfc";
+import * as Vue from "vue";
 import { html as renderDiffHtml } from "diff2html";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  configureHttpWebClient,
+  resetHttpWebClientForTests
+} from "@jskit-ai/http-web/client/lib/httpClient";
+
+vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({ useRealtimeEvent() {} }));
+vi.mock("@/components/studio/Vibe64TemporaryAiFixAction.vue", () => ({ default: { render: () => null } }));
+vi.mock("vuetify/components/VBtn", () => ({ VBtn: passthroughComponent("button") }));
+vi.mock("vuetify/components/VChip", () => ({ VChip: passthroughComponent("span") }));
+vi.mock("vuetify/components/VIcon", () => ({ VIcon: passthroughComponent("span") }));
+vi.mock("vuetify/components/VSheet", () => ({ VSheet: passthroughComponent("section") }));
+vi.mock("vuetify/components/VAlert", () => ({ VAlert: passthroughComponent("aside") }));
+vi.mock("vuetify/components/VCard", () => ({
+  VCard: passthroughComponent("article"),
+  VCardTitle: passthroughComponent("header"),
+  VCardText: passthroughComponent("div")
+}));
+vi.mock("vuetify/components/VDialog", () => ({ VDialog: passthroughComponent("dialog") }));
+vi.mock("vuetify/components/VDivider", () => ({ VDivider: passthroughComponent("hr") }));
+vi.mock("vuetify/components/VProgressLinear", () => ({ VProgressLinear: passthroughComponent("progress") }));
+
+import Vibe64RepositoryWorkspace from "../../src/components/studio/repository/Vibe64RepositoryWorkspace.vue";
+import Vibe64RepositoryFileBrowser from "../../src/components/studio/repository/Vibe64RepositoryFileBrowser.vue";
+import Vibe64RepositoryDiff from "../../src/components/studio/repository/Vibe64RepositoryDiff.vue";
+import StudioErrorNotice from "../../src/components/studio/StudioErrorNotice.vue";
 
 const ROOT = new URL("../../", import.meta.url);
+
+// Exercise real repository setup/templates; stub Vuetify presentation, realtime and Temporary AI.
+for (const [component, file] of [
+  [Vibe64RepositoryWorkspace, "src/components/studio/repository/Vibe64RepositoryWorkspace.vue"],
+  [Vibe64RepositoryFileBrowser, "src/components/studio/repository/Vibe64RepositoryFileBrowser.vue"],
+  [Vibe64RepositoryDiff, "src/components/studio/repository/Vibe64RepositoryDiff.vue"],
+  [StudioErrorNotice, "src/components/studio/StudioErrorNotice.vue"]
+]) {
+  const filename = new URL(file, ROOT).pathname;
+  const { descriptor } = parse(readFileSync(filename, "utf8"), { filename });
+  const script = compileScript(descriptor, { id: "repository-history-ui-test" });
+  component.render = new Function("Vue", compile(descriptor.template.content, {
+    bindingMetadata: script.bindings,
+    mode: "function",
+    prefixIdentifiers: true
+  }).code)(Vue);
+}
 
 async function source(relativePath) {
   return readFile(new URL(relativePath, ROOT), "utf8");
 }
 
+function passthroughComponent(element) {
+  return Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, slots }) {
+      return () => element === "dialog" && !attrs.modelValue
+        ? null
+        : Vue.h(element, {
+            ...attrs,
+            ...(element === "button" ? { disabled: Boolean(attrs.disabled || attrs.loading) } : {})
+          }, Object.values(slots).flatMap((slot) => slot()));
+    }
+  });
+}
+
+function findNode(node, predicate) {
+  if (predicate(node)) return node;
+  for (const child of node.children || []) {
+    const found = findNode(child, predicate);
+    if (found) return found;
+  }
+  return null;
+}
+
+function nodeText(node) {
+  return [node.text || "", ...(node.children || []).map(nodeText)].join("");
+}
+
+function mountHistoryWorkspace() {
+  const requests = [];
+  configureHttpWebClient({
+    request(path, options) {
+      const response = Promise.withResolvers();
+      requests.push({ path, options, ...response });
+      return response.promise;
+    }
+  });
+  const renderer = Vue.createRenderer({
+    createElement: (type) => ({ type, children: [], props: {}, parent: null }),
+    createComment: (text) => ({ type: "comment", text, children: [], props: {} }),
+    createText: (text) => ({ type: "text", text, children: [], props: {} }),
+    insert(child, parent, anchor = null) {
+      const previous = child.parent?.children?.indexOf(child) ?? -1;
+      if (previous >= 0) child.parent.children.splice(previous, 1);
+      child.parent = parent;
+      const index = anchor ? parent.children.indexOf(anchor) : -1;
+      if (index < 0) parent.children.push(child);
+      else parent.children.splice(index, 0, child);
+    },
+    remove(child) {
+      const index = child.parent?.children?.indexOf(child) ?? -1;
+      if (index >= 0) child.parent.children.splice(index, 1);
+    },
+    parentNode: (node) => node.parent,
+    nextSibling: (node) => node.parent?.children[node.parent.children.indexOf(node) + 1] || null,
+    patchProp: (node, key, _previous, value) => { node.props[key] = value; },
+    setElementText(node, text) {
+      node.children = [];
+      node.text = text;
+    },
+    setText: (node, text) => { node.text = text; }
+  });
+  const app = renderer.createApp(Vibe64RepositoryWorkspace, {
+    dashboardContext: {
+      sessionId: "history-session",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    },
+    view: "history"
+  });
+  for (const [name, element] of [
+    ["VBtn", "button"], ["VChip", "span"], ["VIcon", "span"], ["VSheet", "section"],
+    ["VAlert", "aside"], ["VCard", "article"], ["VCardTitle", "header"], ["VCardText", "div"],
+    ["VDialog", "dialog"], ["VDivider", "hr"], ["VProgressLinear", "progress"],
+    ["VExpandTransition", "div"]
+  ]) app.component(name, passthroughComponent(element));
+  app.provide(Vue.ssrContextKey, { modules: new Set() });
+  const container = { children: [], props: {}, type: "root" };
+  app.mount(container);
+  return {
+    container,
+    requests,
+    button: (label) => findNode(container, (node) => node.type === "button" && nodeText(node).includes(label)),
+    renderedDiff: () => findNode(container, (node) => Boolean(node.props.innerHTML))?.props.innerHTML || "",
+    async respond(index, payload) {
+      requests[index].resolve(payload);
+      // Drain the request -> composable -> immediate watcher chain before rendering.
+      for (let step = 0; step < 10; step += 1) await Promise.resolve();
+      await Vue.nextTick();
+    },
+    async close() {
+      app.unmount();
+      for (const request of requests) request.resolve({ ok: true });
+      await Promise.all(requests.map((request) => request.promise));
+      resetHttpWebClientForTests();
+    }
+  };
+}
+
+const historyCommit = "a".repeat(40);
+const historyVersion = {
+  author: "History reader",
+  commit: historyCommit,
+  committedAt: "2026-09-06T01:00:00.000Z",
+  message: "Latest saved fixture",
+  shortCommit: "aaaaaaa"
+};
+const firstVersionFile = { added: 1, deleted: 0, path: "a.txt", status: "A" };
+const secondVersionFile = { added: 1, deleted: 0, path: "b.txt", status: "A" };
+const firstVersionDiff = {
+  diff: "diff --git a/a.txt b/a.txt\n--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1 @@\n+first file content\n",
+  ok: true,
+  path: "a.txt"
+};
+
 describe("Vibe64 Repository workspace", () => {
+  it("offers an explicit pending-aware retry after the first history request fails", async () => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, { error: "Initial history failed.", ok: false });
+      // Keep authority-check recovery separate from the explicit History retry.
+      await fixture.respond(1, { error: "Authority check unavailable.", ok: false });
+      expect(nodeText(fixture.container)).toContain("Initial history failed.");
+      expect(nodeText(fixture.container)).not.toContain("No saved versions yet");
+      const retry = fixture.button("Retry history");
+      expect(retry).not.toBeNull();
+      expect(retry.props.disabled).toBe(false);
+      retry.props.onClick();
+      await Vue.nextTick();
+      expect(fixture.button("Retrying…").props.disabled).toBe(true);
+      expect(fixture.button("Retrying…").props["aria-busy"]).toBe("true");
+      expect(fixture.requests[2].path).toBe(fixture.requests[0].path);
+      await fixture.respond(2, { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] });
+      expect(fixture.button(historyVersion.message)).not.toBeNull();
+      expect(nodeText(fixture.container)).not.toContain("Initial history failed.");
+      expect(fixture.button("Retry history")).toBeNull();
+      expect(fixture.requests).toHaveLength(3);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("offers an explicit pending-aware retry after the first version file list fails", async () => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      fixture.button(historyVersion.message).props.onClick();
+      await fixture.respond(2, { error: "Initial version files failed.", ok: false });
+      expect(nodeText(fixture.container)).toContain("Initial version files failed.");
+      expect(nodeText(fixture.container)).not.toContain("Choose a changed file");
+      const retry = fixture.button("Retry files");
+      expect(retry).not.toBeNull();
+      expect(retry.props.disabled).toBe(false);
+      retry.props.onClick();
+      await Vue.nextTick();
+      expect(fixture.button("Retrying…").props.disabled).toBe(true);
+      expect(fixture.button("Retrying…").props["aria-busy"]).toBe("true");
+      expect(fixture.requests[3].path).toBe(fixture.requests[2].path);
+      await fixture.respond(3, { files: [firstVersionFile], ok: true, totalCount: 1, truncated: false });
+      expect(fixture.button("a.txt")).not.toBeNull();
+      await fixture.respond(4, firstVersionDiff);
+      expect(fixture.renderedDiff()).toContain("first file content");
+      expect(nodeText(fixture.container)).not.toContain("Initial version files failed.");
+      expect(fixture.button("Retry files")).toBeNull();
+      expect(fixture.requests).toHaveLength(5);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("keeps loaded versions and a same-cursor retry after an older-history page fails", async () => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, {
+        historySnapshotCommit: historyCommit,
+        nextCursor: "pinned-older-page",
+        ok: true,
+        versions: [historyVersion]
+      });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      expect(fixture.button(historyVersion.message)).not.toBeNull();
+      fixture.button("Load older versions").props.onClick();
+      const pageUrl = new URL(fixture.requests[2].path, "http://vibe64.test");
+      expect(Object.fromEntries(pageUrl.searchParams)).toEqual({
+        cursor: "pinned-older-page", sessionId: "history-session"
+      });
+      await fixture.respond(2, { error: "Older history page failed.", ok: false });
+
+      expect(nodeText(fixture.container)).toContain("Older history page failed.");
+      expect(fixture.button(historyVersion.message)).not.toBeNull();
+      const retry = fixture.button("Load older versions");
+      expect(retry).not.toBeNull();
+      expect(retry.props.disabled).toBe(false);
+      retry.props.onClick();
+      expect(fixture.requests[3].path).toBe(fixture.requests[2].path);
+      await fixture.respond(3, {
+        historySnapshotCommit: historyCommit,
+        nextCursor: "",
+        ok: true,
+        versions: [{ ...historyVersion, commit: "b".repeat(40), message: "Older saved fixture" }]
+      });
+      expect(fixture.button(historyVersion.message)).not.toBeNull();
+      expect(fixture.button("Older saved fixture")).not.toBeNull();
+      expect(nodeText(fixture.container)).not.toContain("Older history page failed.");
+      expect(fixture.button("Load older versions")).toBeNull();
+      expect(fixture.requests).toHaveLength(4);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("keeps version files and their diff with a same-offset retry after a file page fails", async () => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      fixture.button(historyVersion.message).props.onClick();
+      await fixture.respond(2, { files: [firstVersionFile], ok: true, totalCount: 2, truncated: true });
+      await fixture.respond(3, firstVersionDiff);
+      expect(fixture.button("a.txt")).not.toBeNull();
+      expect(fixture.renderedDiff()).toContain("first file content");
+      fixture.button("Load more files").props.onClick();
+      const pageUrl = new URL(fixture.requests[4].path, "http://vibe64.test");
+      expect(pageUrl.pathname).toBe(`/api/app/sample/vibe64/repository/history/${historyCommit}/files`);
+      expect(Object.fromEntries(pageUrl.searchParams)).toEqual({
+        historySnapshotCommit: historyCommit, offset: "1", sessionId: "history-session"
+      });
+      await fixture.respond(4, { error: "Version file page failed.", ok: false });
+
+      expect(nodeText(fixture.container)).toContain("Version file page failed.");
+      expect(fixture.button("a.txt")).not.toBeNull();
+      expect(fixture.renderedDiff()).toContain("first file content");
+      const retry = fixture.button("Load more files");
+      expect(retry).not.toBeNull();
+      expect(retry.props.disabled).toBe(false);
+      retry.props.onClick();
+      expect(fixture.requests[5].path).toBe(fixture.requests[4].path);
+      await fixture.respond(5, { files: [secondVersionFile], ok: true, totalCount: 2, truncated: false });
+      expect(fixture.button("a.txt")).not.toBeNull();
+      expect(fixture.button("b.txt")).not.toBeNull();
+      expect(fixture.renderedDiff()).toContain("first file content");
+      expect(nodeText(fixture.container)).not.toContain("Version file page failed.");
+      expect(fixture.button("Load more files")).toBeNull();
+      expect(fixture.requests).toHaveLength(6);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("keeps loaded version files selectable while the initial diff is pending", async () => {
+    const fixture = mountHistoryWorkspace();
+    try {
+      await fixture.respond(0, { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] });
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      fixture.button(historyVersion.message).props.onClick();
+      await fixture.respond(2, {
+        files: [firstVersionFile, secondVersionFile], ok: true, totalCount: 2, truncated: false
+      });
+      expect(new URL(fixture.requests[3].path, "http://vibe64.test").searchParams.get("path")).toBe("a.txt");
+      expect(fixture.button("a.txt")).not.toBeNull();
+      const secondFile = fixture.button("b.txt");
+      expect(secondFile).not.toBeNull();
+      expect(secondFile.props.disabled).not.toBe(true);
+      secondFile.props.onClick();
+      const secondDiffUrl = new URL(fixture.requests[4].path, "http://vibe64.test");
+      expect(Object.fromEntries(secondDiffUrl.searchParams)).toEqual({
+        historySnapshotCommit: historyCommit, path: "b.txt", sessionId: "history-session"
+      });
+      await fixture.respond(4, {
+        diff: "diff --git a/b.txt b/b.txt\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+second file content\n",
+        ok: true,
+        path: "b.txt"
+      });
+      expect(fixture.button("b.txt").props["aria-current"]).toBe("true");
+      expect(fixture.renderedDiff()).toContain("second file content");
+      await fixture.respond(3, firstVersionDiff);
+      expect(fixture.button("b.txt").props["aria-current"]).toBe("true");
+      expect(fixture.renderedDiff()).toContain("second file content");
+      expect(fixture.renderedDiff()).not.toContain("first file content");
+      expect(fixture.requests).toHaveLength(5);
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("renders hostile Git patch text as text instead of executable markup", () => {
     const patch = [
       "diff --git a/evil.txt b/evil.txt",

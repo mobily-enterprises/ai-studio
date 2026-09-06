@@ -335,16 +335,13 @@ async function changedPathsBetween(runCommand, context, baseCommit, tree, option
   const result = await git(runCommand, context, [
     "diff-tree",
     "--no-commit-id",
-    "--name-only",
+    "--name-status",
     "-r",
     "-z",
     baseCommit,
     tree
   ], options);
-  return String(result.stdout || result.output || "")
-    .split("\0")
-    .map(text)
-    .filter(Boolean)
+  return [...parseGitNameStatusZ(result.stdout || result.output).keys()]
     .sort((left, right) => left.localeCompare(right));
 }
 
@@ -505,8 +502,8 @@ function parseGitNameStatusZ(value = "") {
     if (!status) {
       continue;
     }
-    const previousPath = /^[CR]/u.test(status) ? text(fields[index++]) : "";
-    const filePath = text(fields[index++]);
+    const previousPath = /^[CR]/u.test(status) ? fields[index++] : "";
+    const filePath = fields[index++];
     if (!filePath) {
       continue;
     }
@@ -536,18 +533,20 @@ function parseGitNumstatZ(value = "") {
     if (!record) {
       continue;
     }
-    const [added, deleted, filePath = ""] = record.split("\t");
+    const firstTab = record.indexOf("\t");
+    const secondTab = record.indexOf("\t", firstTab + 1);
+    const filePath = record.slice(secondTab + 1);
     const renamed = !filePath;
     if (renamed) {
       index += 1;
     }
-    const targetPath = text(renamed ? fields[index++] : filePath);
+    const targetPath = renamed ? fields[index++] : filePath;
     if (!targetPath) {
       continue;
     }
     stats.set(targetPath, {
-      added: numericStat(added),
-      deleted: numericStat(deleted)
+      added: numericStat(record.slice(0, firstTab)),
+      deleted: numericStat(record.slice(firstTab + 1, secondTab))
     });
   }
   return stats;
@@ -587,18 +586,18 @@ async function sessionChangeFiles(runCommand, context, canonicalCommit, worktree
 }
 
 function safeChangePath(value = "") {
-  const normalized = text(value).replaceAll("\\", "/");
+  const filePath = String(value || "");
   if (
-    !normalized ||
-    normalized.includes("\0") ||
-    path.posix.isAbsolute(normalized) ||
-    path.posix.normalize(normalized) !== normalized ||
-    normalized === ".." ||
-    normalized.startsWith("../")
+    !filePath ||
+    filePath.includes("\0") ||
+    path.posix.isAbsolute(filePath) ||
+    path.posix.normalize(filePath) !== filePath ||
+    filePath === ".." ||
+    filePath.startsWith("../")
   ) {
     throw saveError("Choose a changed project file.", "vibe64_session_change_path_invalid");
   }
-  return normalized;
+  return filePath;
 }
 
 async function sessionChangeDiff(runCommand, context, work, requestedPath, {

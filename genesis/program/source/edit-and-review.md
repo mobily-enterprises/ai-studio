@@ -67,8 +67,14 @@ History file paging and differences belong to the selected commit. Selecting
 another version clears the previous version's loading and error state. Late
 results from that previous selection cannot change the new view or prevent it
 from loading more files.
+Loaded history and version files remain usable if a later page fails, and the
+same page can be retried without discarding earlier content. A failed first load
+offers an explicit retry. Once a version's file list arrives, its files are
+selectable while the independently owned first diff is still loading.
 In both History and Current Changes, a selected filename is literal, not a Git
-search pattern, even when it contains wildcard or colon characters.
+search pattern, even when it contains wildcard or colon characters. Whitespace,
+tabs and literal backslashes remain part of the exact filename through listing,
+selection and diff requests.
 The full-screen history view scrolls its file list independently from the diff,
 so long versions keep later files and their Load more action reachable without
 moving the selected difference out of view.

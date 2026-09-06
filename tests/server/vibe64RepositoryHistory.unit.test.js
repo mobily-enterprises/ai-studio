@@ -228,7 +228,10 @@ for (const rootVersion of [true, false]) {
     const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-history-literal-path-"));
     const cases = [
       { path: "[ab].txt", selected: "selected wildcard file", other: "unrelated wildcard file", otherPath: "a.txt" },
-      { path: ":literal.txt", selected: "selected colon file", other: "unrelated colon file", otherPath: "literal.txt" }
+      { path: ":literal.txt", selected: "selected colon file", other: "unrelated colon file", otherPath: "literal.txt" },
+      { path: " report.txt ", selected: "selected whitespace file", other: "unrelated ordinary file", otherPath: "report.txt" },
+      { path: "tab\tname.txt", selected: "selected tab file", other: "unrelated tab decoy", otherPath: "tab-name.txt" },
+      { path: "nested\\file.txt", selected: "selected backslash file", other: "unrelated nested file", otherPath: "nested/file.txt" }
     ];
     try {
       await git(root, ["init", "--initial-branch=main"]);
@@ -240,6 +243,8 @@ for (const rootVersion of [true, false]) {
         parent = await git(root, ["rev-parse", "HEAD"]);
       }
       for (const entry of cases) {
+        await mkdir(path.dirname(path.join(root, entry.path)), { recursive: true });
+        await mkdir(path.dirname(path.join(root, entry.otherPath)), { recursive: true });
         await writeFile(path.join(root, entry.path), `${entry.selected}\n`, "utf8");
         await writeFile(path.join(root, entry.otherPath), `${entry.other}\n`, "utf8");
       }
@@ -254,10 +259,25 @@ for (const rootVersion of [true, false]) {
       });
       assert.equal(files.parent, parent);
 
+      await t.test("preserves every exact filename without collapsing distinct entries", () => {
+        assert.equal(files.totalCount, cases.length * 2);
+        assert.equal(files.files.length, cases.length * 2);
+        assert.equal(files.truncated, false);
+        assert.deepEqual(
+          files.files.map((file) => file.path).sort(),
+          cases.flatMap((entry) => [entry.path, entry.otherPath]).sort()
+        );
+      });
+
       for (const entry of cases) {
         await t.test(entry.path, async () => {
           const selected = files.files.find((file) => file.path === entry.path);
           assert.ok(selected, "The file list must offer the exact committed filename.");
+          assert.deepEqual(selected, { added: 1, deleted: 0, path: entry.path, status: "A" });
+          assert.deepEqual(
+            files.files.find((file) => file.path === entry.otherPath),
+            { added: 1, deleted: 0, path: entry.otherPath, status: "A" }
+          );
           const diff = await repositoryVersionFileDiff({
             commit,
             historySnapshotCommit: commit,
@@ -267,7 +287,7 @@ for (const rootVersion of [true, false]) {
           });
           assert.equal(diff.path, selected.path);
           assert.equal(diff.parent, parent);
-          assert.ok(diff.diff.includes(`+${entry.selected}\n`), diff.diff);
+          assert.ok(diff.diff.split("\n").includes(`+${entry.selected}`), diff.diff);
           assert.equal(diff.diff.includes(entry.other), false, diff.diff);
         });
       }

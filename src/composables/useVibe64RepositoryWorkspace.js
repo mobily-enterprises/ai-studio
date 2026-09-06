@@ -138,7 +138,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   }
 
   async function selectCurrentFile(file) {
-    const path = String(file?.path || "").trim();
+    const path = String(file?.path || "");
     selectedCurrentPath.value = path;
     currentDiff.error = "";
     currentDiff.payload = null;
@@ -206,7 +206,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         const initialDiff = result.initialDiff && typeof result.initialDiff === "object"
           ? result.initialDiff
           : null;
-        if (String(initialDiff?.path || "").trim() === String(first.path || "").trim()) {
+        if (String(initialDiff?.path || "") === String(first.path || "")) {
           selectedCurrentPath.value = first.path;
           currentDiff.payload = initialDiff;
         } else {
@@ -258,9 +258,11 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   async function selectVersion(version) {
     const request = beginRequest("versionFiles");
     beginRequest("versionDiff");
+    if (selectedVersion.value?.commit !== version?.commit) {
+      versionFiles.error = "";
+    }
     selectedVersion.value = version || null;
     selectedVersionPath.value = "";
-    versionFiles.error = "";
     versionFiles.loading = false;
     versionFiles.loadingMore = false;
     versionFiles.payload = null;
@@ -284,6 +286,8 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
         return;
       }
       versionFiles.payload = result;
+      versionFiles.error = "";
+      versionFiles.loading = false;
       const first = versionFiles.payload?.files?.[0];
       if (first) {
         await selectVersionFile(first);
@@ -342,7 +346,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   }
 
   async function selectVersionFile(file) {
-    const path = String(file?.path || "").trim();
+    const path = String(file?.path || "");
     selectedVersionPath.value = path;
     versionDiff.error = "";
     versionDiff.payload = null;
@@ -381,8 +385,8 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
   }
 
   async function loadHistory({ append = false } = {}) {
-    history.error = "";
     if (!sessionId.value) {
+      history.error = "";
       history.payload = null;
       history.versions = [];
       history.nextCursor = "";
@@ -398,6 +402,7 @@ function useVibe64RepositoryWorkspace(dashboardContext, { view = "changes" } = {
       if (!requestIsCurrent(request)) {
         return;
       }
+      history.error = "";
       history.payload = append && history.payload
         ? { ...result, versions: [...history.versions, ...(result.versions || [])] }
         : result;

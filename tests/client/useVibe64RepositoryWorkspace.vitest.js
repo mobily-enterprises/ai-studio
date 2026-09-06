@@ -157,6 +157,93 @@ describe("useVibe64RepositoryWorkspace", () => {
     expect(mocks.requestCalls.some(({ path }) => String(path).includes("[object Object]"))).toBe(false);
   });
 
+  it.each([
+    { label: "surrounding-space", path: " report.txt " },
+    { label: "surrounding-tab", path: "\treport.txt\t" },
+    { label: "literal-backslash", path: "folder\\report.txt" }
+  ].flatMap((filename) => ["changes", "history"].map((view) => ({ ...filename, view }))))(
+    "preserves $label filenames in $view selection and decoded query paths",
+    async ({ path: filePath, view }) => {
+      const commit = "a".repeat(40);
+      const diff = { diff: "+exact selected file", ok: true, path: filePath };
+      mocks.diff = diff;
+      mocks.versionFilesHandler = vi.fn(async () => ({ files: [], ok: true }));
+      mocks.versionDiffHandler = vi.fn(async () => diff);
+      const { useVibe64RepositoryWorkspace } = await import(
+        "../../src/composables/useVibe64RepositoryWorkspace.js"
+      );
+      const scope = effectScope();
+      const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+        sessionId: "session-1",
+        sessionsApiPath: "/api/app/sample/vibe64/sessions"
+      }), { view: ref(view) }));
+      try {
+        await nextTick();
+        await flushPromises();
+        if (view === "history") await workspace.selectVersion({ commit });
+        const beforeSelection = mocks.requestCalls.length;
+        if (view === "history") await workspace.selectVersionFile({ path: filePath });
+        else await workspace.selectCurrentFile({ path: filePath });
+
+        const requests = mocks.requestCalls.slice(beforeSelection);
+        expect(requests).toHaveLength(1);
+        const url = new URL(requests[0].path, "http://vibe64.test");
+        expect(url.pathname).toBe(view === "history"
+          ? `/api/app/sample/vibe64/repository/history/${commit}/diff`
+          : "/api/app/sample/vibe64/sessions/session-1/changes/diff");
+        expect({
+          queryPath: url.searchParams.get("path"),
+          selectedPath: view === "history" ? workspace.selectedVersionPath.value : workspace.selectedCurrentPath.value
+        }).toEqual({ queryPath: filePath, selectedPath: filePath });
+        if (view === "history") {
+          expect(url.searchParams.get("historySnapshotCommit")).toBe(commit);
+          expect(url.searchParams.get("sessionId")).toBe("session-1");
+        }
+        expect(view === "history" ? workspace.versionDiff : workspace.currentDiff).toMatchObject({
+          error: "", loading: false, payload: diff
+        });
+      } finally {
+        scope.stop();
+      }
+    }
+  );
+
+  it.each([true, false])("reuses an initial diff only for exact filename identity (matching: %s)", async (matching) => {
+    const filePath = " report.txt ";
+    const initialDiff = {
+      diff: matching ? "+exact snapshot file" : "+different filename snapshot",
+      ok: true,
+      path: matching ? filePath : "report.txt"
+    };
+    mocks.changes = {
+      files: [{ path: filePath }], initialDiff, totalCount: 1, unsaved: true
+    };
+    mocks.diff = { diff: "+requested exact filename", ok: true, path: filePath };
+    const { useVibe64RepositoryWorkspace } = await import(
+      "../../src/composables/useVibe64RepositoryWorkspace.js"
+    );
+    const scope = effectScope();
+    const workspace = scope.run(() => useVibe64RepositoryWorkspace(ref({
+      sessionId: "session-1",
+      sessionsApiPath: "/api/app/sample/vibe64/sessions"
+    }), { view: ref("changes") }));
+    try {
+      await nextTick();
+      await flushPromises();
+      const diffRequests = mocks.requestCalls.filter(({ path }) => path.includes("/changes/diff"));
+      expect(diffRequests).toHaveLength(matching ? 0 : 1);
+      if (!matching) {
+        expect(new URL(diffRequests[0].path, "http://vibe64.test").searchParams.get("path")).toBe(filePath);
+      }
+      expect(workspace.selectedCurrentPath.value).toBe(filePath);
+      expect(workspace.currentDiff).toMatchObject({
+        error: "", loading: false, payload: matching ? initialDiff : mocks.diff
+      });
+    } finally {
+      scope.stop();
+    }
+  });
+
   it("reuses the Current Changes snapshot as the selected session work state", async () => {
     mocks.changes = {
       changedPaths: ["src/app.js"],
@@ -442,6 +529,8 @@ describe("useVibe64RepositoryWorkspace", () => {
       expect(workspace.selectedVersion.value.commit).toBe(secondCommit);
       expect(workspace.selectedVersionPath.value).toBe("b.txt");
       expect(workspace.versionDiff).toMatchObject({ error: "", loading: true, payload: null });
+      expect(workspace.versionFiles.loading).toBe(false);
+      expect(workspace.versionFiles.payload.files).toEqual([{ path: "b.txt" }]);
 
       currentDiff.resolve(currentFailure);
       await selectingCurrent;

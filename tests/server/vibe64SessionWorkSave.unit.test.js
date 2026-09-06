@@ -15,6 +15,7 @@ import {
   prepareSessionWorkSaveMessage,
   recoverSessionWorkUpdate,
   recoverSessionWorkSave,
+  safeChangePath,
   saveSessionWork as saveManagedSessionWorkImplementation,
   saveSessionWorkDirect as saveSessionWorkImplementation,
   updateSessionWork
@@ -383,7 +384,10 @@ test("current changes returns a bounded canonical file list and one selected-fil
 
 for (const entry of [
   { label: "wildcard", path: "[ab].txt", otherPath: "a.txt" },
-  { label: "leading-colon", path: ":literal.txt", otherPath: "literal.txt" }
+  { label: "leading-colon", path: ":literal.txt", otherPath: "literal.txt" },
+  { label: "whitespace", path: " report.txt ", otherPath: "report.txt" },
+  { label: "tab-bearing", path: "tab\tname.txt", otherPath: "tab-name.txt" },
+  { label: "backslash", path: "nested\\file.txt", otherPath: "nested/file.txt" }
 ]) {
   test(`current changes treats a ${entry.label} filename literally`, async (t) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-change-literal-path-"));
@@ -391,6 +395,8 @@ for (const entry of [
       const fixture = await createRemoteFixture(root);
       const session = await sessionForRemote(root, fixture);
       const project = githubProject(root, fixture.remote);
+      await mkdir(path.dirname(path.join(session.sourcePath, entry.path)), { recursive: true });
+      await mkdir(path.dirname(path.join(session.sourcePath, entry.otherPath)), { recursive: true });
       await writeFile(path.join(session.sourcePath, entry.path), "selected literal filename\n", "utf8");
       await writeFile(path.join(session.sourcePath, entry.otherPath), "unrelated matching filename\n", "utf8");
 
@@ -404,17 +410,32 @@ for (const entry of [
         session
       });
       assert.equal(changes.canonicalCommit, fixture.baseCommit);
-      assert.equal(changes.totalCount, 2);
-      assert.deepEqual(new Set(changes.files.map((file) => file.path)), new Set([entry.path, entry.otherPath]));
       assert.equal(initialRequests.length, 1);
       assert.equal(initialRequests[0].command, "node");
       assert.equal(initialRequests[0].execution.sessionId, session.sessionId);
 
+      await t.test("retains both exact file identities and their nonzero counts", () => {
+        assert.equal(changes.totalCount, 2);
+        assert.equal(changes.files.length, 2);
+        assert.equal(changes.truncated, false);
+        assert.deepEqual(new Set(changes.changedPaths), new Set([entry.path, entry.otherPath]));
+        assert.deepEqual(new Set(changes.files.map((file) => file.path)), new Set([entry.path, entry.otherPath]));
+        for (const filePath of [entry.path, entry.otherPath]) {
+          assert.deepEqual(
+            changes.files.find((file) => file.path === filePath),
+            { added: 1, deleted: 0, path: filePath, status: "A" }
+          );
+        }
+      });
+
       await t.test("initialDiff contains only the selected file from the same snapshot", () => {
-        assert.equal(changes.initialDiff.path, entry.path);
+        assert.equal(changes.initialDiff.path, changes.files[0].path);
         assert.equal(changes.initialDiff.worktreeTree, changes.worktreeTree);
-        assert.ok(changes.initialDiff.diff.split("\n").includes("+selected literal filename"), changes.initialDiff.diff);
-        assert.equal(changes.initialDiff.diff.includes("unrelated matching filename"), false, changes.initialDiff.diff);
+        const firstIsSelected = changes.files[0].path === entry.path;
+        const expectedText = firstIsSelected ? "selected literal filename" : "unrelated matching filename";
+        const excludedText = firstIsSelected ? "unrelated matching filename" : "selected literal filename";
+        assert.ok(changes.initialDiff.diff.split("\n").includes(`+${expectedText}`), changes.initialDiff.diff);
+        assert.equal(changes.initialDiff.diff.includes(excludedText), false, changes.initialDiff.diff);
       });
 
       await t.test("explicit selected-file diff contains only that file in one job", async () => {
@@ -457,6 +478,58 @@ for (const entry of [
     }
   });
 }
+
+test("changed-file path validation rejects absolute paths, traversal and NUL", () => {
+  assert.equal(safeChangePath("nested/file.txt"), "nested/file.txt");
+  for (const invalidPath of [
+    "", "/outside.txt", "..", "../outside.txt", "nested/../../outside.txt", "file\0name.txt",
+    "./nested/file.txt", "nested//file.txt", "nested/../file.txt"
+  ]) {
+    assert.throws(() => safeChangePath(invalidPath), { code: "vibe64_session_change_path_invalid" });
+  }
+});
+
+test("current changes preserves renamed filenames and binary statistics", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-change-rename-binary-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const session = await sessionForRemote(root, fixture);
+    const renamedPath = " renamed\tfile.txt ";
+    const binaryPath = "binary\tdata.bin";
+    await git(session.sourcePath, ["mv", "--", "shared.txt", renamedPath]);
+    await writeFile(path.join(session.sourcePath, binaryPath), Buffer.from([0, 1, 2, 3]));
+    const requests = [];
+    const changes = await inspectSessionChanges({
+      project: githubProject(root, fixture.remote),
+      runCommand: async (request) => {
+        requests.push(request);
+        return commandRunner(request);
+      },
+      session
+    });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].command, "node");
+    assert.equal(changes.totalCount, 2);
+    assert.equal(changes.files.length, 2);
+    assert.deepEqual(changes.files.find((file) => file.path === renamedPath), {
+      added: 0,
+      deleted: 0,
+      path: renamedPath,
+      previousPath: "shared.txt",
+      status: "R"
+    });
+    assert.deepEqual(changes.files.find((file) => file.path === binaryPath), {
+      added: null,
+      deleted: null,
+      path: binaryPath,
+      status: "A"
+    });
+    assert.equal(changes.initialDiff.path, changes.files[0].path);
+    assert.equal(changes.initialDiff.worktreeTree, changes.worktreeTree);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
 
 test("local-source current changes reuses one snapshot for its initial file diff", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));

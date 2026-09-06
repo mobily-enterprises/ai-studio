@@ -162,8 +162,25 @@
             compact
             :error="history.error"
             title="Version history could not load"
+          >
+            <template v-if="!history.payload" #actions>
+              <v-btn
+                :aria-busy="history.loading ? 'true' : undefined"
+                :disabled="history.loading"
+                size="small"
+                type="button"
+                variant="tonal"
+                @click="loadHistory()"
+              >
+                {{ history.loading ? "Retrying…" : "Retry history" }}
+              </v-btn>
+            </template>
+          </StudioErrorNotice>
+          <v-progress-linear
+            v-if="history.loading && !history.payload && !history.error"
+            color="primary"
+            indeterminate
           />
-          <v-progress-linear v-else-if="history.loading && !history.versions.length" color="primary" indeterminate />
           <div v-else-if="history.versions.length" class="vibe64-repository-workspace__history">
             <div class="vibe64-repository-workspace__history-intro">
               <div class="vibe64-repository-workspace__history-heading">
@@ -245,7 +262,7 @@
               </li>
             </ol>
           </div>
-          <div v-else class="vibe64-repository-workspace__empty">
+          <div v-else-if="!history.error" class="vibe64-repository-workspace__empty">
             <strong>No saved versions yet</strong>
             <span>Versions will appear here after work is saved.</span>
           </div>
@@ -301,14 +318,33 @@
         <v-card-text class="vibe64-repository-version-dialog__body">
           <StudioErrorNotice
             v-if="versionFiles.error"
+            class="vibe64-repository-version-dialog__error"
             compact
             :error="versionFiles.error"
             title="Version details could not load"
+          >
+            <template v-if="!versionFiles.payload" #actions>
+              <v-btn
+                :aria-busy="versionFiles.loading ? 'true' : undefined"
+                :disabled="versionFiles.loading"
+                size="small"
+                type="button"
+                variant="tonal"
+                @click="selectVersion(selectedVersion)"
+              >
+                {{ versionFiles.loading ? "Retrying…" : "Retry files" }}
+              </v-btn>
+            </template>
+          </StudioErrorNotice>
+          <v-progress-linear
+            v-if="versionFiles.loading && !versionFiles.payload && !versionFiles.error"
+            color="primary"
+            indeterminate
           />
-          <v-progress-linear v-else-if="versionFiles.loading" color="primary" indeterminate />
           <Vibe64RepositoryFileBrowser
-            v-else
+            v-if="versionFiles.payload"
             aria-label="Files in this version"
+            class="vibe64-repository-version-dialog__files"
             embedded
             :error="versionDiff.error"
             :files="versionFiles.payload?.files || []"
@@ -985,9 +1021,22 @@ function closeVersion() {
 .vibe64-repository-version-dialog__body {
   display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
   padding: 0;
+}
+
+.vibe64-repository-version-dialog__error {
+  flex: 0 0 auto;
+  max-height: 50%;
+  overflow: auto;
+}
+
+.vibe64-repository-version-dialog__body > .vibe64-repository-version-dialog__files {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
 }
 
 :global(.vibe64-repository-version-dialog .v-overlay__content) {
