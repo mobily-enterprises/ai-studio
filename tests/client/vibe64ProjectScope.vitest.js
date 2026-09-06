@@ -1,4 +1,8 @@
 import { readFileSync } from "node:fs";
+import { compile } from "@vue/compiler-dom";
+import { compileScript, parse } from "@vue/compiler-sfc";
+import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
+import * as Vue from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   configureHttpWebClient,
@@ -31,6 +35,161 @@ import {
   projectAppPath,
   projectSlugFromPathname
 } from "../../src/lib/vibe64ProjectScope.js";
+
+const projectQueryMocks = vi.hoisted(() => ({ route: null }));
+vi.mock("vue-router", () => ({
+  RouterView: { render: () => null },
+  useRoute: () => projectQueryMocks.route,
+  useRouter: () => ({ push: vi.fn() })
+}));
+vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
+  useCommand: () => ({ isRunning: false, message: "", messageType: "", run: vi.fn() })
+}));
+vi.mock("@/composables/useStudioShellDrawer.js", () => ({ useStudioShellDrawer() {} }));
+vi.mock("@/components/StudioAppShellLayout.vue", () => ({ default: passthroughComponent("section") }));
+vi.mock("@/components/studio/Vibe64AuthSettingsButton.vue", () => ({ default: { render: () => null } }));
+vi.mock("@/components/studio/StudioErrorNotice.vue", () => ({ default: passthroughComponent("aside") }));
+vi.mock("@/components/studio/Vibe64SessionPanel.vue", () => ({
+  default: Vue.defineComponent({
+    inheritAttrs: false,
+    props: { projectContext: { type: Object, required: true } },
+    setup(props) {
+      return () => Vue.h("article", { "data-project-slug": props.projectContext.slug });
+    }
+  })
+}));
+vi.mock("vuetify/components/VAlert", () => ({ VAlert: passthroughComponent("aside") }));
+vi.mock("vuetify/components/VBtn", () => ({ VBtn: passthroughComponent("button") }));
+vi.mock("vuetify/components/VForm", () => ({ VForm: passthroughComponent("form") }));
+vi.mock("vuetify/components/VIcon", () => ({ VIcon: passthroughComponent("span") }));
+vi.mock("vuetify/components/VList", () => ({
+  VList: passthroughComponent("ul"),
+  VListItem: passthroughComponent("li")
+}));
+vi.mock("vuetify/components/VMenu", () => ({ VMenu: passthroughComponent("div") }));
+vi.mock("vuetify/components/VSheet", () => ({ VSheet: passthroughComponent("section") }));
+vi.mock("vuetify/components/VSkeletonLoader", () => ({ VSkeletonLoader: passthroughComponent("div") }));
+vi.mock("vuetify/components/VTextField", () => ({ VTextField: passthroughComponent("input") }));
+
+import ProjectPage from "../../src/pages/app/project/[slug].vue";
+import ProjectSelectionGate from "../../src/components/studio/ProjectSelectionGate.vue";
+
+for (const [component, file] of [
+  [ProjectPage, "../../src/pages/app/project/[slug].vue"],
+  [ProjectSelectionGate, "../../src/components/studio/ProjectSelectionGate.vue"]
+]) {
+  const filename = new URL(file, import.meta.url).pathname;
+  const { descriptor } = parse(readFileSync(filename, "utf8"), { filename });
+  const script = compileScript(descriptor, { id: "project-query-owner-test" });
+  component.render = new Function("Vue", compile(descriptor.template.content, {
+    bindingMetadata: script.bindings,
+    mode: "function",
+    prefixIdentifiers: true
+  }).code)(Vue);
+}
+
+function passthroughComponent(element) {
+  return Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, slots }) {
+      return () => Vue.h(element, attrs, Object.values(slots).flatMap((slot) => slot({ props: {} })));
+    }
+  });
+}
+
+function projectSelection(slug) {
+  const project = { slug, path: `/projects/${slug}`, runtime: { open: true } };
+  return {
+    currentProject: project,
+    hasSelection: true,
+    ok: true,
+    projects: [project],
+    projectsRoot: "/projects",
+    targetRoot: project.path
+  };
+}
+
+function findNode(node, predicate) {
+  if (predicate(node)) return node;
+  for (const child of node.children || []) {
+    const found = findNode(child, predicate);
+    if (found) return found;
+  }
+  return null;
+}
+
+function mountProjectQueries(slug, { catalog = null } = {}) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const requests = [];
+  configureHttpWebClient({
+    request(url, options) {
+      expect(options.method).toBe("GET");
+      const response = Promise.withResolvers();
+      requests.push({ url, ...response });
+      return response.promise;
+    }
+  });
+  if (catalog) queryClient.setQueryData(projectSelectionQueryKey("app", "public", slug), catalog);
+  const route = Vue.reactive({ params: { slug }, path: projectAppPath(slug), query: {} });
+  projectQueryMocks.route = route;
+  const renderer = Vue.createRenderer({
+    createElement: (type) => ({ type, children: [], props: {}, parent: null }),
+    createComment: (text) => ({ type: "comment", text, children: [], props: {} }),
+    createText: (text) => ({ type: "text", text, children: [], props: {} }),
+    insert(child, parent, anchor = null) {
+      const previous = child.parent?.children?.indexOf(child) ?? -1;
+      if (previous >= 0) child.parent.children.splice(previous, 1);
+      child.parent = parent;
+      const index = anchor ? parent.children.indexOf(anchor) : -1;
+      if (index < 0) parent.children.push(child);
+      else parent.children.splice(index, 0, child);
+    },
+    remove(child) {
+      const index = child.parent?.children?.indexOf(child) ?? -1;
+      if (index >= 0) child.parent.children.splice(index, 1);
+    },
+    parentNode: (node) => node.parent,
+    nextSibling(node) {
+      return node.parent?.children[node.parent.children.indexOf(node) + 1] || null;
+    },
+    patchProp: (node, key, _previous, value) => { node.props[key] = value; },
+    setElementText: (node, text) => { node.text = text; },
+    setText: (node, text) => { node.text = text; }
+  });
+  const app = renderer.createApp(ProjectPage);
+  for (const [name, element] of [
+    ["VAlert", "aside"], ["VBtn", "button"], ["VForm", "form"], ["VIcon", "span"],
+    ["VList", "ul"], ["VListItem", "li"], ["VMenu", "div"], ["VSheet", "section"],
+    ["VSkeletonLoader", "div"], ["VTextField", "input"]
+  ]) app.component(name, passthroughComponent(element));
+  app.use(VueQueryPlugin, { queryClient });
+  app.provide(Vue.ssrContextKey, { modules: new Set() });
+  const container = { children: [], props: {}, type: "root" };
+  app.mount(container);
+  return {
+    queryClient,
+    requests,
+    route,
+    renderedProject: () => findNode(container, (node) => node.type === "article")?.props["data-project-slug"],
+    navigationVisible: () => Boolean(findNode(container, (node) => node.props.role === "tablist")),
+    async resolveProject(projectSlug) {
+      const queries = queryClient.getQueryCache().findAll({
+        queryKey: projectSelectionQueryKey("app", "public", projectSlug)
+      });
+      const pending = queries.map((query) => query.promise);
+      for (const request of requests) {
+        if (request.url === `/api/app/${projectSlug}/vibe64/projects`) request.resolve(projectSelection(projectSlug));
+      }
+      await Promise.all(pending);
+      await Vue.nextTick();
+    },
+    close() {
+      app.unmount();
+      queryClient.clear();
+      for (const request of requests) request.resolve({});
+    }
+  };
+}
 
 describe("Vibe64 project client scope", () => {
   afterEach(() => {
@@ -175,6 +334,95 @@ describe("Vibe64 project client scope", () => {
       ...projectSelectionQueryKey("app", "public", "alpha_1"),
       "route-selection"
     ]);
+  });
+
+  it("shares one scoped project query and initial request between the app and its gate", async () => {
+    const slug = "shared-query-project";
+    const fixture = mountProjectQueries(slug);
+    try {
+      expect(fixture.requests.map(({ url }) => url)).toEqual([
+        `/api/app/${slug}/vibe64/projects`
+      ]);
+      const queries = fixture.queryClient.getQueryCache().findAll({
+        queryKey: projectSelectionQueryKey("app", "public", slug)
+      });
+      expect(queries).toHaveLength(1);
+      expect(queries[0].getObserversCount()).toBe(2);
+      expect(fixture.renderedProject()).toBeUndefined();
+      expect(fixture.navigationVisible()).toBe(false);
+
+      await fixture.resolveProject(slug);
+      expect(fixture.renderedProject()).toBe(slug);
+      expect(fixture.navigationVisible()).toBe(true);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("shares the destination query while project switching excludes late prior-project data", async () => {
+    const firstSlug = "route-query-a";
+    const nextSlug = "route-query-b";
+    const fixture = mountProjectQueries(firstSlug);
+    try {
+      await fixture.resolveProject(firstSlug);
+      expect(fixture.renderedProject()).toBe(firstSlug);
+      expect(fixture.navigationVisible()).toBe(true);
+      const earlierRefresh = fixture.queryClient.refetchQueries({
+        queryKey: projectSelectionQueryKey("app", "public", firstSlug)
+      });
+
+      fixture.route.params.slug = nextSlug;
+      fixture.route.path = projectAppPath(nextSlug);
+      await Vue.nextTick();
+      expect(fixture.renderedProject()).toBeUndefined();
+      expect(fixture.navigationVisible()).toBe(false);
+      expect(fixture.requests.filter(({ url }) => url === `/api/app/${nextSlug}/vibe64/projects`))
+        .toHaveLength(1);
+      const nextQueries = fixture.queryClient.getQueryCache().findAll({
+        queryKey: projectSelectionQueryKey("app", "public", nextSlug)
+      });
+      expect(nextQueries).toHaveLength(1);
+      expect(nextQueries[0].getObserversCount()).toBe(2);
+
+      await fixture.resolveProject(nextSlug);
+      expect(fixture.renderedProject()).toBe(nextSlug);
+      expect(fixture.navigationVisible()).toBe(true);
+      await fixture.resolveProject(firstSlug);
+      await earlierRefresh;
+      expect(fixture.renderedProject()).toBe(nextSlug);
+      expect(fixture.navigationVisible()).toBe(true);
+
+      fixture.route.params.slug = firstSlug;
+      fixture.route.path = projectAppPath(firstSlug);
+      await Vue.nextTick();
+      expect(fixture.renderedProject()).toBe(firstSlug);
+      expect(fixture.navigationVisible()).toBe(true);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps the global catalog cache separate from both scoped project readers", async () => {
+    const slug = "catalog-query-project";
+    const catalog = projectSelection("globally-selected-project");
+    const fixture = mountProjectQueries(slug, { catalog });
+    try {
+      const catalogKey = projectSelectionQueryKey("app", "public", slug);
+      const catalogQuery = fixture.queryClient.getQueryCache().find({ queryKey: catalogKey, exact: true });
+      expect(catalogQuery.getObserversCount()).toBe(0);
+      expect(fixture.renderedProject()).toBeUndefined();
+      expect(fixture.navigationVisible()).toBe(false);
+      expect(fixture.requests.map(({ url }) => url)).toEqual([
+        `/api/app/${slug}/vibe64/projects`
+      ]);
+
+      await fixture.resolveProject(slug);
+      expect(fixture.queryClient.getQueryData(catalogKey)).toEqual(catalog);
+      expect(fixture.renderedProject()).toBe(slug);
+      expect(fixture.navigationVisible()).toBe(true);
+    } finally {
+      fixture.close();
+    }
   });
 
   it("routes created and selected projects to their project pages", () => {

@@ -12,6 +12,7 @@ workspace.
 - `src/components/studio/vibe64-session/Vibe64ProjectOnboarding.vue`
 - `packages/vibe64-core/src/server/studioProjectContext.js`
 - `src/composables/useVibe64ProjectsResource.js`
+- `src/composables/useProjectSelectionGate.js`
 
 ## Public contract
 
@@ -45,6 +46,9 @@ project state so the deleted project cannot remain or block recreation.
 Durable project mutations publish one shared project refresh event. Consumers
 use it only to invalidate their project list, selection, settings, repository,
 or access reads; the HTTP resources remain authoritative.
+The routed shell and selection gate share the query for that route's scoped
+project response. Its cache identity remains separate from the global catalog,
+whose selected project may differ from the current browser route.
 Runtime lifecycle publication uses that same project-event owner. Deletion
 publishes only a catalog refresh hint, so clients can remove a deleted project
 without exposing its former identity to a broader audience.

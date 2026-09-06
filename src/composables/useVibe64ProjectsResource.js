@@ -6,9 +6,11 @@ import {
 } from "@/lib/vibe64RequestConfig.js";
 import {
   PROJECT_SELECTION_ENDPOINT,
-  VIBE64_PROJECT_CHANGED_EVENT,
-  projectSelectionQueryKey
+  VIBE64_PROJECT_CHANGED_EVENT
 } from "@/lib/studioGateApi.js";
+import {
+  projectSelectionGateQueryKey
+} from "@/composables/useProjectSelectionGate.js";
 import {
   scopedDevelopmentApiUrl
 } from "@/lib/studioUrls.js";
@@ -33,7 +35,12 @@ function useVibe64ProjectsResource({
   const resource = useEndpointResource({
     fallbackLoadError,
     path: selectionPath,
-    queryKey: computed(() => projectSelectionQueryKey(VIBE64_SURFACE_ID, ROUTE_VISIBILITY_PUBLIC, slug.value)),
+    queryKey: computed(() => projectSelectionGateQueryKey({
+      ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
+      projectSlug: slug.value,
+      scopeSelectionToCurrentProject: Boolean(slug.value),
+      surfaceId: VIBE64_SURFACE_ID
+    })),
     refreshOnPull: true,
     requestRecoveryLabel: requestRecoveryLabel,
     realtime: {
