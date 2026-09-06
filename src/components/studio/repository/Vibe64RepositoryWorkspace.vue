@@ -1,5 +1,8 @@
 <template>
-  <section class="vibe64-repository-workspace">
+  <section
+    class="vibe64-repository-workspace"
+    :class="{ 'vibe64-repository-workspace--changes': view === 'changes' }"
+  >
     <header class="vibe64-repository-workspace__header">
       <div>
         <h1>{{ pageTitle }}</h1>
@@ -122,7 +125,7 @@
       </StudioErrorNotice>
 
       <div class="vibe64-repository-workspace__window">
-        <section v-if="view === 'changes'">
+        <section v-if="view === 'changes'" class="vibe64-repository-workspace__changes">
           <div v-if="!sessionId" class="vibe64-repository-workspace__empty">
             <strong>No session selected</strong>
             <span>Create or select a session to see its current changes.</span>
@@ -1053,6 +1056,41 @@ function closeVersion() {
   border: 1px solid rgba(var(--v-theme-outline), 0.16);
   border-radius: 0.75rem;
   padding: 1rem;
+}
+
+@media (min-width: 781px) {
+  .vibe64-repository-workspace--changes {
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+  }
+
+  .vibe64-repository-workspace--changes .vibe64-repository-workspace__changes-area {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .vibe64-repository-workspace--changes .vibe64-repository-workspace__changes-area > :not(.vibe64-repository-workspace__window) {
+    flex: 0 0 auto;
+  }
+
+  .vibe64-repository-workspace--changes .vibe64-repository-workspace__window {
+    display: grid;
+    flex: 1 1 0;
+    grid-template-rows: minmax(0, 1fr);
+    /* Keep the review pane usable when notices fill a short browser window. */
+    min-height: 12rem;
+  }
+
+  .vibe64-repository-workspace__changes {
+    align-items: start;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+    overflow: auto;
+  }
 }
 
 @media (max-width: 780px) {

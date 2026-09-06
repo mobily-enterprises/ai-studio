@@ -184,6 +184,23 @@ function fileStatusLabel(value = "") {
   overflow-wrap: anywhere;
 }
 
+@media (min-width: 781px) {
+  .vibe64-repository-file-browser:not(.vibe64-repository-file-browser--embedded) {
+    align-self: stretch;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .vibe64-repository-file-browser:not(.vibe64-repository-file-browser--embedded) > .vibe64-repository-file-browser__list,
+  .vibe64-repository-file-browser:not(.vibe64-repository-file-browser--embedded) > .vibe64-repository-file-browser__detail {
+    align-self: stretch;
+    min-height: 0;
+  }
+
+  .vibe64-repository-file-browser:not(.vibe64-repository-file-browser--embedded) > .vibe64-repository-file-browser__list {
+    max-height: none;
+  }
+}
+
 @media (max-width: 780px) {
   .vibe64-repository-file-browser {
     grid-template-columns: minmax(0, 1fr);

@@ -20,6 +20,7 @@ from saved project work, and inspect one exact file change at a time.
 - `src/components/studio/repository/Vibe64RepositoryWorkspace.vue`
 - `src/components/studio/repository/Vibe64RepositoryFileBrowser.vue`
 - `src/components/studio/repository/Vibe64RepositoryDiff.vue`
+- `src/components/SectionContainerShell.vue`
 - `src/lib/vibe64RepositoryRealtime.js`
 - `src/pages/app/project/[slug]/dashboard/changes/index.vue`
 - `src/pages/app/project/[slug]/dashboard/repository/index.vue`
@@ -96,6 +97,10 @@ entries remain independently readable.
 The full-screen history view scrolls its file list independently from the diff,
 so long versions keep later files and their Load more action reachable without
 moving the selected difference out of view.
+Desktop Current Changes also scrolls its file list and selected difference
+independently. In short windows, status notices and the review pane can scroll
+below the fixed heading without collapsing the pane. Dashboard navigation owns
+its own scrolling, so reaching a lower section does not shift the page content.
 
 ## Implementation map
 

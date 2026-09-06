@@ -265,7 +265,9 @@ onBeforeUnmount(() => {
 }
 
 .section-container-shell__nav {
+  min-height: 0;
   min-width: 0;
+  overflow-y: auto;
 }
 
 .section-container-shell__nav :deep(.v-list) {
