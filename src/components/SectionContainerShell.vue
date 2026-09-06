@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="section-container-shell">
+  <section class="section-container-shell" :class="{ 'section-container-shell--with-heading': hasHeading }">
     <header v-if="hasHeading" class="section-container-shell__heading">
       <h1 v-if="resolvedTitle" class="section-container-shell__title">{{ resolvedTitle }}</h1>
       <p v-if="resolvedSubtitle" class="text-body-2 text-medium-emphasis mb-0">{{ resolvedSubtitle }}</p>
@@ -181,10 +181,14 @@ onBeforeUnmount(() => {
 .section-container-shell {
   display: grid;
   gap: 0.85rem;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
+}
+
+.section-container-shell--with-heading {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .section-container-shell__heading {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -76,6 +76,40 @@ test("Genesis project-format inspection identifies a migratable unversioned proj
   });
 });
 
+test("the Genesis boundary reads a shared session checkout without granting unrelated compiler calls trust", {
+  skip: process.platform === "win32"
+}, async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await addGenesisStack({ projectRoot, pieces: ["jskit-mysql"] });
+    const { stdout } = await execFileAsync("which", ["git"]);
+    const realGit = stdout.trim();
+    const bin = path.join(projectRoot, "test-bin");
+    await mkdir(bin);
+    const wrapper = path.join(bin, "git");
+    await writeFile(wrapper, `#!/bin/sh\nexport GIT_TEST_ASSUME_DIFFERENT_OWNER=1\nexec '${realGit.replaceAll("'", "'\\''")}' "$@"\n`);
+    await chmod(wrapper, 0o755);
+    const boundary = new URL("../../packages/vibe64-genesis/src/server/index.js", import.meta.url).href;
+    await execFileAsync(process.execPath, ["--input-type=module", "-e", `
+      import assert from "node:assert/strict";
+      import { inspectEnvironment } from "genesis-compiler";
+      import { inspectGenesisEnvironment, inspectGenesisProjectFormat, inspectVibe64Outputs } from ${JSON.stringify(boundary)};
+      const projectRoot = ${JSON.stringify(projectRoot)};
+      await assert.rejects(inspectEnvironment({ projectRoot }), { code: "GIT_REPOSITORY_UNTRUSTED" });
+      const [environment, format, outputs] = await Promise.all([
+        inspectGenesisEnvironment({ projectRoot }),
+        inspectGenesisProjectFormat({ projectRoot }),
+        inspectVibe64Outputs({ projectRoot })
+      ]);
+      assert.equal(environment.resources[0].resource.kind, "mysql");
+      assert.equal(format.status, "current");
+      assert.ok(outputs.contract);
+      await assert.rejects(inspectEnvironment({ projectRoot }), { code: "GIT_REPOSITORY_UNTRUSTED" });
+    `], { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } });
+  });
+});
+
 test("the Genesis integration maps Vibe actions to explicit Genesis tasks and requests", () => {
   assert.equal(genesisPromptTask({ genesisTask: "program" }), "program");
   assert.equal(genesisPromptTask({ genesisTask: "adopt" }), "adopt");
@@ -118,7 +152,7 @@ test("the Vibe64 driver contributes stable session rules and no turn context", (
     () => vibe64Driver({
       scope: "turn"
     }),
-    /session scope only/u
+    /session and ephemeral scopes only/u
   );
 });
 

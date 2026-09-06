@@ -5,7 +5,7 @@ import {
 } from "../env/sharedToolEnv.js";
 
 const PLAYWRIGHT_BROWSER_LAUNCH_OK_PATTERN =
-  /Playwright browser launched:\s+\/.*(?:\/chrome|\/chrome-headless-shell)\b/u;
+  /^Playwright browser launched:[ \t]+\/[^\r\n]*\/(?:chrome|chrome-headless-shell|headless_shell)[ \t]*\r?$/mu;
 const PLAYWRIGHT_RUNTIME_OK_PATTERN =
   /Playwright runtime ready:\s+Version \d+\.\d+\.\d+;\s+manifest \/[^\r\n]+\/runtime\.env\b/u;
 
@@ -151,17 +151,20 @@ function playwrightBrowserLaunchCheckScript() {
     "  printf 'Playwright Chromium headless-shell version mismatch: expected %s, observed %s.\\n' \"$expected_chromium_version\" \"${headless_shell_version:-missing}\"",
     "  exit 1",
     "fi",
-    "missing_libraries=\"$(ldd \"$browser\" 2>/dev/null | grep \"not found\" || true)\"",
-    "if [ -n \"$missing_libraries\" ]; then",
-    "  printf '%s\\n' \"$missing_libraries\"",
-    "  exit 1",
-    "fi",
+    // Match Playwright's headless runtime. Full desktop Chromium starts extra
+    // services that exhaust a bounded health job's process/thread allowance.
+    "browser=\"$headless_shell\"",
+    // Launch through the executable's own loader; host ldd can report false
+    // missing symbols when the managed browser uses a pinned Nix glibc.
     "browser_log=\"$(mktemp \"${TMPDIR:-/tmp}/vibe64-playwright-launch.XXXXXX\")\"",
     "cleanup_browser_log() { rm -f \"$browser_log\"; }",
     "trap cleanup_browser_log EXIT",
-    "if ! browser_output=\"$(timeout 30s \"$browser\" --headless --disable-gpu --no-sandbox --dump-dom 'data:text/html,<title>vibe64-playwright</title><h1>vibe64-playwright-ok</h1>' 2> \"$browser_log\")\"; then",
-    "  sed 's/^/[chromium] /' \"$browser_log\" >&2",
-    "  echo \"Playwright Chromium could not launch: $browser\"",
+    "if browser_output=\"$(timeout 15s \"$browser\" --headless --disable-gpu --no-sandbox --dump-dom 'data:text/html,<title>vibe64-playwright</title><h1>vibe64-playwright-ok</h1>' 2> \"$browser_log\")\"; then",
+    "  :",
+    "else",
+    "  browser_status=$?",
+    "  printf 'Playwright Chromium headless shell could not launch (exit %s; timeout is 15s): %s\\n' \"$browser_status\" \"$browser\" >&2",
+    "  tail -n 3 \"$browser_log\" | sed 's/^/[chromium] /' >&2",
     "  exit 1",
     "fi",
     "if ! grep -q 'vibe64-playwright-ok' <<< \"$browser_output\"; then",

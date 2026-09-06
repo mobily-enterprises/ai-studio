@@ -101,6 +101,13 @@ The provider may serialize its system or developer instructions again for a
 later stateless model request, but Vibe64 does not rerender them into the
 person's message or copy them into the turn-context lane.
 
+Non-project, tool-free conversations have no Genesis project plugin. OpenCode's
+host plugin therefore installs their validated, host-supplied context directly
+in the system lane, replacing coding-agent defaults for that exact native
+conversation only. It reads the current context on each model request so a
+refreshed host snapshot takes effect without adding a user message. Ordinary
+project conversations keep their existing Genesis prompt lifecycle.
+
 Every real human turn keeps the person's authored text unchanged. Vibe64 adds
 no turn context: no name, actor id, policy identifier, tone, response length,
 experience, explanation style, project note, question format, or concealment
@@ -130,7 +137,10 @@ only currently connected providers and currently available models, chooses a
 compatible conversation agent automatically, and offers the selected model's
 thinking choices when present. If a saved model is no longer available, the
 draft shown in the cog moves to that provider's available default, then its
-first available model, for the person to apply explicitly. Up to six models
+first available model, for the person to apply explicitly. If the saved provider
+itself is unavailable, the draft offers a connected provider within the same
+session engine and explains that Apply is required to reconnect. It never saves
+that replacement merely because the picker opened. Up to six models
 remain immediate buttons; a longer provider list becomes one searchable
 autocomplete so the selector stays compact. When a host
 exposes configurable model access, the owner sees the same warned unlock switch

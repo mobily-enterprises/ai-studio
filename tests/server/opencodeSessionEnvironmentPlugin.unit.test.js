@@ -35,6 +35,58 @@ test("OpenCode raises output only for models with an advertised output limit", a
   }
 });
 
+test("tool-free non-project conversations receive their own current system context without a project plugin", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-ephemeral-context-"));
+  const registryPath = path.join(temporaryRoot, "sessions.json");
+  const previousRegistry = process.env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY;
+  t.after(async () => {
+    if (previousRegistry === undefined) delete process.env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY;
+    else process.env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY = previousRegistry;
+    await rm(temporaryRoot, { force: true, recursive: true });
+  });
+  const scope = { scope: "ephemeral", stableContext: "You have no tools or shell. Trusted host snapshot: active." };
+  const sessions = [{ upstreamSessionId: "private-conversation", promptContext: scope }, {
+    upstreamSessionId: "project-conversation",
+    promptContext: { scope: "session" }
+  }];
+  await writeFile(registryPath, JSON.stringify({ sessions }));
+  process.env.VIBE64_OPENCODE_SESSION_ENV_REGISTRY = registryPath;
+  const plugin = await Vibe64SessionEnvironment();
+  const transform = plugin["experimental.chat.system.transform"];
+  const output = { system: ["You are a coding agent. Inspect the project."] };
+  const system = output.system;
+  await transform({ sessionID: "private-conversation" }, output);
+  assert.equal(output.system, system);
+  assert.deepEqual(system, [scope.stableContext]);
+
+  scope.stableContext = "You have no tools or shell. Refreshed host snapshot: stopped.";
+  await writeFile(registryPath, JSON.stringify({ sessions }));
+  await transform({ sessionID: "private-conversation" }, output);
+  await transform({ sessionID: "private-conversation" }, output);
+  assert.deepEqual(output.system, [scope.stableContext]);
+
+  for (const sessionID of ["project-conversation", "unregistered-conversation", ""]) {
+    const ordinary = { system: ["Original project or provider guidance."] };
+    await transform({ sessionID }, ordinary);
+    assert.deepEqual(ordinary.system, ["Original project or provider guidance."]);
+  }
+  const messages = { messages: [{
+    info: { role: "user", sessionID: "private-conversation" },
+    parts: [{ type: "text", text: "What is wrong?\nPlease explain." }]
+  }] };
+  const authored = structuredClone(messages);
+  await plugin["experimental.chat.messages.transform"]({}, messages);
+  assert.deepEqual(messages, authored);
+  const tool = { args: { command: "ls -la /private/conversation" } };
+  await plugin["tool.execute.before"]({ sessionID: "private-conversation", tool: "bash" }, tool);
+  assert.match(tool.args.command, /vibe64_agent_control_unavailable/u);
+  assert.match(tool.args.command, /exit 126/u);
+
+  scope.stableContext = "";
+  await writeFile(registryPath, JSON.stringify({ sessions }));
+  await assert.rejects(transform({ sessionID: "private-conversation" }, output), /bounded stableContext/u);
+});
+
 test("OpenCode binds shell commands once and hides the session wrapper from model history", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-session-environment-"));
   const registryPath = path.join(temporaryRoot, "sessions.json");

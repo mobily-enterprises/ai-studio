@@ -73,7 +73,9 @@ async function commandCheck({
     runtimes,
     timeout: COMMAND_TIMEOUT_MS
   });
-  const observed = result?.output || result?.error || "";
+  const observed = result?.ok
+    ? result.output || ""
+    : [result?.error, result?.output].filter(Boolean).join("\n");
   const check = {
     id,
     label,
@@ -260,8 +262,8 @@ function createService({
           runtimes: ["node26", "playwright"],
           runCommand,
           studioRoot,
-          expected: "The managed Chromium paths exist and Chromium launches.",
-          explanation: "Browser verification uses Vibe64's pinned Chromium and never downloads a project-local browser.",
+          expected: "The managed Chromium paths exist and its headless shell launches.",
+          explanation: "Browser verification launches Vibe64's pinned Chromium headless shell without downloading a project-local browser.",
           isValid: isValidPlaywrightBrowserLaunchOutput,
           summarize: summarizePlaywrightBrowserLaunchOutput
         })

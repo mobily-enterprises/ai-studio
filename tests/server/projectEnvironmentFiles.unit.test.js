@@ -40,6 +40,8 @@ test("project environment files are deterministic shared-workspace Stack project
     files: [{ format: "dotenv", path: ".env" }],
     sourceRoot
   });
+  const envBefore = await lstat(path.join(sourceRoot, ".env"), { bigint: true });
+  const excludeBefore = await lstat(path.join(sourceRoot, ".git/info/exclude"), { bigint: true });
   const second = await materializeProjectEnvironmentFiles({
     environment: {
       DB_PASSWORD: "secret value",
@@ -51,6 +53,10 @@ test("project environment files are deterministic shared-workspace Stack project
 
   assert.equal(first[0].changed, true);
   assert.equal(second[0].changed, false);
+  // Unchanged projections may belong to a different member of the shared
+  // workspace group. Even chmod to the same mode would fail for that writer.
+  assert.equal((await lstat(path.join(sourceRoot, ".env"), { bigint: true })).ctimeNs, envBefore.ctimeNs);
+  assert.equal((await lstat(path.join(sourceRoot, ".git/info/exclude"), { bigint: true })).ctimeNs, excludeBefore.ctimeNs);
   assert.equal(await readFile(path.join(sourceRoot, ".env"), "utf8"), [
     GENERATED_ENV_HEADER,
     "",
@@ -74,6 +80,7 @@ test("project environment files are deterministic shared-workspace Stack project
 test("project environment files preserve an unmanaged file before taking ownership", async (t) => {
   const sourceRoot = await temporarySource(t);
   await writeFile(path.join(sourceRoot, ".env"), "PERSONAL=true\n");
+  const original = await lstat(path.join(sourceRoot, ".env"));
 
   const [result] = await materializeProjectEnvironmentFiles({
     environment: { DB_HOST: "127.0.0.1" },
@@ -87,7 +94,10 @@ test("project environment files preserve an unmanaged file before taking ownersh
     ".env.vibe64-backup-2026-08-15T01-02-03-004Z"
   ));
   assert.equal(await readFile(result.preservedPath, "utf8"), "PERSONAL=true\n");
-  assert.equal((await lstat(result.preservedPath)).mode & 0o777, 0o660);
+  const preserved = await lstat(result.preservedPath);
+  assert.equal(preserved.ino, original.ino);
+  assert.equal(preserved.mode, original.mode);
+  assert.equal(preserved.uid, original.uid);
   assert.match(await readFile(path.join(sourceRoot, ".env"), "utf8"), /DB_HOST=127\.0\.0\.1/u);
 });
 

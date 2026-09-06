@@ -16,6 +16,12 @@ Genesis without creating another interpretation of the application.
 
 ## Public contract
 
+The library integration explicitly trusts only the validated source worktree
+passed to each Genesis operation. That grant stays within the operation's
+async context, so shared Unix ownership does not prevent inspection and
+concurrent projects cannot inherit each other's trust. Git configuration,
+repository ownership, and filesystem permissions remain unchanged.
+
 New projects begin with Genesis and existing repositories can be adopted without
 moving their source. Agent turns receive Genesis task guidance, while new and
 compacted conversations receive the shorter portable Genesis session context.

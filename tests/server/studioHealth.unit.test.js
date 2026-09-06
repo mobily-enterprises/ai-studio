@@ -5,8 +5,13 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  commandCheck,
   createService
 } from "../../packages/studio-health/src/server/service.js";
+import {
+  isValidPlaywrightBrowserLaunchOutput,
+  playwrightBrowserLaunchCheckScript
+} from "../../packages/vibe64-execution/src/server/runtime/browserRuntime.js";
 
 function successfulCommandResult(command = "", args = []) {
   const commandText = String(command);
@@ -124,4 +129,37 @@ test("Studio Health reports unavailable checks without inventing readiness", asy
   assert.match(result.checks.find((check) => check.id === "workspace").observed, /Catalog unavailable/u);
   assert.match(result.checks.find((check) => check.id === "codex-auth").observed, /Account service unavailable/u);
   assert.match(result.checks.find((check) => check.id === "genesis").observed, /Runtime pack unavailable/u);
+});
+
+test("the browser health probe launches pinned headless Chromium within the health deadline", () => {
+  const script = playwrightBrowserLaunchCheckScript();
+  assert.match(script, /browser="\$headless_shell"/u);
+  assert.match(script, /timeout 15s/u);
+  assert.ok(script.indexOf('headless_shell_version=') < script.indexOf('browser="$headless_shell"'));
+  assert.ok(script.indexOf('could not launch (exit') < script.indexOf('tail -n 3'));
+  assert.equal(isValidPlaywrightBrowserLaunchOutput(
+    "Playwright browser launched: /opt/vibe64/playwright/browsers/chromium_headless_shell-1228/chrome-linux/headless_shell"
+  ), true);
+  assert.equal(isValidPlaywrightBrowserLaunchOutput(
+    "Playwright browser launched: /opt/vibe64/playwright/browsers/chromium_headless_shell-1228/chrome-linux/chrome-headless-shell"
+  ), true);
+  assert.equal(isValidPlaywrightBrowserLaunchOutput(
+    "Playwright browser launched: /opt/vibe64/playwright/browsers/chrome-linux/unrelated"
+  ), false);
+});
+
+test("Health prioritizes a failed execution's reason ahead of incidental browser stderr", async () => {
+  const check = await commandCheck({
+    command: "bash",
+    id: "playwright-browser",
+    label: "Pinned browser",
+    runCommand: async () => ({
+      ok: false,
+      error: "The browser check timed out.",
+      output: Array(5).fill("[chromium] DBus unavailable").join("\n")
+    }),
+    studioRoot: "/tmp"
+  });
+  assert.equal(check.status, "fail");
+  assert.match(check.observed, /^The browser check timed out\./u);
 });

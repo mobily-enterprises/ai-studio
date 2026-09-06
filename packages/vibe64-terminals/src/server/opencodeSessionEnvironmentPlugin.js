@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { vibe64Driver } from "@local/vibe64-genesis/server";
 
 const OPENCODE_UNDECLARED_OUTPUT_TOKEN_MAX = 32_000;
 
@@ -93,6 +94,13 @@ function sessionCommand(command = "", selected = null) {
 }
 
 export const Vibe64SessionEnvironment = async () => ({
+  "experimental.chat.system.transform": async (input = {}, output = {}) => {
+    const selected = await sessionEnvironmentForUpstreamSession(input.sessionID || input.sessionId);
+    if (selected?.promptContext?.scope !== "ephemeral") return;
+    // Non-project conversations have no Genesis project plugin. Their supplied
+    // context replaces the coding-agent defaults, without changing user text.
+    output.system.splice(0, output.system.length, vibe64Driver(selected.promptContext));
+  },
   "chat.params": async (input = {}, output = {}) => {
     const advertisedOutputTokenLimit = input.model?.limit?.output;
     const supportedOutputTokenLimit = (

@@ -73,6 +73,9 @@
       </div>
 
       <div v-else class="vibe64-session-assistant-menu__choices">
+        <p v-if="savedProviderUnavailable" class="text-body-small" role="status">
+          This session's saved AI connection is unavailable. Choose an available model and Apply to reconnect.
+        </p>
         <section
           v-if="providerRows.length > 1"
           aria-label="Provider"
@@ -382,6 +385,10 @@ const providerRows = computed(() => (
 const selectedProvider = computed(() => providerRows.value.find((provider) => (
   provider.id === modelProviderId.value
 )) || null);
+const savedProviderUnavailable = computed(() => Boolean(
+  assistantSelection.value?.modelProviderId &&
+  !providerRows.value.some((provider) => provider.id === assistantSelection.value.modelProviderId)
+));
 const modelProvider = computed(() => (
   catalog.modelEngine.value?.modelProviders?.find((provider) => (
     provider.id === modelProviderId.value && provider.connected === true
@@ -671,6 +678,18 @@ watch(menuOpen, (open) => {
     void catalog.reload().catch(() => null);
   }
 });
+
+watch([menuOpen, providerRows, overviewLoading, providerLoading], ([open, providers, loadingOverview, loadingProviders]) => {
+  if (
+    !open || loadingOverview || loadingProviders ||
+    providers.some((provider) => provider.id === modelProviderId.value)
+  ) return;
+  const preferred = providers.find((provider) => provider.preferred === true);
+  const defaultProvider = providers.find((provider) => (
+    provider.id === selectedOverviewEngine.value?.defaults?.modelProviderId
+  ));
+  selectProvider(preferred?.id || defaultProvider?.id || providers[0]?.id || "");
+}, { immediate: true });
 
 watch([menuOpen, modelProvider, modelRows], ([open, provider, models]) => {
   if (!open || !provider) {

@@ -46,7 +46,8 @@ const {
   inspectStackSection,
   projectSessionContext,
   setCollaboration,
-  setEngineeringProfile
+  setEngineeringProfile,
+  withTrustedGitRepository
 } = genesisCompiler;
 
 const GENESIS_BLUEPRINT_PATH = "genesis/blueprint.md";
@@ -144,15 +145,15 @@ function withVibe64StackCatalog(options = {}, {
 }
 
 function addGenesisStack(options = {}) {
-  return addStack(withVibe64StackCatalog(options));
+  return runGenesisOperation(addStack, options);
 }
 
 function initializeGenesisProject(options = {}) {
-  return initialize(withVibe64StackCatalog(options));
+  return runGenesisOperation(initialize, options);
 }
 
 function refreshGenesisCities(options = {}) {
-  return indexCodebase(withVibe64StackCatalog(options));
+  return runGenesisOperation(indexCodebase, options);
 }
 
 function inspectGenesisDerivedArtifacts() {
@@ -183,12 +184,16 @@ if (!GENESIS_MACHINE_CITY_PATH || !GENESIS_PROGRAM_CITY_PATH) {
   throw new Error("Genesis did not declare both City projection artifacts.");
 }
 
-async function exactGenesisInspection(inspector, contract, options = {}) {
+async function runGenesisOperation(operation, options = {}, catalogOptions = {}) {
   const projectRoot = normalizeText(options.projectRoot);
   if (!projectRoot || !path.isAbsolute(projectRoot)) {
-    throw new TypeError("Genesis inspection requires an explicit absolute projectRoot.");
+    throw new TypeError("Genesis operations require an explicit absolute projectRoot.");
   }
-  const result = await inspector(withVibe64StackCatalog(options));
+  return withTrustedGitRepository(projectRoot, () => operation(withVibe64StackCatalog(options, catalogOptions)));
+}
+
+async function exactGenesisInspection(inspector, contract, options = {}) {
+  const result = await runGenesisOperation(inspector, options);
   if (result?.contract !== contract) {
     throw new Error(`Genesis returned ${result?.contract || "no contract identity"}; expected ${contract}.`);
   }
@@ -224,11 +229,7 @@ function inspectGenesisCollaboration(options = {}) {
 }
 
 async function inspectGenesisProjectFormat(options = {}) {
-  const projectRoot = normalizeText(options.projectRoot);
-  if (!projectRoot || !path.isAbsolute(projectRoot)) {
-    throw new TypeError("Genesis project-format inspection requires an explicit absolute projectRoot.");
-  }
-  const result = await check(withVibe64StackCatalog(options));
+  const result = await runGenesisOperation(check, options);
   if (!normalizeText(result?.projectFormat?.status)) {
     throw new Error("Genesis did not return a project-format status.");
   }
@@ -290,38 +291,32 @@ async function renderGenesisPrompt({
   let task = requestedTask;
   let result;
   try {
-    result = await generatePrompt(
-      withVibe64StackCatalog({
+    result = await runGenesisOperation(generatePrompt, {
+      environment,
+      projectRoot,
+      request,
+      sessionContextInstalled: true,
+      task
+    }, { prompt: true });
+  } catch (error) {
+    if (error?.code === "BLUEPRINT_INVALID" && requestedTask !== "blueprint") {
+      task = "blueprint";
+      result = await runGenesisOperation(generatePrompt, {
         environment,
         projectRoot,
         request,
         sessionContextInstalled: true,
         task
-      }, { prompt: true })
-    );
-  } catch (error) {
-    if (error?.code === "BLUEPRINT_INVALID" && requestedTask !== "blueprint") {
-      task = "blueprint";
-      result = await generatePrompt(
-        withVibe64StackCatalog({
-          environment,
-          projectRoot,
-          request,
-          sessionContextInstalled: true,
-          task
-        }, { prompt: true })
-      );
+      }, { prompt: true });
     } else if (error?.code === "BLUEPRINT_REQUIRED" && requestedTask !== "start") {
       task = "start";
-      result = await generatePrompt(
-        withVibe64StackCatalog({
-          environment,
-          projectRoot,
-          request,
-          sessionContextInstalled: true,
-          task
-        }, { prompt: true })
-      );
+      result = await runGenesisOperation(generatePrompt, {
+        environment,
+        projectRoot,
+        request,
+        sessionContextInstalled: true,
+        task
+      }, { prompt: true });
     } else {
       throw error;
     }

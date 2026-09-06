@@ -2,6 +2,7 @@
   <div
     class="studio-autopilot-prompt-textarea"
     :class="{
+      'studio-autopilot-prompt-textarea--compact': density === 'compact',
       'studio-autopilot-prompt-textarea--dragging': dragActive,
       'studio-autopilot-prompt-textarea--has-attachments': queueItems.length,
       'studio-autopilot-prompt-textarea--has-footer': $slots.footer,
@@ -171,6 +172,10 @@ const props = defineProps({
   rows: {
     default: 4,
     type: [Number, String]
+  },
+  density: {
+    default: "default",
+    type: String
   },
   submitOnEnter: {
     default: false,
@@ -563,6 +568,16 @@ defineExpose({
 .studio-autopilot-prompt-textarea__footer {
   min-width: 0;
   padding: 0 0.55rem 0.55rem;
+}
+
+.studio-autopilot-prompt-textarea--compact .studio-autopilot-prompt-textarea__input {
+  max-height: min(8rem, 20dvh);
+  min-height: 2.5rem;
+  padding: 0.4rem 0.65rem 0.15rem;
+}
+
+.studio-autopilot-prompt-textarea--compact .studio-autopilot-prompt-textarea__footer {
+  padding: 0 0.3rem 0.25rem;
 }
 
 .studio-autopilot-prompt-textarea__details {

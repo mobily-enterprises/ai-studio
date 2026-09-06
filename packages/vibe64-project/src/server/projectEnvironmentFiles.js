@@ -157,7 +157,6 @@ async function writeManagedGitExcludes(sourceRoot = "", relativePaths = []) {
     ""
   ].join("\n");
   if (existing === expected) {
-    await chmod(excludePath, MANAGED_SOURCE_FILE_MODE);
     return;
   }
 
@@ -170,8 +169,8 @@ async function writeManagedGitExcludes(sourceRoot = "", relativePaths = []) {
     await writeFile(temporaryPath, expected, {
       mode: MANAGED_SOURCE_FILE_MODE
     });
+    await chmod(temporaryPath, MANAGED_SOURCE_FILE_MODE);
     await rename(temporaryPath, excludePath);
-    await chmod(excludePath, MANAGED_SOURCE_FILE_MODE);
   } catch (error) {
     await rm(temporaryPath, {
       force: true
@@ -193,10 +192,8 @@ async function writeGeneratedDotenv({
   if (existing !== null && !generatedDotenvIsOwned(existing)) {
     preservedPath = await backupPath(filePath, now);
     await rename(filePath, preservedPath);
-    await chmod(preservedPath, MANAGED_SOURCE_FILE_MODE);
   }
   if (existing === expected && !preservedPath) {
-    await chmod(filePath, MANAGED_SOURCE_FILE_MODE);
     return {
       changed: false,
       format: "dotenv",
@@ -215,7 +212,6 @@ async function writeGeneratedDotenv({
     });
     await chmod(temporaryPath, MANAGED_SOURCE_FILE_MODE);
     await rename(temporaryPath, filePath);
-    await chmod(filePath, MANAGED_SOURCE_FILE_MODE);
   } catch (error) {
     await rm(temporaryPath, {
       force: true
