@@ -3873,7 +3873,7 @@ async function stopSourceEditorExplanation(context = {}, explanationId = "", {
       explanationChats
     }));
   }
-  explanation = normalizeSourceEditorExplanation(current);
+  explanation = current;
   if (lastAssistant?.id) {
     explanation = sourceEditorExplanationWithMessage(explanation, lastAssistant.id, {
       status: "stopped",
@@ -3882,7 +3882,6 @@ async function stopSourceEditorExplanation(context = {}, explanationId = "", {
   }
   return withSourceEditorExplanationFreshness(context, await writeSourceEditorExplanation(context, {
     ...explanation,
-    messages: explanation.messages,
     status: "stopped"
   }, {
     explanationChats
