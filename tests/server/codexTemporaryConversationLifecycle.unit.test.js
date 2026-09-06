@@ -563,6 +563,268 @@ test("source explanations preserve one pre-resolved profile through the terminal
   });
 });
 
+for (const startFails of [false, true]) {
+  test(startFails
+    ? "source explanation Stop settles when a pending follow-up fails before announcing its turn identity"
+    : "source explanation Stop targets a follow-up whose provider turn identity is still pending", {
+    timeout: 15_000
+  }, async (t) => {
+    await withConversationController(async ({
+      calls,
+      captures,
+      projectContextRoot,
+      projectRuntimeRoot,
+      projectService,
+      session,
+      subscribers,
+      temporaryRoot
+    }) => {
+      const store = createVibe64SessionStore({
+        projectContextRoot,
+        projectRuntimeRoot,
+        projectSessionSourceRoot: path.join(temporaryRoot, "managed", "sessions")
+      });
+      await store.createSession({
+        metadata: session.metadata,
+        runtimeKind: "genesis",
+        sessionId: session.sessionId
+      });
+      const runtime = {
+        async getSession(sessionId) {
+          return store.readSession(sessionId);
+        },
+        projectContextRoot,
+        stateRoot: projectRuntimeRoot,
+        store
+      };
+      const codexToolHomeSource = path.join(temporaryRoot, "codex-tool-home");
+      await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+      await writeFile(
+        path.join(codexToolHomeSource, ".codex", "auth.json"),
+        JSON.stringify({
+          OPENAI_API_KEY: "test-source-explanation-api-key",
+          auth_mode: "api_key"
+        })
+      );
+      captures.runtimeInfo.accountIdentitySignature = await currentCodexAccountIdentitySignature({
+        executionMode: "economy",
+        toolHomeSource: codexToolHomeSource
+      });
+      captures.interruptCompletesTurns = true;
+      const terminalProjectService = {
+        ...projectService,
+        createRuntime() {
+          return runtime;
+        },
+        createSessionStore() {
+          return store;
+        },
+        async readCurrentProject() {
+          return { projectContextRoot, slug: "test-project" };
+        },
+        async readEnv() {
+          return { ok: true, records: [] };
+        },
+        async runInProjectContext(_context, operation) {
+          return operation();
+        },
+        async saveEnvUserValues() {
+          return { ok: true };
+        }
+      };
+      const followupDispatch = createDeterministicHold();
+      const stopInputRead = createDeterministicHold();
+      const terminalService = createTerminalService({
+        codexTerminalController: {
+          codexAppServerProviderFactory(providerOptions) {
+            const provider = createProvider(calls, subscribers, captures, providerOptions);
+            return {
+              ...provider,
+              async sendTurn(...args) {
+                const turn = await provider.sendTurn(...args);
+                if (turn.id === "turn-2") {
+                  followupDispatch.enter();
+                  await followupDispatch.wait;
+                  if (startFails) {
+                    throw new Error("Follow-up B startup failed before its turn identity.");
+                  }
+                }
+                return turn;
+              }
+            };
+          },
+          codexToolHomeRequired: false,
+          codexToolHomeSource
+        },
+        env: {
+          VIBE64_RUNTIME_NAMESPACE: "test",
+          VIBE64_WORKSPACE: "test"
+        },
+        projectService: terminalProjectService
+      });
+      const sourceEditor = createSourceEditorService({
+        projectService: terminalProjectService,
+        temporaryRoot,
+        terminalService
+      });
+      const explanationId = "exp-stop-pending-followup";
+      const events = [];
+      const stream = {
+        emit(event) {
+          events.push(event);
+        },
+        isClosed() {
+          return false;
+        }
+      };
+      const firstAnswer = "This function returns the sum of its two arguments.";
+      const followupAnswer = "Late answer B must not replace the stopped message.";
+      let stopObservation = null;
+      let stopBeforeAcknowledgement = null;
+      let finished = null;
+      let firstMessages = null;
+      await writeFile(
+        path.join(session.metadata.source_path, "app.js"),
+        "export function total(left, right) { return left + right; }\n"
+      );
+
+      try {
+        const first = sourceEditor.streamExplanation({
+          endColumn: 61,
+          endLine: 1,
+          explanationId,
+          path: "app.js",
+          sessionId: session.sessionId,
+          startColumn: 1,
+          startLine: 1
+        }, stream);
+        await waitForSessionValue(
+          async () => events.find((event) => event.type === "source-explanation.turn" && event.turnId === "turn-1"),
+          Boolean,
+          "the initial source explanation turn identity"
+        );
+        completeDetachedTurn(subscribers, { text: JSON.stringify({ answer: firstAnswer }) });
+        await first;
+        const firstFinished = events.find((event) => event.type === "source-explanation.finished");
+        assert.equal(firstFinished?.explanation.body, firstAnswer, JSON.stringify(events));
+        firstMessages = structuredClone(firstFinished.explanation.messages);
+        const firstRecord = await waitForEconomyLedgerLifecycle(
+          projectRuntimeRoot,
+          CODEX_ECONOMY_THREAD_LIFECYCLES.READY
+        );
+
+        const followup = sourceEditor.streamExplanationFollowup({
+          assistantMessageId: "msg_pending_b_assistant",
+          explanationId,
+          message: "Question B: explain the return value.",
+          sessionId: session.sessionId,
+          userMessageId: "msg_pending_b_user"
+        }, stream);
+        await waitForCapturedTurns(captures, 2);
+        await followupDispatch.entered;
+        const started = events.find((event) => event.type === "source-explanation.followup.started");
+        assert.equal(started?.assistantMessageId, "msg_pending_b_assistant", JSON.stringify(events));
+        assert.equal(started.explanation.agentTurnId, "");
+        assert.equal(events.some((event) => event.type === "source-explanation.turn" && event.turnId === "turn-2"), false);
+        const startingRecord = await waitForEconomyLedgerLifecycle(
+          projectRuntimeRoot,
+          CODEX_ECONOMY_THREAD_LIFECYCLES.STARTING_TURN
+        );
+        assert.equal(startingRecord.threadId, firstRecord.threadId);
+        assert.equal(startingRecord.ownershipId, firstRecord.ownershipId);
+        assert.equal(startingRecord.turnId, "");
+        assert.equal((await store.runSessionExclusive(
+          session.sessionId,
+          "agent-write-mode",
+          () => assert.fail("Follow-up B must retain the real agent-write lock while dispatch is pending.")
+        )).acquired, false);
+
+        const stopping = sourceEditor.stopExplanation({
+          // Observe ordinary input consumption after real context reads, returning the unchanged ID.
+          get explanationId() {
+            stopInputRead.enter();
+            return explanationId;
+          },
+          sessionId: session.sessionId
+        }).then(
+          (response) => { stopObservation = { response }; },
+          (error) => { stopObservation = { error }; }
+        );
+        try {
+          await stopInputRead.entered;
+          await flushPromises();
+          stopBeforeAcknowledgement = stopObservation;
+          assert.equal(stopBeforeAcknowledgement, null, "Stop must wait for B's identity or startup failure.");
+          assert.deepEqual(captures.interrupts, [], "Stop must not interrupt the completed initial turn.");
+        } finally {
+          // A correct Stop may still be waiting for B's identity; never await it behind this gate.
+          followupDispatch.release();
+        }
+        if (!startFails) {
+          await waitForSessionValue(
+            async () => events.find((event) => event.type === "source-explanation.turn" && event.turnId === "turn-2"),
+            Boolean,
+            "follow-up B's announced source explanation turn identity"
+          );
+        }
+        await stopping;
+        if (!startFails) {
+          completeDetachedTurn(subscribers, {
+            text: JSON.stringify({ answer: followupAnswer }),
+            turnId: "turn-2"
+          });
+        }
+        await followup;
+        finished = events.filter((event) => [
+          "source-explanation.finished",
+          "source-explanation.failed"
+        ].includes(event.type)).at(-1)?.explanation;
+        assert.ok(finished, JSON.stringify(events));
+        assert.deepEqual(finished.messages.slice(0, firstMessages.length), firstMessages);
+        assert.equal((await store.runSessionExclusive(
+          session.sessionId,
+          "agent-write-mode",
+          () => "released"
+        )).value, "released");
+        const settledLedger = await createCodexEconomyThreadLedger({ projectRuntimeRoot }).readAll();
+        assert.equal(settledLedger.records.some((record) => [
+          CODEX_ECONOMY_THREAD_LIFECYCLES.STARTING_TURN,
+          CODEX_ECONOMY_THREAD_LIFECYCLES.ACTIVE
+        ].includes(record.lifecycle)), false);
+        assert.ifError(stopObservation.error);
+        if (startFails) {
+          assert.equal(events.some((event) => event.type === "source-explanation.turn" && event.turnId === "turn-2"), false);
+          assert.deepEqual(captures.interrupts, []);
+          assert.deepEqual(settledLedger.records, []);
+          assert.equal(finished.status, "failed");
+          assert.equal(finished.messages.at(-1).status, "failed");
+          assert.match(finished.messages.at(-1).text, /Follow-up B startup failed/u);
+        }
+        t.diagnostic(JSON.stringify({
+          finalAnswer: finished.messages.at(-1).text,
+          finalStatus: finished.status,
+          interrupts: captures.interrupts,
+          ledgerLifecycle: settledLedger.records.map((record) => record.lifecycle),
+          stopBeforeAcknowledgement,
+          stopResponse: stopObservation.response
+        }));
+      } finally {
+        followupDispatch.release();
+        stopInputRead.release();
+        await sourceEditor.close();
+        await terminalService.closeSessionTerminals(session.sessionId);
+      }
+      assert.deepEqual((await createCodexEconomyThreadLedger({ projectRuntimeRoot }).readAll()).records, []);
+      assert.equal(stopObservation.response.ok, true, JSON.stringify(stopObservation.response));
+      assert.equal(stopObservation.response.explanation.status, startFails ? "failed" : "stopped");
+      assert.deepEqual(captures.interrupts, startFails ? [] : [{ threadId: "conversation-1", turnId: "turn-2" }]);
+      assert.equal(finished.status, startFails ? "failed" : "stopped");
+      assert.equal(finished.messages.at(-1).status, startFails ? "failed" : "stopped");
+      assert.notEqual(finished.messages.at(-1).text, followupAnswer);
+    });
+  });
+}
+
 test("terminal renewal callbacks run inside the agent-write lock and hidden seeding uses only its renewal reader", async () => {
   await withConversationController(async ({ projectRuntimeRoot, projectService, session }) => {
     let lockDepth = 0;
