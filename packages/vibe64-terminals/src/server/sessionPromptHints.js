@@ -439,7 +439,6 @@ function createSessionPromptHintsService({
   const jobsByOwner = new Map();
   const requestsBySession = new Map();
   const requestsBySubscriber = new Map();
-  const subscribersByKey = new Map();
 
   function reportDiagnostic(code = "vibe64_prompt_hints_unavailable", error = null, details = {}) {
     if (typeof diagnostic !== "function") {
@@ -632,9 +631,6 @@ function createSessionPromptHintsService({
       return;
     }
     job.subscribers.delete(request.subscriberKey);
-    if (subscribersByKey.get(request.subscriberKey) === job) {
-      subscribersByKey.delete(request.subscriberKey);
-    }
   }
 
   function cancelRequest(request) {
@@ -651,9 +647,6 @@ function createSessionPromptHintsService({
       const request = requestsBySubscriber.get(subscriberKey);
       if (request) {
         request.cancelled = true;
-      }
-      if (subscribersByKey.get(subscriberKey) === job) {
-        subscribersByKey.delete(subscriberKey);
       }
     }
     job.subscribers.clear();
@@ -852,7 +845,6 @@ function createSessionPromptHintsService({
     }
     request.job = job;
     job.subscribers.add(request.subscriberKey);
-    subscribersByKey.set(request.subscriberKey, job);
     if (request.cancelled) {
       cancelRequest(request);
       return promptHintResponse("cancelled", { basis: snapshot.basis });
