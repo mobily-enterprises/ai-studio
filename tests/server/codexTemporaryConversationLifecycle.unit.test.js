@@ -3690,6 +3690,99 @@ test("temporary conversations receive task session context without turn enrichme
   }, { promptHints: false });
 });
 
+test("non-project ephemeral conversations disable Codex tools and network on an audited app-server", async () => {
+  await withConversationController(async ({ captures, controller, temporaryRoot }) => {
+    const workdir = path.join(temporaryRoot, "system-repair-workdir");
+    const runtimeRoot = path.join(temporaryRoot, "system-repair-runtime");
+    await Promise.all([
+      mkdir(workdir, { recursive: true }),
+      mkdir(runtimeRoot, { recursive: true })
+    ]);
+    const assistantScope = {
+      environment: {},
+      id: "system_repair_test",
+      runtimeRoot,
+      stableContext: "Trusted bounded host snapshot.",
+      workdir
+    };
+    const options = { assistantScope };
+    const conversation = await controller.createConversation(assistantScope.id, {
+      ephemeral: true
+    }, options);
+    assert.equal(conversation.ok, true, JSON.stringify(conversation));
+
+    const turn = await controller.startConversationTurn(assistantScope.id, {
+      conversationId: conversation.conversationId,
+      ephemeral: true,
+      message: "Explain the trusted snapshot only."
+    }, options);
+    assert.equal(turn.ok, true, JSON.stringify(turn));
+    assert.equal(captures.threads[0].developerInstructions, assistantScope.stableContext);
+    assert.equal(captures.threads[0].sandbox, "read-only");
+    assert.deepEqual(captures.threads[0].dynamicTools, []);
+    assert.deepEqual(captures.threads[0].environments, []);
+    assert.deepEqual(captures.threads[0].runtimeWorkspaceRoots, []);
+    assert.deepEqual(captures.threads[0].selectedCapabilityRoots, []);
+    assert.equal(captures.threads[0].config.features.shell_tool, false);
+    assert.equal(captures.threads[0].config.features.web_search, undefined);
+    assert.equal(captures.threads[0].config.web_search, "disabled");
+    assert.deepEqual(captures.turns[0].settings.sandboxPolicy, {
+      networkAccess: false,
+      type: "readOnly"
+    });
+    assert.deepEqual(captures.turns[0].input, ["Explain the trusted snapshot only."]);
+
+    const deleted = await controller.deleteConversation(assistantScope.id, {
+      conversationId: conversation.conversationId,
+      ephemeral: true
+    }, options);
+    assert.equal(deleted.ok, true, JSON.stringify(deleted));
+    assert.deepEqual(captures.deletes, [conversation.conversationId]);
+    assert.equal(captures.stopRuntimes, 1);
+    assert.equal(deleted.providerExit.stopped, true);
+  });
+});
+
+test("non-project ephemeral deletion requires verified Codex runtime exit and can retry", async () => {
+  await withConversationController(async ({ captures, controller, temporaryRoot }) => {
+    const workdir = path.join(temporaryRoot, "system-repair-retry-workdir");
+    const runtimeRoot = path.join(temporaryRoot, "system-repair-retry-runtime");
+    await Promise.all([
+      mkdir(workdir, { recursive: true }),
+      mkdir(runtimeRoot, { recursive: true })
+    ]);
+    const assistantScope = {
+      environment: {},
+      id: "system_repair_retry",
+      runtimeRoot,
+      stableContext: "Trusted bounded host snapshot.",
+      workdir
+    };
+    const options = { assistantScope };
+    const conversation = await controller.createConversation(assistantScope.id, {
+      ephemeral: true
+    }, options);
+
+    captures.stopRuntimeResult = { stopped: false };
+    await assert.rejects(
+      controller.deleteConversation(assistantScope.id, {
+        conversationId: conversation.conversationId,
+        ephemeral: true
+      }, options),
+      /process exit could not be verified/u
+    );
+
+    captures.stopRuntimeResult = { stopped: true };
+    const retried = await controller.deleteConversation(assistantScope.id, {
+      conversationId: conversation.conversationId,
+      ephemeral: true
+    }, options);
+    assert.equal(retried.ok, true, JSON.stringify(retried));
+    assert.equal(retried.providerExit.stopped, true);
+    assert.equal(captures.stopRuntimes, 2);
+  });
+});
+
 test("temporary workspace-write turns remain active for renewal until completion", async () => {
   await withConversationController(async ({ controller, subscribers }) => {
     const conversation = await controller.createConversation("session-1", {

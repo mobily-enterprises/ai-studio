@@ -547,10 +547,17 @@ function createCodexSessionAgentProvider({
       return controller.closeTerminal(context.sessionId, input.terminalSessionId);
     },
     async createConversation(context, input = {}) {
-      return controller.createConversation(context.sessionId, input);
+      return controller.createConversation(context.sessionId, {
+        ...input,
+        agentSettings: codexAssistantSettings(context, input)
+      }, {
+        assistantScope: context.assistantScope
+      });
     },
     async deleteConversation(context, input = {}) {
-      return controller.deleteConversation(context.sessionId, input);
+      return controller.deleteConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope
+      });
     },
     async deleteAttachment(context, input = {}) {
       return controller.deleteAttachment(context.sessionId, input);
@@ -619,7 +626,9 @@ function createCodexSessionAgentProvider({
       return controller.invalidateAppServerRuntimes(input);
     },
     async readConversation(context, input = {}) {
-      return controller.readConversation(context.sessionId, input);
+      return controller.readConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope
+      });
     },
     async resolveExecutionProfile(context, input = {}) {
       if (typeof controller.executionProfileModelCatalog !== "function") {
@@ -731,6 +740,7 @@ function createCodexSessionAgentProvider({
     async startConversationTurn(context, input = {}) {
       const message = {
         ...input,
+        agentSettings: codexAssistantSettings(context, input),
         vibe64User: input.vibe64User || context.vibe64User || null
       };
       const attachmentLimit = codexAttachmentLimitResult(message);
@@ -745,7 +755,9 @@ function createCodexSessionAgentProvider({
       if (attachmentValidation) {
         return attachmentValidation;
       }
-      const result = await controller.startConversationTurn(context.sessionId, message);
+      const result = await controller.startConversationTurn(context.sessionId, message, {
+        assistantScope: context.assistantScope
+      });
       await renewAcceptedCodexAttachments(
         controller,
         context.sessionId,
@@ -758,7 +770,9 @@ function createCodexSessionAgentProvider({
       return controller.startTerminal(context.sessionId, input);
     },
     async stopConversation(context, input = {}) {
-      return controller.stopConversation(context.sessionId, input);
+      return controller.stopConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope
+      });
     },
     async streamDetachedChatTurn(context, input = {}) {
       const executionProfile = emitCodexExecutionProfile(context, input.executionProfile);
@@ -798,6 +812,7 @@ function createCodexSessionAgentProvider({
     },
     async waitForConversationTurn(context, input = {}) {
       return controller.waitForConversationTurn(context.sessionId, input, {
+        assistantScope: context.assistantScope,
         onEvent: context.onEvent
       });
     },

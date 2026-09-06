@@ -24,6 +24,7 @@ import {
 
 const OPENCODE_EXPECTED_VERSION = "1.18.22";
 const OPENCODE_ECONOMY_AGENT_ID = "vibe64-economy";
+const OPENCODE_EPHEMERAL_AGENT_ID = "vibe64-ephemeral";
 const OPENCODE_HOST = "127.0.0.1";
 const OPENCODE_LOG_LIMIT_BYTES = 64 * 1024;
 const OPENCODE_MANAGED_OUTPUT_TOKEN_MAX = 128 * 1024;
@@ -54,6 +55,14 @@ const OPENCODE_INLINE_CONFIG_BASE = Object.freeze({
   agent: {
     [OPENCODE_ECONOMY_AGENT_ID]: {
       description: "Vibe64 bounded helper turns without tools.",
+      hidden: true,
+      mode: "primary",
+      permission: {
+        "*": "deny"
+      }
+    },
+    [OPENCODE_EPHEMERAL_AGENT_ID]: {
+      description: "Vibe64 host-supplied ephemeral conversations without tools.",
       hidden: true,
       mode: "primary",
       permission: {
@@ -769,6 +778,7 @@ async function verifyOpenCodeApiKey({
 
 export {
   OPENCODE_ECONOMY_AGENT_ID,
+  OPENCODE_EPHEMERAL_AGENT_ID,
   OPENCODE_EXPECTED_VERSION,
   OPENCODE_HOST,
   OPENCODE_READY_TIMEOUT_MS,

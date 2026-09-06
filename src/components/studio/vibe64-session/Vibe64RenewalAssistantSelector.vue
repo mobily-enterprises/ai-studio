@@ -5,9 +5,9 @@
   >
     <div class="studio-renewal-assistant__heading">
       <span>
-        <strong :id="headingId" class="text-title-small">AI for the fresh session</strong>
+        <strong :id="headingId" class="text-title-small">{{ heading }}</strong>
         <small class="text-body-small">
-          Keep the current AI, or continue the handover with another connected provider or model.
+          {{ supportingText }}
         </small>
       </span>
       <v-btn
@@ -17,7 +17,7 @@
         variant="text"
         @click="openConnectionSettings"
       >
-        Manage AIs
+        {{ manageLabel }}
       </v-btn>
     </div>
 
@@ -49,7 +49,7 @@
       type="info"
       variant="tonal"
     >
-      Connect an AI account before creating the fresh session.
+      {{ emptyMessage }}
     </v-alert>
 
     <div v-else class="studio-renewal-assistant__fields">
@@ -100,7 +100,7 @@
       class="studio-renewal-assistant__summary text-body-small"
       role="status"
     >
-      Fresh session: {{ selectionSummary }}
+      {{ summaryPrefix }}{{ selectionSummary }}
     </p>
   </section>
 </template>
@@ -123,6 +123,26 @@ const props = defineProps({
   initialSelection: {
     default: null,
     type: Object
+  },
+  emptyMessage: {
+    default: "Connect an AI account before creating the fresh session.",
+    type: String
+  },
+  heading: {
+    default: "AI for the fresh session",
+    type: String
+  },
+  manageLabel: {
+    default: "Manage AIs",
+    type: String
+  },
+  summaryPrefix: {
+    default: "Fresh session: ",
+    type: String
+  },
+  supportingText: {
+    default: "Keep the current AI, or continue the handover with another connected provider or model.",
+    type: String
   }
 });
 

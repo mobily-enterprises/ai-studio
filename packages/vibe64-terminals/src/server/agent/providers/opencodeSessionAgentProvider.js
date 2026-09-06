@@ -119,6 +119,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async createConversation(context, input = {}) {
       return controller.createConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope,
+        assistantSelection: context.assistantSelection,
         runtime: context.runtime,
         session: context.session,
         vibe64User: context.vibe64User
@@ -129,6 +131,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async deleteConversation(context, input = {}) {
       return controller.deleteConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope,
+        assistantSelection: context.assistantSelection,
         runtime: context.runtime,
         session: context.session,
         vibe64User: context.vibe64User
@@ -203,6 +207,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async readConversation(context, input = {}) {
       return controller.readConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope,
+        assistantSelection: context.assistantSelection,
         runtime: context.runtime,
         session: context.session,
         vibe64User: context.vibe64User
@@ -272,6 +278,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async startConversationTurn(context, input = {}) {
       return controller.startConversationTurn(context.sessionId, input, {
+        assistantScope: context.assistantScope,
+        assistantSelection: context.assistantSelection,
         onEvent: context.onEvent,
         runtime: context.runtime,
         session: context.session,
@@ -287,6 +295,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async stopConversation(context, input = {}) {
       return controller.stopConversation(context.sessionId, input, {
+        assistantScope: context.assistantScope,
+        assistantSelection: context.assistantSelection,
         runtime: context.runtime,
         session: context.session,
         vibe64User: context.vibe64User
@@ -320,6 +330,8 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async waitForConversationTurn(context, input = {}) {
       return controller.waitForConversationTurn(context.sessionId, input, {
+        assistantScope: context.assistantScope,
+        assistantSelection: context.assistantSelection,
         onEvent: context.onEvent,
         runtime: context.runtime,
         session: context.session,

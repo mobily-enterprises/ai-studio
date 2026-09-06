@@ -1,6 +1,15 @@
 <template>
   <article class="database-erd-node" :class="{ 'database-erd-node--collapsed': data.collapsed }">
-    <Handle :position="Position.Left" type="target" />
+    <Handle
+      v-for="port in tablePorts"
+      :id="port.id"
+      :key="port.id"
+      class="database-erd-node__port"
+      :class="`database-erd-node__port--${port.type}`"
+      :position="port.position"
+      :style="{ top: `${port.offset}%` }"
+      :type="port.type"
+    />
     <header>
       <div>
         <small>{{ data.table.schema }}</small>
@@ -22,6 +31,16 @@
         class="database-erd-node__column"
         :title="column.comment || column.nativeType"
       >
+        <Handle
+          v-for="port in columnPorts(column.name)"
+          :id="port.id"
+          :key="port.id"
+          class="database-erd-node__port"
+          :class="`database-erd-node__port--${port.type}`"
+          :position="port.position"
+          :style="{ top: `${port.offset}%` }"
+          :type="port.type"
+        />
         <v-icon
           :icon="data.primaryColumns.has(column.name) ? mdiKeyVariant : (data.foreignColumns.has(column.name) ? mdiLinkVariant : mdiCircleSmall)"
           :class="{
@@ -38,11 +57,11 @@
       {{ data.table.kind }}
       <span>{{ data.table.columns.length }} columns</span>
     </footer>
-    <Handle :position="Position.Right" type="source" />
   </article>
 </template>
 
 <script setup>
+import { computed } from "vue";
 import {
   mdiChevronDown,
   mdiChevronUp,
@@ -51,11 +70,10 @@ import {
   mdiLinkVariant
 } from "@mdi/js";
 import {
-  Handle,
-  Position
+  Handle
 } from "@vue-flow/core";
 
-defineProps({
+const props = defineProps({
   controlsVisible: {
     default: true,
     type: Boolean
@@ -69,10 +87,18 @@ defineProps({
     type: String
   }
 });
+
+const tablePorts = computed(() => (props.data.relationshipPorts || [])
+  .filter((port) => !port.column));
+
+function columnPorts(column) {
+  return (props.data.relationshipPorts || []).filter((port) => port.column === column);
+}
 </script>
 
 <style scoped>
 .database-erd-node {
+  position: relative;
   width: 17.5rem;
   overflow: hidden;
   border: 1px solid rgba(var(--v-theme-outline), 0.35);
@@ -134,6 +160,7 @@ defineProps({
 }
 
 .database-erd-node__column {
+  position: relative;
   display: grid;
   grid-template-columns: 1rem minmax(0, 1fr) auto;
   gap: 0.35rem;
@@ -141,6 +168,23 @@ defineProps({
   min-height: 1.72rem;
   padding: 0 0.75rem;
   font-size: 0.72rem;
+}
+
+.database-erd-node__port {
+  width: 0.42rem;
+  min-width: 0.42rem;
+  height: 0.42rem;
+  min-height: 0.42rem;
+  pointer-events: none;
+  border: 1px solid rgb(var(--v-theme-surface));
+}
+
+.database-erd-node__port--source {
+  background: rgb(var(--v-theme-tertiary));
+}
+
+.database-erd-node__port--target {
+  background: rgb(var(--v-theme-primary));
 }
 
 .database-erd-node__column span {

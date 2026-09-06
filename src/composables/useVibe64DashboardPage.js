@@ -6,7 +6,7 @@ import {
   projectSlugFromRoute
 } from "@/lib/vibe64ProjectScope.js";
 
-function useVibe64DashboardPage() {
+function useVibe64DashboardPage({ dashboardContext = null } = {}) {
   const route = useRoute();
   const projectSlug = computed(() => projectSlugFromRoute(route));
   const projectBasePath = computed(() => projectAppPath(projectSlug.value));
@@ -14,7 +14,8 @@ function useVibe64DashboardPage() {
     .filter((placement) => (
       placement?.kind === "link" &&
       placement?.owner === "app-dashboard" &&
-      placement?.target === "page.section-nav"
+      placement?.target === "page.section-nav" &&
+      dashboardPlacementVisible(placement, dashboardContext)
     ))
     .sort((left, right) => Number(left?.order || 0) - Number(right?.order || 0))
     .map((placement) => ({
@@ -28,6 +29,15 @@ function useVibe64DashboardPage() {
   return {
     dashboardSectionLinks
   };
+}
+
+function dashboardPlacementVisible(placement = {}, dashboardContext = null) {
+  const predicate = placement?.props?.visibleWhen;
+  if (typeof predicate !== "function") return true;
+  const context = typeof dashboardContext === "function"
+    ? dashboardContext()
+    : dashboardContext?.value ?? dashboardContext;
+  return predicate(context && typeof context === "object" ? context : {}) === true;
 }
 
 function activeSessionMobileSectionLinks(activeSessionNav = null) {
@@ -60,5 +70,6 @@ function dashboardSectionSuffix(placement = {}) {
 
 export {
   activeSessionMobileSectionLinks,
+  dashboardPlacementVisible,
   useVibe64DashboardPage
 };

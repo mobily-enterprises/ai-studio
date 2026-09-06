@@ -49,6 +49,7 @@ import {
   vibe64AgentRunStateIsTerminal
 } from "@local/vibe64-runtime/server/sessionStore";
 import {
+  assertCodexAppServerEconomyCompatibility,
   assertCodexAppServerEconomyOutputWithinLimit,
   codexAppServerProjectHookTrustConfig,
   codexAppServerThreadHasReadableHistory,
@@ -250,6 +251,37 @@ const CODEX_SESSION_RENEWAL_TURN_TIMEOUT_MS = 10 * 60_000;
 const CODEX_APP_SERVER_EPHEMERAL_PROGRESS_LIMIT = 24;
 const CODEX_APP_SERVER_MODEL_CATALOG_CACHE_MS = 30_000;
 const CODEX_APP_SERVER_MODEL_CATALOG_TIMEOUT_MS = 30_000;
+const CODEX_EPHEMERAL_DISABLED_FEATURES = Object.freeze([
+  "apps",
+  "artifact",
+  "browser_use",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "code_mode",
+  "code_mode_host",
+  "computer_use",
+  "default_mode_request_user_input",
+  "deferred_executor",
+  "goals",
+  "hooks",
+  "image_generation",
+  "in_app_browser",
+  "memories",
+  "multi_agent",
+  "multi_agent_v2",
+  "plugins",
+  "psp",
+  "recommended_plugins",
+  "request_permissions_tool",
+  "shell_tool",
+  "skill_mcp_dependency_install",
+  "skill_search",
+  "tool_call_mcp_elicitation",
+  "tool_suggest",
+  "unified_exec",
+  "unified_exec_zsh_fork",
+  "view_image"
+]);
 const CODEX_VISIBLE_TERMINAL_DETACHED_IDLE_TIMEOUT_MS = 5_000;
 const CODEX_APP_SERVER_RESULT_DELIVERY_FAILURE_MESSAGE =
   "Codex app-server finished this turn, but Vibe64 did not receive the assistant result text.";
@@ -3867,7 +3899,8 @@ function createCodexTerminalController({
   }
 
   async function stopCodexAppServerProviderForSession(sessionId = "", options = null, {
-    preserveProcessExitProof = false
+    preserveProcessExitProof = false,
+    requireStopped = false
   } = {}) {
     const normalizedSessionId = normalizeText(sessionId);
     if (
@@ -3889,14 +3922,23 @@ function createCodexTerminalController({
           stopped: false
         };
       }
-      await stopCodexAppServerRuntime({
+      const stoppedRuntime = await stopCodexAppServerRuntime({
         ...options,
         preserveProcessExitProof
       });
-      return;
+      const stopped = codexAppServerRuntimeStopWasVerified(stoppedRuntime);
+      if (requireStopped && !stopped) {
+        throw codexAppServerRuntimeExitUnverifiedError(providerKey);
+      }
+      return {
+        ...(isRecord(stoppedRuntime) ? stoppedRuntime : {}),
+        providerKey,
+        stopped
+      };
     }
-    await stopCachedCodexAppServerProvider(providerKey, {
-      preserveProcessExitProof
+    return stopCachedCodexAppServerProvider(providerKey, {
+      preserveProcessExitProof,
+      requireStopped
     });
   }
 
@@ -9399,12 +9441,152 @@ function createCodexTerminalController({
     }
   }
 
+  async function codexAppServerEphemeralIsolationConfig(provider = null, workdir = "") {
+    assertCodexAppServerEconomyCompatibility(provider);
+    if (
+      typeof provider?.readConfig !== "function" ||
+      typeof provider?.listHooks !== "function" ||
+      typeof provider?.currentConnectionGeneration !== "function"
+    ) {
+      throw new Error("Codex cannot verify tool isolation for this ephemeral conversation.");
+    }
+    const connectionGeneration = provider.currentConnectionGeneration();
+    if (!Number.isSafeInteger(connectionGeneration) || connectionGeneration <= 0) {
+      throw new Error("Codex has no active connection for this ephemeral conversation.");
+    }
+    const [configResult, hookResult] = await Promise.all([
+      provider.readConfig({ cwd: workdir, includeLayers: false }),
+      provider.listHooks([workdir])
+    ]);
+    if (provider.currentConnectionGeneration() !== connectionGeneration) {
+      throw new Error("Codex reconnected while verifying this ephemeral conversation.");
+    }
+    const configuredMcp = configResult?.config?.mcp_servers;
+    if (
+      configuredMcp !== undefined &&
+      configuredMcp !== null &&
+      !isRecord(configuredMcp)
+    ) {
+      throw new Error("Codex returned an invalid MCP inventory for this ephemeral conversation.");
+    }
+    const mcpServerNames = Object.keys(configuredMcp || {});
+    const hookRows = Array.isArray(hookResult?.data) ? hookResult.data : [];
+    const matchingHooks = hookRows.find((entry) => (
+      path.resolve(normalizeText(entry?.cwd) || "/") === path.resolve(workdir)
+    ));
+    if (
+      mcpServerNames.length > 128 ||
+      hookRows.length !== 1 ||
+      !matchingHooks ||
+      !Array.isArray(matchingHooks.hooks) ||
+      !Array.isArray(matchingHooks.errors) ||
+      matchingHooks.errors.length > 0 ||
+      matchingHooks.hooks.length > 256
+    ) {
+      throw new Error("Codex could not prove hook and MCP isolation for this ephemeral conversation.");
+    }
+    const hookKeys = matchingHooks.hooks
+      .map((hook) => normalizeText(hook?.key))
+      .filter(Boolean);
+    if (
+      hookKeys.length !== matchingHooks.hooks.length ||
+      matchingHooks.hooks.some((hook) => hook?.isManaged === true && hook?.enabled === true)
+    ) {
+      throw new Error("Codex cannot disable every hook for this ephemeral conversation.");
+    }
+    return {
+      features: Object.fromEntries(
+        CODEX_EPHEMERAL_DISABLED_FEATURES.map((feature) => [feature, false])
+      ),
+      hooks: {
+        state: Object.fromEntries(hookKeys.map((key) => [key, { enabled: false }]))
+      },
+      include_apps_instructions: false,
+      include_collaboration_mode_instructions: false,
+      include_environment_context: false,
+      include_permissions_instructions: false,
+      mcp_servers: Object.fromEntries(
+        mcpServerNames.map((name) => [name, { enabled: false }])
+      ),
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false
+      },
+      notify: [],
+      orchestrator: {
+        mcp: { enabled: false },
+        skills: { enabled: false }
+      },
+      project_doc_max_bytes: 0,
+      shell_environment_policy: {
+        inherit: "none",
+        set: {}
+      },
+      skills: { include_instructions: false },
+      tools: {
+        experimental_request_user_input: { enabled: false },
+        update_plan: { enabled: false }
+      },
+      web_search: "disabled"
+    };
+  }
+
+  async function codexAppServerEphemeralScopeContext(sessionId = "", input = {}, scope = {}) {
+    const normalizedSessionId = normalizeText(sessionId);
+    if (normalizeText(scope.id) !== normalizedSessionId) {
+      throw new TypeError("Codex ephemeral conversation scope does not match its provider binding.");
+    }
+    const requestedWorkdir = normalizeText(scope.workdir);
+    if (!path.isAbsolute(requestedWorkdir)) {
+      throw new TypeError("Codex ephemeral conversation workdir must be absolute.");
+    }
+    const workdir = path.resolve(requestedWorkdir);
+    if (!await directoryExists(workdir)) {
+      throw new TypeError("Codex ephemeral conversation workdir is unavailable.");
+    }
+    const toolHome = await codexToolHomeResult();
+    if (toolHome.ok === false) {
+      return toolHome;
+    }
+    const providerOptions = codexAppServerRuntimeOptions({
+      session: { sessionId: normalizedSessionId },
+      executionRoot: workdir,
+      terminalEnv: scope.environment || {},
+      toolHomeSource: toolHome.toolHomeSource,
+      workdir
+    });
+    const provider = await ensureCodexAppServerDaemonForSession(
+      normalizedSessionId,
+      providerOptions
+    );
+    return {
+      agentSettings: isRecord(input.agentSettings) ? input.agentSettings : {},
+      assistantScope: scope,
+      actorMetadata: {},
+      economyRestore: null,
+      executionRoot: workdir,
+      isolationConfig: await codexAppServerEphemeralIsolationConfig(provider, workdir),
+      ok: true,
+      provider,
+      providerOptions,
+      runtime: null,
+      session: null,
+      toolHomeSource: toolHome.toolHomeSource,
+      workdir
+    };
+  }
+
   async function codexAppServerConversationContext(sessionId = "", input = {}, {
+    assistantScope = null,
     runtime: resolvedRuntime = null,
     session: resolvedSession = null
   } = {}) {
     if (!codexAppServerPromptDeliveryEnabled) {
       return codexAppServerControlDisabledResult();
+    }
+    if (assistantScope) {
+      return codexAppServerEphemeralScopeContext(sessionId, input, assistantScope);
     }
     const context = await codexAppServerSessionContext(sessionId, {
       runtime: resolvedRuntime,
@@ -9646,6 +9828,21 @@ function createCodexTerminalController({
   }
 
   async function codexAppServerConversationThreadSettings(context = {}, input = {}) {
+    if (context.assistantScope) {
+      return {
+        ...codexAppServerThreadSettings({
+          agentSettings: context.agentSettings,
+          config: context.isolationConfig,
+          cwd: context.workdir,
+          developerInstructions: context.assistantScope.stableContext
+        }),
+        dynamicTools: [],
+        environments: [],
+        runtimeWorkspaceRoots: [],
+        sandbox: "read-only",
+        selectedCapabilityRoots: []
+      };
+    }
     const conversationKind = input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY
       ? "temporary-task"
       : "temporary-readonly";
@@ -10693,9 +10890,9 @@ function createCodexTerminalController({
     return detachedCodexAppServerChatTurn(sessionId, input, options);
   }
 
-  async function createCodexAppServerConversation(sessionId, input = {}) {
+  async function createCodexAppServerConversation(sessionId, input = {}, options = {}) {
     return vibe64Result(async () => {
-      const context = await codexAppServerConversationContext(sessionId, input);
+      const context = await codexAppServerConversationContext(sessionId, input, options);
       if (context.ok === false) {
         return context;
       }
@@ -10736,7 +10933,7 @@ function createCodexTerminalController({
     });
   }
 
-  async function startCodexAppServerConversationTurn(sessionId, input = {}) {
+  async function startCodexAppServerConversationTurn(sessionId, input = {}, options = {}) {
     const messageId = normalizeText(input.messageId);
     const deliveryKey = messageId
       ? `${codexTerminalNamespace(sessionId)}\0${normalizeText(input.conversationId)}\0${messageId}`
@@ -10756,7 +10953,7 @@ function createCodexTerminalController({
         };
       }
       const workspaceWrite = input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY;
-      const context = await codexAppServerConversationContext(sessionId, input);
+      const context = await codexAppServerConversationContext(sessionId, input, options);
       if (context.ok === false) {
         return context;
       }
@@ -10778,7 +10975,7 @@ function createCodexTerminalController({
           ok: false
         };
       }
-      if (!ephemeralConversation) {
+      if (!ephemeralConversation || context.assistantScope) {
         const threadSettings = await codexAppServerConversationThreadSettings(context, input);
         await context.provider.resumeThread(conversationId, threadSettings);
       }
@@ -10820,6 +11017,7 @@ function createCodexTerminalController({
           outputSchema: workspaceWrite ? VIBE64_AGENT_TASK_RESULT_SCHEMA : null,
           prompt,
           provider: context.provider,
+          readOnly: Boolean(context.assistantScope),
           threadId: conversationId,
           workdir: context.workdir
         });
@@ -10897,7 +11095,7 @@ function createCodexTerminalController({
     }
   }
 
-  async function readCodexAppServerConversation(sessionId, input = {}) {
+  async function readCodexAppServerConversation(sessionId, input = {}, options = {}) {
     return vibe64Result(async () => {
       const conversationId = normalizeText(input.conversationId);
       if (!conversationId) {
@@ -10914,7 +11112,7 @@ function createCodexTerminalController({
       if (input.ephemeral === true) {
         return codexAppServerExpiredEphemeralConversation(conversationId, input);
       }
-      const context = await codexAppServerConversationContext(sessionId, input);
+      const context = await codexAppServerConversationContext(sessionId, input, options);
       if (context.ok === false) {
         return context;
       }
@@ -10938,6 +11136,7 @@ function createCodexTerminalController({
   }
 
   async function waitForCodexAppServerConversationTurn(sessionId, input = {}, {
+    assistantScope = null,
     onEvent = null
   } = {}) {
     return vibe64Result(async () => {
@@ -10950,7 +11149,9 @@ function createCodexTerminalController({
           ok: false
         };
       }
-      const context = await codexAppServerConversationContext(sessionId, input);
+      const context = await codexAppServerConversationContext(sessionId, input, {
+        assistantScope
+      });
       if (context.ok === false) {
         return context;
       }
@@ -10982,7 +11183,7 @@ function createCodexTerminalController({
     });
   }
 
-  async function stopCodexAppServerConversation(sessionId, input = {}) {
+  async function stopCodexAppServerConversation(sessionId, input = {}, options = {}) {
     const conversationId = normalizeText(input.conversationId);
     const ephemeralConversation = codexAppServerEphemeralConversation(sessionId, conversationId);
     if (input.ephemeral === true && !ephemeralConversation) {
@@ -10997,7 +11198,7 @@ function createCodexTerminalController({
     const result = await interruptDetachedCodexAppServerChatTurn(sessionId, {
       threadId: input.conversationId,
       turnId: input.runId
-    });
+    }, options);
     if (ephemeralConversation) {
       ephemeralConversation.status = "interrupted";
       ephemeralConversation.watcher?.failNow(new Error("Temporary AI turn was stopped."));
@@ -11010,28 +11211,47 @@ function createCodexTerminalController({
     };
   }
 
-  async function deleteCodexAppServerConversation(sessionId, input = {}) {
+  async function deleteCodexAppServerConversation(sessionId, input = {}, options = {}) {
     const conversationId = normalizeText(input.conversationId);
     const sessionKey = codexTerminalNamespace(sessionId);
     const conversations = codexAppServerEphemeralConversations.get(sessionKey);
-    if (input.ephemeral === true && !conversations?.has(conversationId)) {
-      return {
-        conversationExpired: true,
-        conversationId,
-        ok: true
+    const conversationExpired = input.ephemeral === true && !conversations?.has(conversationId);
+    let result;
+    if (conversationExpired) {
+      result = {
+        conversationExpired: true
       };
+    } else {
+      result = await deleteDetachedCodexAppServerChatThread(sessionId, {
+        threadId: input.conversationId
+      }, options);
+      conversations?.get(conversationId)?.watcher?.failNow(new Error("Temporary AI conversation was closed."));
+      conversations?.delete(conversationId);
+      if (conversations?.size === 0) {
+        codexAppServerEphemeralConversations.delete(sessionKey);
+      }
     }
-    const result = await deleteDetachedCodexAppServerChatThread(sessionId, {
-      threadId: input.conversationId
-    });
-    conversations?.get(conversationId)?.watcher?.failNow(new Error("Temporary AI conversation was closed."));
-    conversations?.delete(conversationId);
-    if (conversations?.size === 0) {
-      codexAppServerEphemeralConversations.delete(sessionKey);
+    let providerExit = null;
+    if (options.assistantScope) {
+      const context = await codexAppServerEphemeralScopeContext(
+        sessionId,
+        input,
+        options.assistantScope
+      );
+      if (context.ok === false) {
+        return context;
+      }
+      providerExit = await stopCodexAppServerProviderForSession(
+        sessionId,
+        context.providerOptions,
+        { requireStopped: true }
+      );
     }
     return {
       ...result,
-      conversationId
+      conversationId,
+      ok: conversationExpired ? providerExit?.ok !== false : result?.ok !== false,
+      ...(providerExit ? { providerExit } : {})
     };
   }
 
@@ -11472,6 +11692,7 @@ function createCodexTerminalController({
   }
 
   async function deleteDetachedCodexAppServerChatThread(sessionId, input = {}, {
+    assistantScope = null,
     runtime: resolvedRuntime = null,
     session: resolvedSession = null
   } = {}) {
@@ -11496,6 +11717,7 @@ function createCodexTerminalController({
         let context = null;
         try {
           context = await codexAppServerConversationContext(sessionId, input, {
+            assistantScope,
             runtime: resolvedRuntime,
             session: resolvedSession
           });
@@ -11583,6 +11805,7 @@ function createCodexTerminalController({
   }
 
   async function interruptDetachedCodexAppServerChatTurn(sessionId, input = {}, {
+    assistantScope = null,
     runtime: resolvedRuntime = null,
     session: resolvedSession = null
   } = {}) {
@@ -11609,6 +11832,7 @@ function createCodexTerminalController({
         let context = null;
         try {
           context = await codexAppServerConversationContext(sessionId, input, {
+            assistantScope,
             runtime: resolvedRuntime,
             session: resolvedSession
           });
@@ -12651,8 +12875,8 @@ function createCodexTerminalController({
       });
     },
 
-    createConversation(sessionId, input = {}) {
-      return createCodexAppServerConversation(sessionId, input);
+    createConversation(sessionId, input = {}, options = {}) {
+      return createCodexAppServerConversation(sessionId, input, options);
     },
 
     assistantAccess() {
@@ -12668,8 +12892,8 @@ function createCodexTerminalController({
       )));
     },
 
-    deleteConversation(sessionId, input = {}) {
-      return deleteCodexAppServerConversation(sessionId, input);
+    deleteConversation(sessionId, input = {}, options = {}) {
+      return deleteCodexAppServerConversation(sessionId, input, options);
     },
 
     describeProvider(sessionId, options = {}) {
@@ -12691,8 +12915,8 @@ function createCodexTerminalController({
       });
     },
 
-    readConversation(sessionId, input = {}) {
-      return readCodexAppServerConversation(sessionId, input);
+    readConversation(sessionId, input = {}, options = {}) {
+      return readCodexAppServerConversation(sessionId, input, options);
     },
 
     executionProfileModelCatalog(sessionId, options = {}) {
@@ -12729,12 +12953,12 @@ function createCodexTerminalController({
       return seedCodexSessionRenewalHandover(sessionId, input, options);
     },
 
-    startConversationTurn(sessionId, input = {}) {
-      return startCodexAppServerConversationTurn(sessionId, input);
+    startConversationTurn(sessionId, input = {}, options = {}) {
+      return startCodexAppServerConversationTurn(sessionId, input, options);
     },
 
-    stopConversation(sessionId, input = {}) {
-      return stopCodexAppServerConversation(sessionId, input);
+    stopConversation(sessionId, input = {}, options = {}) {
+      return stopCodexAppServerConversation(sessionId, input, options);
     },
 
     streamDetachedChatTurn(sessionId, input = {}, options = {}) {

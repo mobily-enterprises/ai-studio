@@ -21,7 +21,8 @@ import {
   resolveOpenCodeEconomyExecutionProfile
 } from "../../packages/vibe64-terminals/src/server/agent/providers/opencodeSessionAgentProvider.js";
 import {
-  OPENCODE_ECONOMY_AGENT_ID
+  OPENCODE_ECONOMY_AGENT_ID,
+  OPENCODE_EPHEMERAL_AGENT_ID
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
 import {
   createOpenCodeTerminalController
@@ -1830,6 +1831,75 @@ test("OpenCode helper turns use the hidden deny-all agent and bounded structured
     (error) => error?.code === "vibe64_opencode_execution_input_too_large"
   );
   assert.equal(harness.processStarts.length, startsBeforeRejectedInput);
+});
+
+test("non-project ephemeral conversations use OpenCode's deny-all agent without project state", async (t) => {
+  const harness = await controllerHarness({
+    helperResponse: "The trusted host snapshot needs attention."
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const workdir = path.join(harness.root, "system-repair-workdir");
+  const runtimeRoot = path.join(harness.root, "system-repair-runtime");
+  await Promise.all([
+    mkdir(workdir, { recursive: true }),
+    mkdir(runtimeRoot, { recursive: true })
+  ]);
+  const assistantScope = {
+    environment: {},
+    id: "system_repair_test",
+    runtimeRoot,
+    stableContext: "Trusted bounded host snapshot.",
+    workdir
+  };
+  const options = {
+    assistantScope,
+    assistantSelection: {
+      ...harness.selection,
+      schema: "vibe64.assistant-selection.v1"
+    },
+    vibe64User: { role: "owner", username: "owner" }
+  };
+
+  const conversation = await harness.controller.createConversation(assistantScope.id, {
+    ephemeral: true
+  }, options);
+  const turn = await harness.controller.startConversationTurn(assistantScope.id, {
+    conversationId: conversation.conversationId,
+    ephemeral: true,
+    message: "Explain this snapshot only.",
+    messageId: "message_1"
+  }, options);
+
+  assert.equal(turn.ok, true, JSON.stringify(turn));
+  assert.equal(harness.runtimeCreateCalls(), 0);
+  assert.equal(harness.createdSessions[0].agent, OPENCODE_EPHEMERAL_AGENT_ID);
+  assert.equal(harness.createdSessions[0].location.directory, workdir);
+  assert.equal(harness.promptCalls[0].input.agent, OPENCODE_EPHEMERAL_AGENT_ID);
+  assert.equal(harness.promptCalls[0].input.prompt.text, "Explain this snapshot only.");
+  const registry = JSON.parse(await readFile(
+    harness.processStarts[0].options.sessionEnvironmentRegistry,
+    "utf8"
+  ));
+  const ephemeralEnvironment = registry.sessions.find((entry) => (
+    entry.sessionId === assistantScope.id
+  ));
+  assert.deepEqual(ephemeralEnvironment.promptContext, {
+    scope: "ephemeral",
+    stableContext: assistantScope.stableContext
+  });
+  assert.deepEqual(ephemeralEnvironment.env, {});
+  assert.deepEqual(ephemeralEnvironment.pathEntries, []);
+
+  const deleted = await harness.controller.deleteConversation(assistantScope.id, {
+    conversationId: conversation.conversationId,
+    ephemeral: true
+  }, options);
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.equal(deleted.providerExit.ok, true);
+  assert.equal(harness.processStops.length, 1);
 });
 
 test("OpenCode receives the same complete session command boundary as Codex", async (t) => {

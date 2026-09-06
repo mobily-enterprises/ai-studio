@@ -16,11 +16,16 @@ session history.
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-terminals/src/server/opencodeServerProcess.js`
 - `packages/vibe64-terminals/src/server/opencodeTerminal.js`
+- `packages/vibe64-terminals/src/server/agent/sessionAgentManager.js`
+- `packages/vibe64-terminals/src/server/agent/providers/codexSessionAgentProvider.js`
+- `packages/vibe64-terminals/src/server/agent/providers/opencodeSessionAgentProvider.js`
 - `src/composables/useVibe64TemporaryAi.js`
 - `src/composables/useVibe64AutopilotView.js`
 - `src/components/studio/Vibe64TemporaryAiFixAction.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue`
+- `src/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue`
+- `src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue`
 - `src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue`
 
 ## Public contract
@@ -61,6 +66,22 @@ resident assistant service. A user-visible temporary conversation receives one
 stable Genesis and Vibe64 context for its read-only or workspace-writing kind,
 while each human turn contains only the person's authored text. It keeps the
 session directory and appropriate command boundary.
+
+The terminal service also exposes one generic non-project ephemeral
+conversation seam for a composing host. Its exact scope supplies a private
+absolute working directory, private runtime root, empty or explicitly bounded
+environment, provider binding id, and one bounded host-authored stable context.
+It requires an explicit admitted provider/model selection but requires no
+project, session, worktree, History, or Genesis project conversation kind.
+Codex runs that scope read-only with dynamic tools and inherited facilities
+disabled; OpenCode uses its hidden deny-all agent. Stop, read, wait, deletion,
+provider cleanup, and unchanged authored turns reuse the ordinary provider
+lifecycle. Codex deletion detaches the exact thread/provider from a shared
+process or requires verified exit when that runtime is no longer shared; it
+retains the exact binding for retry when exit cannot be proven. The shared
+ephemeral message presentation and parameterized model selector let a composing
+product present that lifecycle without changing Temporary AI's project-writing
+contract.
 
 Prompt suggestions, commit subjects, database help, and source explanations
 use the bounded low-cost execution profile in a private non-project workspace.

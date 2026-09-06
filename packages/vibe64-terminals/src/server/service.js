@@ -1994,8 +1994,22 @@ function createService({
       ));
     },
 
+    createEphemeralAgentConversation(scope = {}, input = {}, options = {}) {
+      return sessionAgent.createEphemeralConversation(scope, {
+        ...input,
+        ephemeral: true
+      }, options);
+    },
+
     deleteAgentConversation(sessionId, input = {}, options = {}) {
       return sessionAgent.deleteConversation(sessionId, input, options);
+    },
+
+    deleteEphemeralAgentConversation(scope = {}, input = {}, options = {}) {
+      return sessionAgent.deleteEphemeralConversation(scope, {
+        ...input,
+        ephemeral: true
+      }, options);
     },
 
     runDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
@@ -2270,6 +2284,13 @@ function createService({
       return sessionAgent.readConversation(sessionId, input, options);
     },
 
+    readEphemeralAgentConversation(scope = {}, input = {}, options = {}) {
+      return sessionAgent.readEphemeralConversation(scope, {
+        ...input,
+        ephemeral: true
+      }, options);
+    },
+
     readOutputTargetTerminal(sessionId, terminalSessionId) {
       return outputTarget.readTerminal(sessionId, terminalSessionId);
     },
@@ -2313,8 +2334,22 @@ function createService({
       ));
     },
 
+    startEphemeralAgentConversationTurn(scope = {}, input = {}, options = {}) {
+      return sessionAgent.startEphemeralConversationTurn(scope, {
+        ...input,
+        ephemeral: true
+      }, options);
+    },
+
     stopAgentConversation(sessionId, input = {}, options = {}) {
       return sessionAgent.stopConversation(sessionId, input, options);
+    },
+
+    stopEphemeralAgentConversation(scope = {}, input = {}, options = {}) {
+      return sessionAgent.stopEphemeralConversation(scope, {
+        ...input,
+        ephemeral: true
+      }, options);
     },
 
     async startGlobalCodexTerminal(options = {}) {
@@ -2375,6 +2410,13 @@ function createService({
 
     waitForAgentConversationTurn(sessionId, input = {}, options = {}) {
       return sessionAgent.waitForConversationTurn(sessionId, input, options);
+    },
+
+    waitForEphemeralAgentConversationTurn(scope = {}, input = {}, options = {}) {
+      return sessionAgent.waitForEphemeralConversationTurn(scope, {
+        ...input,
+        ephemeral: true
+      }, options);
     },
 
     writeAgentTerminal(sessionId, terminalSessionId, data, input = {}, options = {}) {

@@ -11,6 +11,7 @@ const VIBE64_ACCOUNTS_GIT_IDENTITY_API_SUFFIX = "/vibe64/accounts/git-identity";
 const VIBE64_ACCOUNTS_PERSONAL_AI_PROFILE_API_SUFFIX = "/vibe64/accounts/personal-ai-profile";
 const VIBE64_ACCOUNTS_CHANGED_EVENT = "vibe64.accounts.changed";
 const VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT = "vibe64.accounts.auth-session.changed";
+const VIBE64_CONNECTIONS_CHANGED_EVENT = "vibe64.connections.changed";
 
 const ACCOUNTS_ENDPOINT = studioApiPath("vibe64/accounts");
 const ACCOUNTS_AUTH_ENDPOINT = `${ACCOUNTS_ENDPOINT}/auth`;
@@ -35,6 +36,7 @@ export {
   VIBE64_ACCOUNTS_PERSONAL_AI_PROFILE_API_SUFFIX,
   VIBE64_ACCOUNT_AUTH_SESSION_CHANGED_EVENT,
   VIBE64_ACCOUNTS_CHANGED_EVENT,
+  VIBE64_CONNECTIONS_CHANGED_EVENT,
   accountAuthTerminalWebSocketUrl,
   accountsQueryKey
 };

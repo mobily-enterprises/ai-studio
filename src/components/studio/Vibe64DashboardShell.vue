@@ -17,7 +17,9 @@ const props = defineProps({
   }
 });
 
-const { dashboardSectionLinks } = useVibe64DashboardPage();
+const { dashboardSectionLinks } = useVibe64DashboardPage({
+  dashboardContext: () => props.dashboardContext
+});
 const activeSessionNav = computed(() => {
   const nav = props.dashboardContext?.activeSessionNav || null;
   return nav && typeof nav === "object" ? nav : null;

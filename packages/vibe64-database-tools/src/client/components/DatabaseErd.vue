@@ -22,13 +22,14 @@
         </v-btn>
         <v-btn
           :disabled="layoutPending || nodes.length === 0"
-          :prepend-icon="mdiAutoFix"
+          :prepend-icon="mdiRestore"
           size="small"
+          title="Restore the recommended relationship-aware layout"
           type="button"
           variant="tonal"
-          @click="autoArrange"
+          @click="resetPositions"
         >
-          Auto-arrange
+          Reset positions
         </v-btn>
         <v-btn
           :disabled="layoutPending || nodes.length === 0 || !fullscreenAvailable"
@@ -47,7 +48,7 @@
     <div v-if="!fullscreen && layoutError" class="database-erd__error" role="alert">
       <v-icon :icon="mdiAlertOutline" size="18" />
       <span>{{ layoutError }}</span>
-      <v-btn size="x-small" type="button" variant="text" @click="autoArrange">Retry</v-btn>
+      <v-btn size="x-small" type="button" variant="text" @click="resetPositions">Retry</v-btn>
     </div>
 
     <div class="database-erd__canvas">
@@ -69,13 +70,17 @@
         :nodes-draggable="true"
         @init="onFlowInit"
         @node-click="onNodeClick"
-        @node-drag-stop="persistPositions"
+        @node-drag="onNodeDrag"
+        @node-drag-stop="onNodeDragStop"
       >
         <template #node-table="nodeProps">
           <DatabaseErdNode
             v-bind="nodeProps"
             :controls-visible="!fullscreen"
           />
+        </template>
+        <template #edge-relationship="edgeProps">
+          <DatabaseErdEdge v-bind="edgeProps" />
         </template>
         <MiniMap pannable zoomable />
       </VueFlow>
@@ -94,9 +99,9 @@ import {
 import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   mdiAlertOutline,
-  mdiAutoFix,
   mdiFullscreen,
-  mdiImageFilterCenterFocus
+  mdiImageFilterCenterFocus,
+  mdiRestore
 } from "@mdi/js";
 import {
   MarkerType,
@@ -106,7 +111,9 @@ import {
   MiniMap
 } from "@vue-flow/minimap";
 
+import DatabaseErdEdge from "./DatabaseErdEdge.vue";
 import DatabaseErdNode from "./DatabaseErdNode.vue";
+import { createErdRelationshipRoutes } from "../erdRelationships.js";
 
 const props = defineProps({
   layout: {
@@ -144,16 +151,19 @@ const defaultEdgeOptions = {
     width: 20
   },
   style: {
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
     stroke: "rgb(var(--v-theme-primary))",
     strokeOpacity: 0.88,
     strokeWidth: 2.25
   },
-  type: "smoothstep"
+  type: "relationship"
 };
 let flow = null;
 let fullscreenDocument = null;
 let layoutWorker = null;
 let layoutRequestId = 0;
+let relationshipDragFrame = null;
 const layoutResolvers = new Map();
 
 function persistedNodes() {
@@ -208,21 +218,40 @@ function tableNodes() {
     });
 }
 
-function relationshipEdges() {
-  const nodeIds = new Set(nodes.value.map((node) => node.id));
-  return (Array.isArray(props.schema?.relationships) ? props.schema.relationships : [])
-    .filter((relationship) => nodeIds.has(relationship.sourceTable) && nodeIds.has(relationship.referencedTable))
-    .map((relationship) => {
+function relationshipGraph(sourceNodes = nodes.value) {
+  const graph = createErdRelationshipRoutes(
+    sourceNodes,
+    Array.isArray(props.schema?.relationships) ? props.schema.relationships : []
+  );
+  return {
+    edges: graph.routes.map((route) => {
+      const relationship = route.relationship;
       const referencedColumns = (relationship.referencedColumns || []).join(", ");
       const foreignKeyColumns = (relationship.columns || []).join(", ");
       return {
         ariaLabel: `One ${relationship.referencedTable} row to many ${relationship.sourceTable} rows through ${relationship.constraintName}: ${referencedColumns} to ${foreignKeyColumns}`,
-        id: relationship.id,
+        data: {
+          laneX: route.laneX,
+          sourceTrackOffset: route.sourceTrackOffset,
+          targetTrackOffset: route.targetTrackOffset
+        },
+        id: route.id,
         label: "1 → N",
-        source: relationship.referencedTable,
-        target: relationship.sourceTable
+        source: route.source,
+        sourceHandle: route.sourceHandle,
+        target: route.target,
+        targetHandle: route.targetHandle,
+        type: "relationship"
       };
-    });
+    }),
+    nodes: sourceNodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        relationshipPorts: graph.portsByNode.get(node.id) || []
+      }
+    }))
+  };
 }
 
 function workerLayout(sourceNodes, sourceEdges) {
@@ -322,13 +351,17 @@ async function rebuild({ force = false } = {}) {
     const sourceNodes = tableNodes();
     const stored = persistedNodes();
     const layoutNeedsSave = force || sourceNodes.some((node) => !stored.has(node.id));
-    nodes.value = sourceNodes;
-    const sourceEdges = relationshipEdges();
+    const sourceGraph = relationshipGraph(sourceNodes);
+    nodes.value = sourceGraph.nodes;
+    edges.value = sourceGraph.edges;
     const positions = sourceNodes.length > 0
-      ? await workerLayout(sourceNodes, sourceEdges)
+      ? await workerLayout(sourceNodes, sourceGraph.edges)
       : [];
-    nodes.value = mergeStoredPositions(sourceNodes, positions, force);
-    edges.value = relationshipEdges();
+    const positionedGraph = relationshipGraph(mergeStoredPositions(sourceNodes, positions, force));
+    nodes.value = positionedGraph.nodes;
+    edges.value = positionedGraph.edges;
+    await nextTick();
+    flow?.updateNodeInternals?.(nodes.value.map((node) => node.id));
     await nextTick();
     flow?.fitView?.({ duration: 280, padding: 0.16 });
     if (layoutNeedsSave) {
@@ -357,21 +390,55 @@ function persistPositions() {
   emit("save-layout", serializedLayout());
 }
 
-function toggleNode(nodeId = "") {
-  nodes.value = nodes.value.map((node) => node.id === nodeId
-    ? {
-        ...node,
-        data: {
-          ...node.data,
-          collapsed: !node.data.collapsed
-        },
-        dimensions: {
-          height: nodeHeight(node.data.table, !node.data.collapsed),
-          width: !node.data.collapsed ? 208 : 280
-        }
+async function toggleNode(nodeId = "") {
+  const updatedNodes = nodes.value.map((node) => {
+    if (node.id !== nodeId) return node;
+    const collapsed = !node.data.collapsed;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        collapsed
+      },
+      dimensions: {
+        height: nodeHeight(node.data.table, collapsed),
+        width: collapsed ? 208 : 280
       }
-    : node);
+    };
+  });
+  const graph = relationshipGraph(updatedNodes);
+  nodes.value = graph.nodes;
+  edges.value = graph.edges;
+  await nextTick();
+  flow?.updateNodeInternals?.([nodeId]);
   persistPositions();
+}
+
+async function onNodeDragStop() {
+  if (relationshipDragFrame !== null) {
+    globalThis.cancelAnimationFrame(relationshipDragFrame);
+    relationshipDragFrame = null;
+  }
+  const graph = relationshipGraph(nodes.value);
+  nodes.value = graph.nodes;
+  edges.value = graph.edges;
+  await nextTick();
+  flow?.updateNodeInternals?.(nodes.value.map((node) => node.id));
+  persistPositions();
+}
+
+function onNodeDrag() {
+  if (relationshipDragFrame !== null) {
+    return;
+  }
+  relationshipDragFrame = globalThis.requestAnimationFrame(async () => {
+    relationshipDragFrame = null;
+    const graph = relationshipGraph(nodes.value);
+    nodes.value = graph.nodes;
+    edges.value = graph.edges;
+    await nextTick();
+    flow?.updateNodeInternals?.(nodes.value.map((node) => node.id));
+  });
 }
 
 function onFlowInit(instance) {
@@ -389,7 +456,7 @@ function fitDiagram() {
   flow?.fitView?.({ duration: 280, padding: 0.16 });
 }
 
-function autoArrange() {
+function resetPositions() {
   return rebuild({ force: true });
 }
 
@@ -399,7 +466,11 @@ function onFullscreenChange() {
     return;
   }
   fullscreen.value = active;
-  void nextTick().then(fitDiagram);
+  void nextTick().then(() => {
+    globalThis.requestAnimationFrame(() => {
+      globalThis.requestAnimationFrame(fitDiagram);
+    });
+  });
 }
 
 async function enterFullscreen() {
@@ -447,6 +518,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (relationshipDragFrame !== null) {
+    globalThis.cancelAnimationFrame(relationshipDragFrame);
+    relationshipDragFrame = null;
+  }
   fullscreenDocument?.removeEventListener("fullscreenchange", onFullscreenChange);
   fullscreenDocument = null;
   rejectPendingLayouts(new Error("ERD closed."));
@@ -541,6 +616,25 @@ onBeforeUnmount(() => {
   fill-opacity: 0.94;
   stroke: rgba(var(--v-theme-outline), 0.32);
   stroke-width: 0.75px;
+}
+
+.database-erd__canvas :deep(.vue-flow__edge) {
+  transition: filter 120ms ease, opacity 120ms ease;
+}
+
+.database-erd__canvas :deep(.vue-flow__edge:hover),
+.database-erd__canvas :deep(.vue-flow__edge.selected) {
+  filter: drop-shadow(0 0 3px rgba(var(--v-theme-primary), 0.72));
+}
+
+.database-erd__canvas :deep(.vue-flow__viewport:has(.vue-flow__edge:hover) .vue-flow__edge),
+.database-erd__canvas :deep(.vue-flow__viewport:has(.vue-flow__edge.selected) .vue-flow__edge) {
+  opacity: 0.16;
+}
+
+.database-erd__canvas :deep(.vue-flow__viewport:has(.vue-flow__edge:hover) .vue-flow__edge:hover),
+.database-erd__canvas :deep(.vue-flow__viewport:has(.vue-flow__edge.selected) .vue-flow__edge.selected) {
+  opacity: 1;
 }
 
 .database-erd__canvas :deep(.vue-flow__minimap) {

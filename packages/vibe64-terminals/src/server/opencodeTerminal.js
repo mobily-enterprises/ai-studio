@@ -17,6 +17,7 @@ import {
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_WORKSPACE_WRITE_POLICY,
   VIBE64_ASSISTANT_ENGINE_IDS,
+  defineVibe64AssistantSelection,
   vibe64AgentExecutionProfileAuditSnapshot,
   vibe64AssistantSelectionFromMetadata
 } from "@local/vibe64-runtime/shared";
@@ -44,6 +45,7 @@ import {
 } from "./agentCommandEnvironment.js";
 import {
   OPENCODE_ECONOMY_AGENT_ID,
+  OPENCODE_EPHEMERAL_AGENT_ID,
   createOpenCodeServerProcess,
   readOpenCodeCatalog,
   readOpenCodeZenModelIds,
@@ -172,8 +174,9 @@ function openCodeExecutionProfile(input = {}) {
   return profile;
 }
 
-function openCodeAgent(selection = {}, executionProfile = null) {
-  return executionProfile ? OPENCODE_ECONOMY_AGENT_ID : text(selection.agentId);
+function openCodeAgent(selection = {}, executionProfile = null, assistantScope = null) {
+  if (executionProfile) return OPENCODE_ECONOMY_AGENT_ID;
+  return assistantScope ? OPENCODE_EPHEMERAL_AGENT_ID : text(selection.agentId);
 }
 
 function openCodeDetachedPrompt(input = {}) {
@@ -572,7 +575,13 @@ function createOpenCodeTerminalController({
   let sharedProcessStart = null;
   let sharedProcessStop = null;
 
-  function promptContext(conversationKind = "main") {
+  function promptContext(conversationKind = "main", assistantScope = null) {
+    if (assistantScope) {
+      return {
+        scope: "ephemeral",
+        stableContext: assistantScope.stableContext
+      };
+    }
     return {
       conversationKind,
       scope: "session",
@@ -587,6 +596,34 @@ function createOpenCodeTerminalController({
 
   async function contextFor(sessionId = "", options = {}) {
     const id = safeSessionId(sessionId);
+    const assistantScope = options.assistantScope || null;
+    if (assistantScope) {
+      if (text(assistantScope.id) !== id) {
+        throw openCodeError(
+          "vibe64_ephemeral_scope_mismatch",
+          "OpenCode ephemeral conversation scope does not match its provider binding."
+        );
+      }
+      const selection = defineVibe64AssistantSelection(options.assistantSelection || {});
+      if (selection.engineId !== VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE) {
+        throw openCodeError(
+          "vibe64_opencode_selection_required",
+          "The ephemeral conversation does not have an OpenCode selection."
+        );
+      }
+      return {
+        assistantScope,
+        key: `ephemeral\0${id}`,
+        runtime: {
+          projectContextRoot: assistantScope.workdir,
+          stateRoot: assistantScope.runtimeRoot
+        },
+        session: null,
+        sessionId: id,
+        selection,
+        workdir: path.resolve(assistantScope.workdir)
+      };
+    }
     const runtime = options.runtime || await projectService.createRuntime({
       inspectSource: false
     });
@@ -945,6 +982,12 @@ function createOpenCodeTerminalController({
   }
 
   async function managedCommandEnvironment(context = {}) {
+    if (context.assistantScope) {
+      return {
+        env: context.assistantScope.environment || {},
+        shimDirs: []
+      };
+    }
     if (!codexGitCommand) {
       return { env: {}, shimDirs: [] };
     }
@@ -1023,7 +1066,7 @@ function createOpenCodeTerminalController({
         env: commands.env,
         pathEntries: commands.shimDirs,
         projectContextRoot: path.resolve(context.runtime.projectContextRoot),
-        promptContext: promptContext("main"),
+        promptContext: promptContext("main", context.assistantScope),
         sessionId: context.sessionId,
         upstreamSessionId: upstreamSessionId(context.runtime.stateRoot, context.sessionId),
         workdir: context.workdir
@@ -1818,7 +1861,7 @@ function createOpenCodeTerminalController({
       executionProfile
     );
     const conversation = await target.server.client.createSession({
-      agent: openCodeAgent(context.selection, executionProfile),
+      agent: openCodeAgent(context.selection, executionProfile, context.assistantScope),
       location: { directory: target.workdir },
       model: openCodeModel(context.selection, executionProfile)
     });
@@ -1843,7 +1886,7 @@ function createOpenCodeTerminalController({
       await ensureProcess(context, options),
       executionProfile
     );
-    const agent = openCodeAgent(context.selection, executionProfile);
+    const agent = openCodeAgent(context.selection, executionProfile, context.assistantScope);
     let conversationId = text(input.conversationId || input.threadId);
     if (!conversationId) {
       if (!createIfMissing) {
@@ -1874,8 +1917,8 @@ function createOpenCodeTerminalController({
     tracked.promptContext = executionProfile
       ? null
       : promptContext(input.policy === VIBE64_AGENT_WORKSPACE_WRITE_POLICY
-        ? "temporary-task"
-        : "temporary-readonly");
+          ? "temporary-task"
+          : "temporary-readonly", context.assistantScope);
     temporaryConversations.set(key, tracked);
     await writeSessionEnvironmentRegistry();
     return { context, conversationId, executionProfile, key, target, tracked };
@@ -1929,7 +1972,7 @@ function createOpenCodeTerminalController({
     });
     const inputMessageId = upstreamMessageId(input.messageId || input.operationId || randomUUID());
     const admitted = await target.server.client.prompt(conversationId, {
-      agent: openCodeAgent(context.selection, executionProfile),
+      agent: openCodeAgent(context.selection, executionProfile, context.assistantScope),
       delivery: "queue",
       id: inputMessageId,
       model: openCodeModel(context.selection, executionProfile),
@@ -2275,7 +2318,15 @@ function createOpenCodeTerminalController({
       await target.server.client.deleteSession(conversationId);
       temporaryConversations.delete(`${context.key}\0${conversationId}`);
       await writeSessionEnvironmentRegistry();
-      return { conversationId, deleted: true, ok: true };
+      const providerExit = context.assistantScope
+        ? await closeAllForSession(context.sessionId)
+        : null;
+      return {
+        conversationId,
+        deleted: true,
+        ok: providerExit?.ok !== false,
+        ...(providerExit ? { providerExit } : {})
+      };
     },
     async describeProvider(sessionId, options = {}) {
       const context = await contextFor(sessionId, options);

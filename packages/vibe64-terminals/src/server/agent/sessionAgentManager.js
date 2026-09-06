@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import {
   assertCanUseVibe64Assistant,
   canUseVibe64Assistant,
@@ -44,6 +46,15 @@ const AI_METHODS = new Set([
   "startTerminal",
   "streamDetachedChatTurn"
 ]);
+const EPHEMERAL_ASSISTANT_SCOPE_FIELDS = new Set([
+  "environment",
+  "id",
+  "runtimeRoot",
+  "stableContext",
+  "workdir"
+]);
+const EPHEMERAL_ASSISTANT_SCOPE_ID_PATTERN = /^[a-z][a-z0-9_-]{0,127}$/u;
+const EPHEMERAL_ASSISTANT_CONTEXT_MAX_CHARACTERS = 64 * 1024;
 
 function hasOwn(value, key) {
   return Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
@@ -101,6 +112,55 @@ function providerBindingConflictError(sessionId = "", currentProviderId = "", re
   error.requestedProviderId = normalizeText(requestedProviderId);
   error.sessionId = normalizeText(sessionId);
   return error;
+}
+
+function defineEphemeralAssistantScope(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Ephemeral assistant scope must be an object.");
+  }
+  const unsupported = Object.keys(value)
+    .filter((field) => !EPHEMERAL_ASSISTANT_SCOPE_FIELDS.has(field));
+  if (unsupported.length > 0) {
+    throw new TypeError(`Ephemeral assistant scope contains unsupported fields: ${unsupported.join(", ")}.`);
+  }
+  const missing = [...EPHEMERAL_ASSISTANT_SCOPE_FIELDS]
+    .filter((field) => !hasOwn(value, field));
+  if (missing.length > 0) {
+    throw new TypeError(`Ephemeral assistant scope is missing required fields: ${missing.join(", ")}.`);
+  }
+  const id = normalizeText(value.id);
+  const workdir = normalizeText(value.workdir);
+  const runtimeRoot = normalizeText(value.runtimeRoot);
+  if (typeof value.stableContext !== "string") {
+    throw new TypeError("Ephemeral assistant scope stable context must be a string.");
+  }
+  const stableContext = value.stableContext.trim();
+  if (!EPHEMERAL_ASSISTANT_SCOPE_ID_PATTERN.test(id)) {
+    throw new TypeError("Ephemeral assistant scope requires a stable lowercase scope id.");
+  }
+  if (!path.isAbsolute(workdir) || !path.isAbsolute(runtimeRoot)) {
+    throw new TypeError("Ephemeral assistant scope roots must be absolute paths.");
+  }
+  if (!stableContext || stableContext.length > EPHEMERAL_ASSISTANT_CONTEXT_MAX_CHARACTERS) {
+    throw new TypeError("Ephemeral assistant scope requires bounded stable context.");
+  }
+  const sourceEnvironment = value.environment;
+  if (!sourceEnvironment || typeof sourceEnvironment !== "object" || Array.isArray(sourceEnvironment)) {
+    throw new TypeError("Ephemeral assistant scope environment must be an object.");
+  }
+  const environment = Object.fromEntries(Object.entries(sourceEnvironment).map(([name, entry]) => {
+    if (!/^[A-Z][A-Z0-9_]*$/u.test(name) || typeof entry !== "string") {
+      throw new TypeError("Ephemeral assistant scope environment must contain string environment values.");
+    }
+    return [name, entry];
+  }));
+  return Object.freeze({
+    environment: Object.freeze(environment),
+    id,
+    runtimeRoot: path.resolve(runtimeRoot),
+    stableContext,
+    workdir: path.resolve(workdir)
+  });
 }
 
 function normalizeProvider(provider = {}) {
@@ -344,6 +404,7 @@ function createSessionAgentManager({
       agentSettings: operationOptions.agentSettings,
       assistantAccess,
       assistantSelection: sessionAssistantSelection(operationOptions),
+      assistantScope: operationOptions.assistantScope || null,
       onEvent: typeof operationOptions.onEvent === "function" ? operationOptions.onEvent : null,
       providerId: provider.id,
       runtime: operationOptions.runtime || null,
@@ -477,6 +538,31 @@ function createSessionAgentManager({
     );
   }
 
+  function ephemeralScopeMethod(method) {
+    return (scope = {}, input = {}, options = {}) => {
+      const assistantScope = defineEphemeralAssistantScope(scope);
+      return callSessionProvider(method, assistantScope.id, input, {
+        ...options,
+        assistantScope
+      });
+    };
+  }
+
+  async function deleteEphemeralConversation(scope = {}, input = {}, options = {}) {
+    const assistantScope = defineEphemeralAssistantScope(scope);
+    const result = await callSessionProvider(
+      "deleteConversation",
+      assistantScope.id,
+      input,
+      { ...options, assistantScope }
+    );
+    if (result?.ok !== false) {
+      bindings.delete(assistantScope.id);
+      bindingTokens.delete(assistantScope.id);
+    }
+    return result;
+  }
+
   async function closeSession(sessionId = "", options = {}) {
     const id = normalizeText(sessionId);
     const provider = bindSession(id, options);
@@ -583,7 +669,9 @@ function createSessionAgentManager({
     closeSession,
     closeTerminal: sessionMethod("closeTerminal"),
     createConversation: sessionMethod("createConversation"),
+    createEphemeralConversation: ephemeralScopeMethod("createConversation"),
     deleteConversation: sessionMethod("deleteConversation"),
+    deleteEphemeralConversation,
     deleteAttachment: sessionMethod("deleteAttachment"),
     deleteDetachedChatThread: sessionMethod("deleteDetachedChatThread"),
     async describeProvider(options = {}) {
@@ -690,6 +778,7 @@ function createSessionAgentManager({
       );
     },
     readConversation: sessionMethod("readConversation"),
+    readEphemeralConversation: ephemeralScopeMethod("readConversation"),
     resolveExecutionProfile: sessionMethod("resolveExecutionProfile"),
     readTerminal(sessionId = "", terminalSessionId = "", options = {}) {
       return callSessionProvider("readTerminal", sessionId, { terminalSessionId }, options);
@@ -708,8 +797,10 @@ function createSessionAgentManager({
       return callSessionProvider("sessionState", sessionId, {}, options);
     },
     startConversationTurn: sessionMethod("startConversationTurn"),
+    startEphemeralConversationTurn: ephemeralScopeMethod("startConversationTurn"),
     startTerminal: sessionMethod("startTerminal"),
     stopConversation: sessionMethod("stopConversation"),
+    stopEphemeralConversation: ephemeralScopeMethod("stopConversation"),
     streamDetachedChatTurn: sessionMethod("streamDetachedChatTurn"),
     subscribeTerminal(sessionId = "", terminalSessionId = "", subscriber = null, options = {}) {
       return callSessionProvider("subscribeTerminal", sessionId, { subscriber, terminalSessionId }, options);
@@ -720,6 +811,7 @@ function createSessionAgentManager({
     unpinAttachments: sessionMethod("unpinAttachments"),
     uploadAttachment: sessionMethod("uploadAttachment"),
     waitForConversationTurn: sessionMethod("waitForConversationTurn"),
+    waitForEphemeralConversationTurn: ephemeralScopeMethod("waitForConversationTurn"),
     writeTerminal(sessionId = "", terminalSessionId = "", data = "", input = {}, options = {}) {
       return callSessionProvider("writeTerminal", sessionId, { data, input, terminalSessionId }, options);
     }
@@ -727,7 +819,9 @@ function createSessionAgentManager({
 }
 
 export {
+  EPHEMERAL_ASSISTANT_CONTEXT_MAX_CHARACTERS,
   SESSION_AGENT_PROVIDER_BINDING_CONFLICT_CODE,
   createSessionAgentManager,
+  defineEphemeralAssistantScope,
   sessionAgentProviderId
 };

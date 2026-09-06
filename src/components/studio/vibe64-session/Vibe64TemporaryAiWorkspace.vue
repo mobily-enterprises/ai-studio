@@ -102,38 +102,10 @@
           <p>{{ activeTask.recoveryNotice }}</p>
           <p v-if="activeTaskRecoveryStatus">{{ activeTaskRecoveryStatus }}</p>
         </v-alert>
-        <div
-          v-if="activeTask.messages.length === 0"
-          class="vibe64-temporary-ai__empty"
-        >
-          Ask a focused question or investigate a problem without adding it to the main conversation.
-        </div>
-        <article
-          v-for="message in activeTask.messages"
-          :key="message.id"
-          class="vibe64-temporary-ai__message"
-          :class="`vibe64-temporary-ai__message--${message.role}`"
-        >
-          <strong>{{ message.role === "user" ? "You" : "Temporary AI" }}</strong>
-          <div
-            v-if="message.role === 'assistant' && message.progressUpdates?.length"
-            class="vibe64-temporary-ai__progress"
-            aria-label="Temporary AI progress"
-          >
-            <span
-              v-for="update in message.progressUpdates"
-              :key="update.id"
-              class="vibe64-temporary-ai__progress-update"
-            >
-              {{ update.text }}
-            </span>
-          </div>
-          <p v-if="message.text">{{ message.text }}</p>
-          <span v-else-if="['starting', 'inProgress'].includes(message.status)">Working…</span>
-          <span v-else-if="message.status === 'interrupted'">Stopped.</span>
-          <span v-else-if="message.status === 'failed'">Temporary AI stopped with an error.</span>
-          <Vibe64ConversationAttachments :items="message.attachments" />
-        </article>
+        <Vibe64EphemeralConversationMessages
+          :messages="activeTask.messages"
+          empty-message="Ask a focused question or investigate a problem without adding it to the main conversation."
+        />
       </div>
 
       <div
@@ -244,7 +216,7 @@ import {
 
 import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
-import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
+import Vibe64EphemeralConversationMessages from "@/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue";
 import {
   TEMPORARY_AI_WORKSPACE_WRITE_POLICY,
   useVibe64TemporaryAi
@@ -598,50 +570,6 @@ defineExpose({
   margin-top: 0.3rem;
 }
 
-.vibe64-temporary-ai__empty {
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  margin: auto;
-  max-width: 26rem;
-  text-align: center;
-}
-
-.vibe64-temporary-ai__message {
-  border-radius: 10px;
-  display: grid;
-  gap: 0.2rem;
-  max-width: 92%;
-  padding: 0.55rem 0.65rem;
-}
-
-.vibe64-temporary-ai__message--user {
-  align-self: end;
-  background: rgba(var(--v-theme-primary), 0.11);
-}
-
-.vibe64-temporary-ai__message--assistant {
-  align-self: start;
-  background: rgba(var(--v-theme-tertiary), 0.09);
-}
-
-.vibe64-temporary-ai__message p {
-  margin: 0;
-  white-space: pre-wrap;
-}
-
-.vibe64-temporary-ai__progress {
-  display: grid;
-  gap: 0.18rem;
-  margin: 0.15rem 0;
-}
-
-.vibe64-temporary-ai__progress-update {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  display: block;
-  font-size: 0.78rem;
-  line-height: 1.35;
-}
-
-.vibe64-temporary-ai__message span,
 .vibe64-temporary-ai__error {
   color: rgba(var(--v-theme-on-surface), 0.66);
   font-size: 0.82rem;

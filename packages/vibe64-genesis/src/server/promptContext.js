@@ -12,6 +12,7 @@ const VIBE64_SESSION_CAPABILITIES = Object.freeze([
   "managedGit",
   "managedPreview"
 ]);
+const VIBE64_EPHEMERAL_CONTEXT_MAX_CHARACTERS = 64 * 1024;
 const QUESTION_CONTRACT = Object.freeze([
   "When user input is necessary, ask no more than three concise, high-impact questions at once.",
   "Put multiple questions on separate lines as `[1] Question`, `[2] Question`, and so on.",
@@ -70,6 +71,24 @@ function normalizedSessionInput(input) {
   };
 }
 
+function normalizedEphemeralInput(input) {
+  exactFields(input, ["scope", "stableContext"], "Vibe64 ephemeral context");
+  const stableContext = String(input.stableContext || "").trim();
+  if (!stableContext || stableContext.length > VIBE64_EPHEMERAL_CONTEXT_MAX_CHARACTERS) {
+    throw new TypeError("Vibe64 ephemeral context requires bounded stableContext.");
+  }
+  return {
+    scope: "ephemeral",
+    stableContext
+  };
+}
+
+function normalizedDriverInput(input) {
+  if (input.scope === "session") return normalizedSessionInput(input);
+  if (input.scope === "ephemeral") return normalizedEphemeralInput(input);
+  throw new TypeError("The Vibe64 driver supports session and ephemeral scopes only.");
+}
+
 function managedGitInstructions({ readOnly = false } = {}) {
   return readOnly
     ? [
@@ -116,8 +135,10 @@ function sessionDriverOutput(input) {
 
 function vibe64Driver(input = {}) {
   const value = record(input, "Vibe64 driver input");
-  if (value.scope === "session") return sessionDriverOutput(value);
-  throw new TypeError("The Vibe64 driver supports session scope only.");
+  const normalized = normalizedDriverInput(value);
+  return normalized.scope === "session"
+    ? sessionDriverOutput(normalized)
+    : normalized.stableContext;
 }
 
 async function vibe64DriverInputFromRegistry(request = {}, {
@@ -147,10 +168,11 @@ async function vibe64DriverInputFromRegistry(request = {}, {
   if (!context) {
     return null;
   }
-  return normalizedSessionInput(context);
+  return normalizedDriverInput(context);
 }
 
 export {
+  VIBE64_EPHEMERAL_CONTEXT_MAX_CHARACTERS,
   vibe64Driver,
   vibe64DriverInputFromRegistry
 };

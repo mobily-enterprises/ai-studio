@@ -24,16 +24,31 @@ describe("Database ERD fullscreen controls", () => {
     expect(template).not.toContain("Entity relationship diagram");
     expect(template).not.toContain("Arrows run 1 → N");
     expect(template).toContain('class="database-erd__toolbar-actions"');
-    expect(template.indexOf("Fit")).toBeLessThan(template.indexOf("Auto-arrange"));
-    expect(template.indexOf("Auto-arrange")).toBeLessThan(template.indexOf("Full screen"));
+    expect(template.indexOf("Fit")).toBeLessThan(template.indexOf("Reset positions"));
+    expect(template.indexOf("Reset positions")).toBeLessThan(template.indexOf("Full screen"));
   });
 
   it("uses native fullscreen and removes controls from the fullscreen diagram", () => {
     expect(componentSource).toContain("requestFullscreen()");
     expect(componentSource).toContain('addEventListener("fullscreenchange", onFullscreenChange)');
     expect(componentSource).toContain('removeEventListener("fullscreenchange", onFullscreenChange)');
+    expect(componentSource).toContain("globalThis.requestAnimationFrame(fitDiagram)");
     expect(componentSource).toContain('v-if="!fullscreen"');
     expect(componentSource).toContain(':controls-visible="!fullscreen"');
     expect(nodeSource).toContain('v-if="controlsVisible"');
+    expect(nodeSource).toContain(':position="port.position"');
+    expect(nodeSource).toContain(':type="port.type"');
+  });
+});
+
+describe("Database ERD dragging", () => {
+  it("re-routes relationship lines while a table moves", () => {
+    expect(componentSource).toContain('@node-drag="onNodeDrag"');
+    expect(componentSource).toMatch(
+      /function onNodeDrag\(\)[\s\S]*requestAnimationFrame[\s\S]*relationshipGraph\(nodes\.value\)[\s\S]*edges\.value = graph\.edges/u
+    );
+    expect(componentSource).toMatch(
+      /function onNodeDragStop\(\)[\s\S]*cancelAnimationFrame[\s\S]*relationshipGraph\(nodes\.value\)[\s\S]*persistPositions\(\)/u
+    );
   });
 });
