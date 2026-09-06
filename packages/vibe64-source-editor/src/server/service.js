@@ -3840,6 +3840,7 @@ async function stopSourceEditorExplanation(context = {}, explanationId = "", {
   });
   const threadId = normalizeText(explanation.agentThreadId);
   const turnId = normalizeText(explanation.agentTurnId);
+  const assistantMessageId = explanation.messages.findLast((entry) => entry.role === "assistant")?.id;
   if (threadId && turnId) {
     if (!terminalService || typeof terminalService.interruptDetachedAgentChatTurn !== "function") {
       throw sourceEditorError("Agent chat interrupt is not available for source explanations.", "vibe64_source_explanation_agent_interrupt_unavailable", {}, 409);
@@ -3861,8 +3862,18 @@ async function stopSourceEditorExplanation(context = {}, explanationId = "", {
       );
     }
   }
-  const messages = normalizeSourceEditorMessages(explanation.messages);
-  const lastAssistant = [...messages].reverse().find((entry) => entry.role === "assistant");
+  // Do not yield between checking the current request and publishing its stopped state.
+  const current = sourceEditorExplanationStore(explanationChats).get(
+    sourceEditorExplanationMemoryKey(context, explanationId)
+  );
+  const lastAssistant = current?.messages.findLast((entry) => entry.role === "assistant");
+  if (!current || current.agentThreadId !== threadId || current.agentTurnId !== turnId ||
+      lastAssistant?.id !== assistantMessageId) {
+    return withSourceEditorExplanationFreshness(context, await readSourceEditorExplanationRecord(context, explanationId, {
+      explanationChats
+    }));
+  }
+  explanation = normalizeSourceEditorExplanation(current);
   if (lastAssistant?.id) {
     explanation = sourceEditorExplanationWithMessage(explanation, lastAssistant.id, {
       status: "stopped",

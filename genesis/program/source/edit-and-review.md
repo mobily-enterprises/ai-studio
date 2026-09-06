@@ -63,6 +63,10 @@ immutable worktree snapshot as the file list.
   `Vibe64SourceExplanationPanel` presents the answer, follow-up, cancellation
   and recovery controls. An answered cache record does not need a thread id to
   enable its first follow-up.
+- Server interruption stays outside the streaming write lock. After its provider
+  acknowledgement, Stop compares the targeted assistant message and provider
+  turn before publishing state; it cannot overwrite a newer turn or restore an
+  explanation that has already been deleted.
 - `runSessionWorkOperation()` admits each Current Changes, file-diff, work-state,
   or update-check request as one managed job. Canonical Save uses one managed
   checkpoint-and-summary job before commit naming and one managed

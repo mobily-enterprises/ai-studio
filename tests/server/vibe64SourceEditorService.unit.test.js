@@ -15,6 +15,9 @@ import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "@local/vibe64-core/server/sessionSourcePath";
 import {
+  createVibe64SessionStore
+} from "@local/vibe64-runtime/server";
+import {
   VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT,
   VIBE64_SOURCE_EDITOR_SYNC_READY_EVENT
 } from "@local/vibe64-core/server/sourceEditorRealtimeEvents";
@@ -3351,6 +3354,185 @@ test("source editor stop is not overwritten by late streaming output", async () 
     });
   }
 });
+
+for (const stopBoundary of [
+  "a newer same-ID follow-up",
+  "a follow-up before its new provider turn",
+  "a removed explanation",
+  "the latest answer of the original turn"
+]) {
+  test(`source editor late stop acknowledgement preserves ${stopBoundary}`, async () => {
+    const firstReady = Promise.withResolvers();
+    const firstFinished = Promise.withResolvers();
+    const secondReady = Promise.withResolvers();
+    const secondFinished = Promise.withResolvers();
+    const interruptReady = Promise.withResolvers();
+    const interruptFinished = Promise.withResolvers();
+    const interruptedTurns = [];
+    const deletedThreads = [];
+    const operations = [];
+    let turnCount = 0;
+    let store;
+    const fixture = await createSourceEditorFixture({
+      writeExclusive(...args) {
+        return store.runSessionExclusive(...args);
+      },
+      terminalService: {
+        async deleteDetachedAgentChatThread(sessionId, input) {
+          deletedThreads.push({ sessionId, threadId: input.threadId });
+          return { ok: true };
+        },
+        async interruptDetachedAgentChatTurn(sessionId, input) {
+          interruptedTurns.push({ sessionId, ...input });
+          interruptReady.resolve();
+          await interruptFinished.promise;
+          return { ok: true, status: "interrupted" };
+        },
+        async streamDetachedAgentChatTurn(_sessionId, input, options) {
+          const turn = ["initial", "a", "b"][turnCount++];
+          assert.ok(turn, "only the initial explanation and two follow-ups are generated");
+          const threadId = "agent-thread-late-stop";
+          const turnId = `agent-turn-${turn}`;
+          options.onEvent({ threadId, type: "thread" });
+          if (turn === "b" && stopBoundary === "a follow-up before its new provider turn") {
+            secondReady.resolve();
+            await secondFinished.promise;
+          }
+          options.onEvent({ status: "inProgress", threadId, turnId, type: "turn" });
+          if (turn === "a") {
+            assert.match(input.prompt, /Question A/u);
+            firstReady.resolve();
+            await firstFinished.promise;
+          } else if (turn === "b") {
+            assert.match(input.prompt, /Question B/u);
+            secondReady.resolve();
+            await secondFinished.promise;
+          }
+          return {
+            executionProfile: resolvedSourceExplanationProfile(),
+            ok: true,
+            text: structuredExplanation(`Answer ${turn}.`),
+            threadId,
+            turnId
+          };
+        }
+      }
+    });
+    try {
+      store = createVibe64SessionStore({
+        projectContextRoot: fixture.sourceRoot,
+        projectRuntimeRoot: path.join(fixture.root, "session-runtime")
+      });
+      await store.createSession({ sessionId: "session-1" });
+      await fixture.service.streamExplanation({
+        assistantMessageId: "msg_initial_assistant",
+        endColumn: 20,
+        endLine: 1,
+        explanationId: "exp_late_stop",
+        path: "src/app.js",
+        scope: "selection",
+        sessionId: "session-1",
+        startColumn: 1,
+        startLine: 1,
+        userMessageId: "msg_initial_user"
+      });
+
+      const first = fixture.service.streamExplanationFollowup({
+        assistantMessageId: "msg_a_assistant",
+        explanationId: "exp_late_stop",
+        message: "Question A",
+        sessionId: "session-1",
+        userMessageId: "msg_a_user"
+      });
+      operations.push(first);
+      await firstReady.promise;
+      const stopping = fixture.service.stopExplanation({
+        explanationId: "exp_late_stop",
+        sessionId: "session-1"
+      });
+      operations.push(stopping);
+      await interruptReady.promise;
+      assert.deepEqual(interruptedTurns, [{
+        executionProfile: resolvedSourceExplanationProfile(),
+        sessionId: "session-1",
+        threadId: "agent-thread-late-stop",
+        turnId: "agent-turn-a"
+      }]);
+      firstFinished.resolve();
+      await first;
+
+      if (stopBoundary === "a removed explanation") {
+        const deleted = await fixture.service.deleteExplanation({
+          explanationId: "exp_late_stop",
+          sessionId: "session-1"
+        });
+        assert.equal(deleted.ok, true);
+        assert.equal(deleted.deleted, true);
+        interruptFinished.resolve();
+        const stopped = await stopping;
+        assert.equal(stopped.ok, false);
+        assert.equal(stopped.code, "vibe64_source_explanation_not_found");
+        const repeatedDelete = await fixture.service.deleteExplanation({
+          explanationId: "exp_late_stop",
+          sessionId: "session-1"
+        });
+        assert.equal(repeatedDelete.deleted, false);
+        assert.deepEqual(deletedThreads, [{
+          sessionId: "session-1",
+          threadId: "agent-thread-late-stop"
+        }]);
+        await assert.rejects(readFile(
+          path.join(fixture.sourceEditorTempRoot, "source-editor-explanation-cleanup.json")
+        ), { code: "ENOENT" });
+        return;
+      }
+
+      if (stopBoundary === "the latest answer of the original turn") {
+        interruptFinished.resolve();
+        const stopped = await stopping;
+        assert.equal(stopped.ok, true);
+        assert.equal(stopped.explanation.status, "stopped");
+        assert.equal(stopped.explanation.agentTurnId, "agent-turn-a");
+        assert.equal(stopped.explanation.body, "Answer a.");
+        assert.equal(stopped.explanation.messages.at(-1).id, "msg_a_assistant");
+        assert.equal(stopped.explanation.messages.at(-1).text, "Answer a.");
+        return;
+      }
+
+      const secondEvents = [];
+      const second = fixture.service.streamExplanationFollowup({
+        assistantMessageId: "msg_b_assistant",
+        explanationId: "exp_late_stop",
+        message: "Question B",
+        sessionId: "session-1",
+        userMessageId: "msg_b_user"
+      }, { emit: (event) => secondEvents.push(event) });
+      operations.push(second);
+      await secondReady.promise;
+      interruptFinished.resolve();
+      assert.equal((await stopping).ok, true);
+      secondFinished.resolve();
+      await second;
+
+      const finished = secondEvents.findLast((event) => event.type === "source-explanation.finished");
+      assert.equal(finished.explanation.agentTurnId, "agent-turn-b");
+      assert.equal(finished.explanation.status, "ready");
+      assert.equal(finished.explanation.body, "Answer b.");
+      assert.equal(finished.explanation.messages.find((message) => message.id === "msg_b_user")?.text, "Question B");
+      assert.equal(finished.explanation.messages.at(-1).id, "msg_b_assistant");
+      assert.equal(finished.explanation.messages.at(-1).text, "Answer b.");
+      assert.deepEqual(finished.explanation.followups.map((message) => message.text), [
+        "Question A", "Answer a.", "Question B", "Answer b."
+      ]);
+    } finally {
+      firstFinished.resolve();
+      secondFinished.resolve();
+      interruptFinished.resolve();
+      await Promise.allSettled(operations);
+      await rm(fixture.root, { force: true, recursive: true });
+    }
+  });
+}
 
 test("source editor allows whole-file explanations for files larger than selected-range limits", async () => {
   const fixture = await createSourceEditorFixture({
