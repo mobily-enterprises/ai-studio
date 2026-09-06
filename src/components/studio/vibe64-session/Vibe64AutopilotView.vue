@@ -607,24 +607,33 @@
         class="studio-autopilot__right-pane-page"
         role="tabpanel"
       >
-        <Vibe64OutputControls
-          :ask-codex-to-fix-preview-identity="assistantDirectAllowed ? askCodexToFixPreviewIdentity : null"
-          :attach-preview-file="attachPreviewFile"
-          :prepare-preview-file="attachPreviewFileProducer"
-          :auto-start-managed-preview="!props.sessionSelectionArchived"
-          button-label="Run"
-          button-size="small"
-          button-variant="tonal"
-          :busy="Boolean(props.page?.busy || props.page?.launchBusy)"
-          class="studio-autopilot__preview-launch"
-          embedded-preview
-          :preview-displayed="rightPaneTab === 'preview' && props.projectPane === 'preview'"
-          :session="props.session"
-          :source-operations-suspended="sourceOperationsSuspended || agentActive"
-          :toolbar-teleport-target="rightPaneTab === 'preview' && props.projectPane === 'preview' ? props.previewToolbarTeleportTarget : ''"
-          :window-displayed="props.active"
-          @preview-attachment-state="updatePreviewAttachmentState"
-        />
+        <Vibe64ProjectOnboarding
+          :active="props.active"
+          :archived="props.sessionSelectionArchived"
+          :busy="sourceOperationsSuspended || agentActive || Boolean(props.page?.busy || props.page?.launchBusy)"
+          :can-ask="assistantCanUseAiState || assistantCanRequestMessage"
+          :send-message="sendMainChatMessage"
+          :session-id="selectedAssistantSessionId"
+        >
+          <Vibe64OutputControls
+            :ask-codex-to-fix-preview-identity="assistantDirectAllowed ? askCodexToFixPreviewIdentity : null"
+            :attach-preview-file="attachPreviewFile"
+            :prepare-preview-file="attachPreviewFileProducer"
+            :auto-start-managed-preview="!props.sessionSelectionArchived"
+            button-label="Run"
+            button-size="small"
+            button-variant="tonal"
+            :busy="Boolean(props.page?.busy || props.page?.launchBusy)"
+            class="studio-autopilot__preview-launch"
+            embedded-preview
+            :preview-displayed="rightPaneTab === 'preview' && props.projectPane === 'preview'"
+            :session="props.session"
+            :source-operations-suspended="sourceOperationsSuspended || agentActive"
+            :toolbar-teleport-target="rightPaneTab === 'preview' && props.projectPane === 'preview' ? props.previewToolbarTeleportTarget : ''"
+            :window-displayed="props.active"
+            @preview-attachment-state="updatePreviewAttachmentState"
+          />
+        </Vibe64ProjectOnboarding>
       </div>
     </section>
 
@@ -678,6 +687,7 @@ import {
   mdiStopCircleOutline
 } from "@mdi/js";
 import Vibe64AssistantAccessPanel from "@/components/studio/vibe64-session/Vibe64AssistantAccessPanel.vue";
+import Vibe64ProjectOnboarding from "@/components/studio/vibe64-session/Vibe64ProjectOnboarding.vue";
 import Vibe64SessionAssistantMenu from "@/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";

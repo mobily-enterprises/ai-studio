@@ -8,8 +8,7 @@ import { promisify } from "node:util";
 
 import {
   initializeManagedProject,
-  materializeInitialProject,
-  materializeJskitProjectFoundation
+  materializeInitialProject
 } from "@local/vibe64-project/server/managedProject";
 
 const execFileAsync = promisify(execFile);
@@ -121,61 +120,6 @@ test("managed projects begin as one canonical technology-neutral Genesis commit"
   assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
 });
 
-test("managed projects begin as one canonical JSKIT foundation commit without a namespace checkout", async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-"));
-  t.after(() => rm(root, {
-    force: true,
-    recursive: true
-  }));
-  const namespaceRoot = path.join(root, "namespace");
-  const projectRuntimeRoot = path.join(root, "runtime");
-  await Promise.all([
-    mkdir(namespaceRoot),
-    mkdir(projectRuntimeRoot)
-  ]);
-
-  const initialized = await initializeManagedProject({
-    initializeProject: materializeJskitProjectFoundation,
-    projectName: "managed-foundation",
-    projectContextRoot: namespaceRoot,
-    projectRuntimeRoot,
-    runCommand: directCommand
-  });
-  const canonicalCommit = (await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "rev-parse", "refs/heads/main"
-  ])).stdout.trim();
-
-  assert.equal(canonicalCommit, initialized.commit);
-  assert.equal((await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "rev-list", "--count", "main"
-  ])).stdout.trim(), "1");
-  assert.match((await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "show", "main:genesis/blueprint.md"
-  ])).stdout, /# Blueprint/u);
-  assert.match((await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "show", "main:genesis/stack.md"
-  ])).stdout, /## Components[\s\S]*- `nodejs`[\s\S]*- `jskit`/u);
-  const packageJson = JSON.parse((await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "show", "main:package.json"
-  ])).stdout);
-  assert.equal(packageJson.name, "managed-foundation");
-  assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.204");
-  assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
-  assert.equal(packageJson.scripts["jskit:check"], "jskit check");
-  assert.equal(packageJson.workspaces[0], "packages/*");
-  const lockfile = JSON.parse((await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "show", "main:package-lock.json"
-  ])).stdout);
-  assert.equal(lockfile.lockfileVersion, 3);
-  assert.equal(lockfile.name, "managed-foundation");
-  assert.equal(lockfile.packages[""].name, "managed-foundation");
-  assert.equal((await execFileAsync("git", [
-    "--git-dir", initialized.repositoryPath, "show", "main:packages/main/package.json"
-  ])).stdout.includes('"@local/main"'), true);
-  assert.deepEqual(await readdir(namespaceRoot), []);
-  assert.deepEqual(await readdir(path.join(projectRuntimeRoot, "tmp")), []);
-  assert.equal(initialized.sourceRoot, undefined);
-});
 
 test("managed project initialization removes its temporary checkout after every failure stage", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-managed-project-failures-"));

@@ -1,4 +1,6 @@
 import {
+  ACTION_READ_ONBOARDING,
+  ACTION_APPLY_TEMPLATE,
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
   ACTION_READ_ENGINEERING_SETTINGS,
@@ -14,6 +16,8 @@ import {
   ACTION_SELECT_PROJECT
 } from "./actions.js";
 import {
+  projectOnboardingInputValidator,
+  projectTemplateInputValidator,
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectEngineeringProfileInputValidator,
@@ -47,6 +51,18 @@ function registerRoutes(http, {
   routes.actionRoute("GET", "/projects", {
     actionId: ACTION_LIST_PROJECTS,
     summary: "List selectable Vibe64 projects."
+  });
+  routes.actionRoute("GET", "/onboarding", {
+    actionId: ACTION_READ_ONBOARDING,
+    buildInput: routes.requestQuery,
+    query: projectOnboardingInputValidator,
+    summary: "Inspect project opening state and available templates."
+  });
+  routes.actionRoute("POST", "/templates/apply", {
+    actionId: ACTION_APPLY_TEMPLATE,
+    buildInput: routes.requestBody,
+    body: projectTemplateInputValidator,
+    summary: "Apply a configured template to an empty session source."
   });
   routes.actionRoute("POST", "/projects", {
     actionId: ACTION_CREATE_PROJECT,

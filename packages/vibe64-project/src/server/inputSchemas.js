@@ -16,6 +16,13 @@ const optionalUser = {
 };
 
 const projectsReadInputValidator = patchSchema({});
+const projectOnboardingInputValidator = patchSchema({
+  sessionId: { type: "string", noTrim: false, required: true }
+});
+const projectTemplateInputValidator = patchSchema({
+  sessionId: { type: "string", noTrim: false, required: true },
+  templateId: { type: "string", noTrim: false, required: true }
+});
 const previewApplicationIdentitiesReadInputValidator = patchSchema({
   sessionId: {
     type: "string",
@@ -181,6 +188,8 @@ const previewApplicationIdentitiesInputValidator = patchSchema({
 });
 
 export {
+  projectOnboardingInputValidator,
+  projectTemplateInputValidator,
   projectCollaborationInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
   projectEngineeringProfileInputValidator,

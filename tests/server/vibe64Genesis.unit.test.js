@@ -601,10 +601,10 @@ test("Genesis owns the opening conversation for an existing uninitialized projec
     assert.match(rendered.prompt, /"projectKind": "existing-uninitialized"/u);
     assert.match(
       rendered.prompt,
-      /strongly recommend preparing the project for guided editing/u
+      /Recommend preparing the project for guided editing/u
     );
     assert.match(rendered.prompt, /Do not require the person to know Genesis terminology/u);
-    assert.match(rendered.prompt, /If they approve, run the Genesis `adopt` operation/u);
+    assert.match(rendered.prompt, /Otherwise, run it when they approve/u);
     await assert.rejects(
       () => readFile(path.join(projectRoot, "genesis", "blueprint.md"), "utf8"),
       { code: "ENOENT" }

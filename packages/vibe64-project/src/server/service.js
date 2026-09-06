@@ -61,6 +61,9 @@ import {
   inspectGenesisCollaboration,
   inspectGenesisEngineering,
   inspectGenesisEnvironment,
+  inspectGenesisProject,
+  listGenesisTemplates,
+  applyGenesisTemplate,
   setGenesisCollaboration,
   setGenesisEngineeringProfile
 } from "@local/vibe64-genesis/server";
@@ -244,6 +247,9 @@ function createService({
   inspectCollaboration = inspectGenesisCollaboration,
   inspectEngineering = inspectGenesisEngineering,
   inspectEnvironment = inspectGenesisEnvironment,
+  inspectProject = inspectGenesisProject,
+  listTemplates = listGenesisTemplates,
+  applyTemplate = applyGenesisTemplate,
   projectContext = null,
   setCollaboration = setGenesisCollaboration,
   setEngineeringProfile = setGenesisEngineeringProfile,
@@ -968,6 +974,53 @@ function createService({
     };
   }
 
+  async function projectOnboardingState(input = {}) {
+    const source = await genesisSettingsSourceForInput(input);
+    if (!source.sourceRoot) {
+      return { ok: true, available: false, templates: [], source: { sessionId: source.sessionId } };
+    }
+    await assertProjectDirectoryUsable(source.sourceRoot);
+    const inspection = await inspectProject({ projectRoot: source.sourceRoot });
+    const catalogue = inspection.templateEligible
+      ? await listTemplates({ projectRoot: source.sourceRoot })
+      : { templates: [] };
+    return {
+      ok: true,
+      available: true,
+      inspection,
+      templates: catalogue.templates,
+      source: { rootKind: source.rootKind, sessionId: source.sessionId }
+    };
+  }
+
+  async function applyProjectTemplateState(input = {}) {
+    const sessionId = String(input.sessionId || "").trim();
+    const templateId = String(input.templateId || "").trim();
+    if (!sessionId || !templateId) {
+      throw vibe64Error("Choose a template in an open session first.", "vibe64_template_selection_required");
+    }
+    return runSessionSourceWorkExclusive({ sessionId }, async () => {
+      const session = await sessionStore().readSession(sessionId);
+      if (session.status !== "active" || session.agentRuns.some((run) => run.active)) {
+        throw vibe64Error("Wait for the active work to finish before adding a starter.", "vibe64_template_session_busy");
+      }
+      const source = await sourceForInput({ sessionId });
+      if (!source.sourceRoot) {
+        throw vibe64Error("This session has no available source.", "vibe64_template_source_required");
+      }
+      await assertProjectDirectoryUsable(source.sourceRoot);
+      return runProjectSourceMutationExclusive(selectedProjectRuntimeRoot(), async () => {
+        // The browser selects a configured identity; it cannot supply a repository or ref.
+        const application = await applyTemplate({ projectRoot: source.sourceRoot, templateId });
+        return {
+          ...await projectOnboardingState({ sessionId }),
+          application,
+          projectSlug: String(currentProjectRequestContext()?.slug || path.basename(requireSelectedTargetRoot())).trim()
+        };
+      }, { operation: "apply-project-template" });
+    });
+  }
+
   async function saveEngineeringProfileState(input = {}) {
     let sourceInput = input;
     if (!String(input.sessionId || "").trim() && !selectedSourceRoot()) {
@@ -1059,6 +1112,13 @@ function createService({
   }
 
   return Object.freeze({
+    readOnboarding(input = {}) {
+      return projectResult(() => projectOnboardingState(input));
+    },
+
+    applyTemplate(input = {}) {
+      return projectResult(() => applyProjectTemplateState(input));
+    },
     get selectedProject() {
       return studioProjectContext.selectedProject;
     },

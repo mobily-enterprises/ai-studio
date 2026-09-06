@@ -21,9 +21,6 @@ import {
 import {
   initializeGenesisProject
 } from "@local/vibe64-genesis/server";
-import {
-  materializeJskitProjectFoundation
-} from "./projectFoundation.js";
 
 function initialProjectError(result = {}, fallback = "Initial project materialization failed.") {
   return vibe64Error(
@@ -300,6 +297,5 @@ async function initializeManagedProject({
 
 export {
   initializeManagedProject,
-  materializeInitialProject,
-  materializeJskitProjectFoundation
+  materializeInitialProject
 };

@@ -35,7 +35,7 @@ const {
   HOST_CONTEXT_RESOLVER_ENV,
   SESSION_CONTEXT_INSTALLED_ENV,
   addStack,
-  check,
+  applyTemplate,
   generatePrompt,
   indexCodebase,
   initialize,
@@ -43,8 +43,10 @@ const {
   inspectDerivedArtifacts,
   inspectEngineering,
   inspectEnvironment,
+  inspectProject,
   inspectStackSection,
   projectSessionContext,
+  listTemplates,
   setCollaboration,
   setEngineeringProfile,
   withTrustedGitRepository
@@ -220,6 +222,18 @@ function inspectGenesisEnvironment(options = {}) {
   return exactGenesisInspection(inspectEnvironment, GENESIS_CONTRACTS.environment, options);
 }
 
+function inspectGenesisProject(options = {}) {
+  return exactGenesisInspection(inspectProject, GENESIS_CONTRACTS.projectInspection, options);
+}
+
+function listGenesisTemplates(options = {}) {
+  return exactGenesisInspection(listTemplates, GENESIS_CONTRACTS.templates, options);
+}
+
+function applyGenesisTemplate(options = {}) {
+  return exactGenesisInspection(applyTemplate, GENESIS_CONTRACTS.templateApplication, options);
+}
+
 function inspectGenesisEngineering(options = {}) {
   return exactGenesisInspection(inspectEngineering, GENESIS_CONTRACTS.engineering, options);
 }
@@ -229,7 +243,7 @@ function inspectGenesisCollaboration(options = {}) {
 }
 
 async function inspectGenesisProjectFormat(options = {}) {
-  const result = await runGenesisOperation(check, options);
+  const result = await runGenesisOperation(inspectProject, options);
   if (!normalizeText(result?.projectFormat?.status)) {
     throw new Error("Genesis did not return a project-format status.");
   }
@@ -352,6 +366,7 @@ export {
   VIBE64_WORKSPACE_SETUP_CONTRACT,
   VIBE64_WORKSPACE_SETUP_SECTION,
   addGenesisStack,
+  applyGenesisTemplate,
   assertGenesisPromptTask,
   composeVibe64SessionContext,
   genesisPackageBinDirectory,
@@ -363,6 +378,8 @@ export {
   inspectGenesisDerivedArtifacts,
   inspectGenesisEngineering,
   inspectGenesisProjectFormat,
+  inspectGenesisProject,
+  listGenesisTemplates,
   inspectGenesisStackSection,
   inspectVibe64Deployment,
   inspectGenesisEnvironment,

@@ -2,6 +2,8 @@ import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions"
 import { currentProjectRequestContext } from "@local/vibe64-core/server/projectRequestContext";
 
 import {
+  projectOnboardingInputValidator,
+  projectTemplateInputValidator,
   projectCollaborationInputValidator,
   projectCreateInputValidator,
   projectDevelopmentDatabaseScopeInputValidator,
@@ -18,6 +20,8 @@ import {
 } from "./inputSchemas.js";
 
 const ACTION_CREATE_PROJECT = "vibe64.project.projects.create";
+const ACTION_READ_ONBOARDING = "vibe64.project.onboarding.read";
+const ACTION_APPLY_TEMPLATE = "vibe64.project.templates.apply";
 const ACTION_LIST_PROJECTS = "vibe64.project.projects.list";
 const ACTION_SELECT_PROJECT = "vibe64.project.projects.select";
 const ACTION_READ_ENV = "vibe64.project.env.read";
@@ -145,6 +149,19 @@ function createProjectActions({ project } = {}) {
 
   return Object.freeze([
     action({
+      id: ACTION_READ_ONBOARDING,
+      kind: "query",
+      input: projectOnboardingInputValidator,
+      execute: (input) => project.readOnboarding(input)
+    }),
+    action({
+      id: ACTION_APPLY_TEMPLATE,
+      kind: "command",
+      input: projectTemplateInputValidator,
+      events: [projectChangedEvent()],
+      execute: (input) => project.applyTemplate(input)
+    }),
+    action({
       id: ACTION_LIST_PROJECTS,
       kind: "query",
       input: projectsReadInputValidator,
@@ -234,6 +251,8 @@ function createProjectActions({ project } = {}) {
 }
 
 export {
+  ACTION_READ_ONBOARDING,
+  ACTION_APPLY_TEMPLATE,
   ACTION_CREATE_PROJECT,
   ACTION_LIST_PROJECTS,
   ACTION_READ_ENV,

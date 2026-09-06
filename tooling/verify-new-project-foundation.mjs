@@ -12,9 +12,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  initializeManagedProject,
-  materializeJskitProjectFoundation
+  initializeManagedProject
 } from "@local/vibe64-project/server/managedProject";
+
+import { applyGenesisTemplate, inspectGenesisProject } from "@local/vibe64-genesis/server";
 
 const START_TIMEOUT_MS = 30_000;
 
@@ -82,22 +83,24 @@ async function main() {
       mkdir(projectRuntimeRoot)
     ]);
     const initialized = await initializeManagedProject({
-      initializeProject: materializeJskitProjectFoundation,
       projectContextRoot: namespaceRoot,
       projectName: "created-project-proof",
       projectRuntimeRoot
     });
     assert.deepEqual(await readdir(namespaceRoot), []);
     await run("git", ["clone", initialized.repositoryPath, checkoutRoot]);
+    assert.equal((await inspectGenesisProject({ projectRoot: checkoutRoot })).state, "new");
+    await applyGenesisTemplate({ projectRoot: checkoutRoot, templateId: "official:jskit/public" });
+    assert.equal((await inspectGenesisProject({ projectRoot: checkoutRoot })).state, "ready");
 
     const packageJson = JSON.parse(await readFile(path.join(checkoutRoot, "package.json"), "utf8"));
     const mainPackage = JSON.parse(await readFile(
       path.join(checkoutRoot, "packages", "main", "package.json"),
       "utf8"
     ));
-    assert.equal(packageJson.name, "created-project-proof");
+    assert.equal(typeof packageJson.name, "string");
     assert.deepEqual(packageJson.workspaces, ["packages/*"]);
-    assert.equal(packageJson.devDependencies["@jskit-ai/jskit-catalog"], "0.1.204");
+    assert.equal(typeof packageJson.devDependencies["@jskit-ai/jskit-catalog"], "string");
     assert.equal(packageJson.devDependencies["@jskit-ai/jskit-cli"], undefined);
     assert.equal(packageJson.scripts["jskit:update"], "npx --yes @jskit-ai/jskit-catalog@latest update");
     assert.equal(packageJson.scripts["jskit:check"], "jskit check");
@@ -105,11 +108,12 @@ async function main() {
     assert.equal(mainPackage.version, "0.1.0");
     JSON.parse(await readFile(path.join(checkoutRoot, "package-lock.json"), "utf8"));
 
+    const seededStatus = execFileSync("git", ["status", "--porcelain"], { cwd: checkoutRoot, encoding: "utf8" });
     await run("npm", ["ci"], { cwd: checkoutRoot });
     assert.equal(execFileSync("git", ["status", "--porcelain"], {
       cwd: checkoutRoot,
       encoding: "utf8"
-    }), "");
+    }), seededStatus);
     await run("npm", ["run", "jskit:check"], { cwd: checkoutRoot });
     await run("npm", ["ls"], { cwd: checkoutRoot });
     await run("npm", ["run", "verify"], { cwd: checkoutRoot });
