@@ -10,23 +10,6 @@ function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function sessionId(value = {}) {
-  const source = record(value);
-  const session = record(source.session);
-  return String(source.sessionId || source.id || session.sessionId || session.id || "").trim();
-}
-
-function originId(...values) {
-  for (const value of values) {
-    const source = record(value);
-    const origin = String(source.originId || record(source.input).originId || "").trim();
-    if (origin) {
-      return origin;
-    }
-  }
-  return "";
-}
-
 function normalizedClientRefresh(value = {}) {
   const source = record(value);
   return {
@@ -35,16 +18,17 @@ function normalizedClientRefresh(value = {}) {
   };
 }
 
-function sessionRealtimePayload(result = {}, input = {}, reason = "", payload = null) {
-  const id = sessionId(result) || sessionId(input);
-  const origin = originId(result, input);
-  const resultSession = record(record(result).session);
-  const session = Object.keys(resultSession).length > 0
-    ? resultSession
-    : record(result);
+function sessionRealtimePayload(sessionId, { session: sessionValue, originId, reason, payload }) {
+  const source = record(sessionValue);
+  const nestedSession = record(source.session);
+  const session = Object.keys(nestedSession).length > 0 ? nestedSession : source;
+  const id = String(source.sessionId || source.id || nestedSession.sessionId || nestedSession.id || "").trim()
+    || sessionId;
+  const origin = String(source.originId || record(source.input).originId || "").trim()
+    || String(originId || "").trim();
   const revision = Number(session.revision);
   const status = String(session.status || "").trim();
-  const resultRefresh = normalizedClientRefresh(record(result).clientRefresh);
+  const sessionRefresh = normalizedClientRefresh(source.clientRefresh);
   const additionalPayload = record(payload);
   const additionalRefresh = normalizedClientRefresh(additionalPayload.clientRefresh);
   const {
@@ -53,11 +37,11 @@ function sessionRealtimePayload(result = {}, input = {}, reason = "", payload = 
   } = additionalPayload;
   void _clientRefresh;
   const clientRefresh = {
-    ...resultRefresh,
+    ...sessionRefresh,
     ...additionalRefresh
   };
   return {
-    ...(id ? { sessionId: id } : {}),
+    sessionId: id,
     ...(Number.isSafeInteger(revision) && revision >= 0 ? { revision } : {}),
     ...(status ? { status } : {}),
     ...additionalFields,
@@ -97,12 +81,12 @@ function createSessionChangedPublisher(events) {
       realtime: Object.freeze({
         audience: "all_clients",
         event: VIBE64_SESSION_CHANGED_EVENT,
-        payload: Object.freeze(sessionRealtimePayload(
-          session || { sessionId: id },
-          { originId: eventOriginId, sessionId: id },
+        payload: Object.freeze(sessionRealtimePayload(id, {
+          session,
+          originId: eventOriginId,
           reason,
           payload
-        ))
+        }))
       })
     }));
   };
