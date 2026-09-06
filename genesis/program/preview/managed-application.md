@@ -24,7 +24,9 @@ plus either an interactive presentation or finite downloadable results. Vibe64
 never guesses a framework command or substitutes an unknown runtime. After
 bounded output discovery proves that a project declares no target, Preview
 states that there is no application output and presents no empty launch
-controls.
+controls. A blocked Outputs declaration with no targets reports its actionable
+inspection diagnostic instead of claiming that the project has no output.
+Declared targets blocked by missing resources remain visible but disabled.
 
 Starting a target waits for the separately owned workspace-setup recipe, then
 runs every step through the managed execution gateway. Web targets use the

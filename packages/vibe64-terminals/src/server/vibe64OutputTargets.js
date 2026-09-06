@@ -112,10 +112,16 @@ async function inspectVibe64ForContext(context = {}, inspect, unconfigured) {
 async function inspectVibe64OutputsForContext(context = {}, {
   inspect = inspectVibe64Outputs
 } = {}) {
-  return inspectVibe64ForContext(context, inspect, {
+  const outputs = await inspectVibe64ForContext(context, inspect, {
     status: "unconfigured",
     targets: []
   });
+  if (outputs.status === "blocked" && outputs.targets.length === 0) {
+    const error = new Error(outputs.diagnostics.map(({ message }) => message).join(" "));
+    error.code = outputs.diagnostics[0].code;
+    throw error;
+  }
+  return outputs;
 }
 
 async function inspectVibe64WorkspaceSetupForContext(context = {}, {

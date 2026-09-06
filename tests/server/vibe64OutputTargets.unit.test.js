@@ -6,6 +6,9 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  vibe64OutputsInspection
+} from "../../packages/vibe64-genesis/src/server/outputs.js";
+import {
   createVibe64OutputTargetTerminalSpec,
   inspectVibe64OutputsForContext,
   inspectVibe64WorkspaceSetupForContext,
@@ -269,6 +272,121 @@ test("neutral sessions list output targets without exposing resource values or s
     presentation: { kind: "web" }
   }]);
   assert.doesNotMatch(JSON.stringify(targets), /dist\/bundle|do-not-return-this/u);
+});
+
+test("blocked empty Outputs preserve their actionable inspection diagnostic", async (t) => {
+  const context = await outputContext(t);
+  const diagnostic = {
+    code: "STACK_SECTION_AMBIGUOUS",
+    message: "Selected Stack components provide competing `Outputs` sections: component:jskit, component:laravel. Add one project `## Outputs` section to select the exact declaration.",
+    details: {
+      name: "Outputs",
+      sources: ["component:jskit", "component:laravel"]
+    }
+  };
+  const outputs = vibe64OutputsInspection({
+    environment: { diagnostics: [], stackHash: "sha256:unit" },
+    section: {
+      diagnostics: [diagnostic],
+      lines: [],
+      stackHash: "sha256:unit",
+      status: "blocked"
+    }
+  });
+  assert.equal(outputs.status, "blocked");
+  assert.deepEqual(outputs.targets, []);
+  const options = { inspect: () => outputs };
+  const expectedError = { code: diagnostic.code, message: diagnostic.message };
+
+  await t.test("context inspection", async () => {
+    await assert.rejects(inspectVibe64OutputsForContext(context, options), expectedError);
+  });
+  await t.test("target listing", async () => {
+    await assert.rejects(listVibe64OutputTargets(context, options), expectedError);
+  });
+  await t.test("target specification", async () => {
+    await assert.rejects(createVibe64OutputTargetTerminalSpec({
+      context,
+      outputTargetId: "app"
+    }, options), expectedError);
+  });
+});
+
+test("genuinely unconfigured Outputs remain an empty target list", async (t) => {
+  const context = await outputContext(t);
+  for (const section of [
+    { lines: [], status: "unconfigured" },
+    { lines: ["- Nothing."], status: "ready" }
+  ]) {
+    const outputs = vibe64OutputsInspection({
+      environment: { diagnostics: [], stackHash: "sha256:unit" },
+      section: { ...section, diagnostics: [], stackHash: "sha256:unit" }
+    });
+    const options = { inspect: () => outputs };
+    const inspection = await inspectVibe64OutputsForContext(context, options);
+    assert.equal(inspection.status, "unconfigured");
+    assert.deepEqual(inspection.targets, []);
+    assert.deepEqual(await listVibe64OutputTargets(context, options), []);
+  }
+});
+
+test("configured blocked Outputs keep disabled targets without exposing private inputs", async (t) => {
+  const context = await outputContext(t);
+  const disabledReason = "MySQL needs one of: DB_PASSWORD.";
+  const outputs = vibe64OutputsInspection({
+    environment: {
+      diagnostics: [{ code: "STACK_RESOURCE_MISSING", message: disabledReason }],
+      stackHash: "sha256:unit"
+    },
+    section: {
+      diagnostics: [],
+      lines: [
+        "### Target `app`: Run app",
+        "- Default.",
+        "- Mode: `interactive`",
+        "- Workdir: `private-workdir`",
+        "- Runtimes: `nodejs`",
+        "- Run `Start app`: `npm` `run` `dev`",
+        "#### Presentation",
+        "- Kind: `web`",
+        "- Ready when: `GET` `/api/health` returns `200`",
+        "#### Download `bundle`",
+        "- Path: `dist/bundle.zip`",
+        "- Name: `bundle.zip`",
+        "- Media type: `application/zip`"
+      ],
+      source: "component:jskit",
+      stackHash: "sha256:unit",
+      status: "ready"
+    }
+  });
+  const received = [];
+  const options = {
+    inspect(input) {
+      received.push(input);
+      return outputs;
+    }
+  };
+  assert.equal((await inspectVibe64OutputsForContext(context, options)).status, "blocked");
+  const targets = await listVibe64OutputTargets(context, options);
+  assert.deepEqual(targets, [outputTargetView({
+    available: false,
+    disabledReason,
+    downloads: [{ id: "bundle", mediaType: "application/zip", name: "bundle.zip" }]
+  })]);
+  assert.deepEqual(await createVibe64OutputTargetTerminalSpec({
+    context,
+    outputTargetId: "app"
+  }, options), { ok: false, message: disabledReason });
+  assert.equal(received.length, 3);
+  for (const input of received) {
+    assert.equal(input.projectRoot, context.session.metadata.source_path);
+    assert.equal(input.environment.DB_PASSWORD, "managed-project-value");
+  }
+  assert.doesNotMatch(
+    JSON.stringify(targets),
+    /private-workdir|dist\/bundle|component:jskit|do-not-return-this|managed-project-value/u
+  );
 });
 
 test("missing Genesis Stack leaves Outputs and workspace setup unconfigured", async (t) => {
