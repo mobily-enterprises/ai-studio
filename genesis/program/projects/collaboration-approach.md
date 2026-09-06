@@ -23,6 +23,10 @@ optional project requirements. Vibe64 does not duplicate those choices or
 their instruction text. Saving changes `genesis/collaboration.md` in the
 standalone source or selected hosted session source, so the result follows the
 same source authority and history as the project.
+An unsaved choice survives refreshes of that same source. Switching project,
+source kind or source session loads the new source's choices; the previous
+source's draft is never submitted as the new source's settings. A temporary
+query-loading interval does not by itself discard a same-source draft.
 
 Only the project owner can change collaboration through hosted Project
 settings. Anyone independently authorized to edit the source can still change

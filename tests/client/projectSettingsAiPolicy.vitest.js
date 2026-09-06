@@ -657,6 +657,163 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     app.unmount();
   });
 
+  it.each([
+    ["warm session cache", "session", false],
+    ["cold session cache", "session", true],
+    ["another project with the same standalone identity", "project", false]
+  ])("does not submit a dirty collaboration draft after switching to %s", async (_label, selection, cold) => {
+    const standalone = selection === "project";
+    const source = {
+      rootKind: standalone ? "standalone-source" : "session-source",
+      sessionId: standalone ? "" : "session-a"
+    };
+    projectSettingsMocks.resource = createResource({ collaboration: { source } });
+    projectSettingsMocks.engineeringResource.data.value.engineering.source = { ...source };
+    projectSettingsMocks.route.query = source.sessionId ? { sessionId: source.sessionId } : {};
+    const { app, container } = mountPanel();
+    try {
+      findField(container, "Tone").props["onUpdate:modelValue"]("playful");
+      findField(container, "Project requirements (optional)").props["onUpdate:modelValue"]("Keep source A's draft.");
+      await nextTick();
+      const previousSave = findButton(container, "Save collaboration");
+      const nextSource = { ...source, sessionId: standalone ? "" : "session-b" };
+      if (standalone) projectSettingsMocks.projectSlug.value = "project-b";
+      else projectSettingsMocks.route.query = { sessionId: "session-b" };
+
+      if (cold) {
+        projectSettingsMocks.resource.isLoading.value = true;
+        projectSettingsMocks.resource.data.value = undefined;
+        await nextTick();
+        expect(findField(container, "Tone")).toBeNull();
+        await previousSave.props.onClick();
+        expect(projectSettingsMocks.commands[1].run).not.toHaveBeenCalled();
+      }
+
+      const nextCollaboration = {
+        experience: "beginner",
+        explanationStyle: "conclusions",
+        requirements: "Source B's requirements.",
+        responseLength: "balanced",
+        source: nextSource,
+        tone: "direct"
+      };
+      projectSettingsMocks.resource.data.value = createResource({
+        collaboration: nextCollaboration
+      }).data.value;
+      projectSettingsMocks.resource.isLoading.value = false;
+      await nextTick();
+
+      expect(projectSettingsMocks.endpointOptions[0].readQuery.value)
+        .toEqual(standalone ? {} : { sessionId: "session-b" });
+      if (standalone) expect(projectSettingsMocks.endpointOptions[0].queryKey.value).toContain("project-b");
+      const save = findButton(container, "Save collaboration");
+      await save.props.onClick();
+      expect(projectSettingsMocks.commands[1].run).not.toHaveBeenCalled();
+      expect(save.props.disabled).toBe(true);
+      expect(findField(container, "Tone").props.modelValue).toBe("direct");
+      expect(findField(container, "Response length").props.modelValue).toBe("balanced");
+      expect(findField(container, "Experience level").props.modelValue).toBe("beginner");
+      expect(findField(container, "Explanation style").props.modelValue).toBe("conclusions");
+      expect(findField(container, "Project requirements (optional)").props.modelValue)
+        .toBe("Source B's requirements.");
+
+      findField(container, "Tone").props["onUpdate:modelValue"]("encouraging");
+      await nextTick();
+      await findButton(container, "Save collaboration").props.onClick();
+      expect(projectSettingsMocks.commands[1].run).toHaveBeenCalledOnce();
+      expect(projectSettingsMocks.commandOptions[1].buildRawPayload(null, {
+        context: projectSettingsMocks.commands[1].run.mock.calls[0][0]
+      })).toEqual({
+        experience: "beginner",
+        explanationStyle: "conclusions",
+        requirements: "Source B's requirements.",
+        responseLength: "balanced",
+        ...(standalone ? {} : { sessionId: "session-b" }),
+        tone: "encouraging"
+      });
+    } finally {
+      app.unmount();
+    }
+  });
+
+  it("clears a dirty collaboration draft when standalone source becomes metadata-only", async () => {
+    const source = { rootKind: "standalone-source", sessionId: "" };
+    projectSettingsMocks.resource = createResource({ collaboration: { source } });
+    projectSettingsMocks.engineeringResource.data.value.engineering.source = { ...source };
+    projectSettingsMocks.route.query = {};
+    const { app, container } = mountPanel();
+    try {
+      findField(container, "Tone").props["onUpdate:modelValue"]("playful");
+      findField(container, "Project requirements (optional)").props["onUpdate:modelValue"]("Standalone draft.");
+      await nextTick();
+      projectSettingsMocks.resource.data.value = createResource({
+        available: false,
+        collaboration: {
+          canEdit: false,
+          choices: {},
+          experience: "",
+          explanationStyle: "",
+          requirements: "",
+          responseLength: "",
+          source: { rootKind: "metadata-only", sessionId: "" },
+          status: "unavailable",
+          tone: "",
+          unavailableReason: "Create or select an AI session to set collaboration guidance."
+        }
+      }).data.value;
+      await nextTick();
+
+      const save = findButton(container, "Save collaboration");
+      expect(save.props.disabled).toBe(true);
+      await save.props.onClick();
+      expect(projectSettingsMocks.commands[1].run).not.toHaveBeenCalled();
+      expect(findField(container, "Tone").props.disabled).toBe(true);
+      expect(findField(container, "Tone").props.modelValue).toBe("");
+      expect(findField(container, "Project requirements (optional)").props.modelValue).toBe("");
+    } finally {
+      app.unmount();
+    }
+  });
+
+  it.each(["refresh", "unresolved query transition"])(
+    "preserves a dirty collaboration draft through a same-source %s",
+    async (transition) => {
+      const { app, container } = mountPanel();
+      try {
+        findField(container, "Tone").props["onUpdate:modelValue"]("playful");
+        findField(container, "Project requirements (optional)").props["onUpdate:modelValue"]("");
+        await nextTick();
+        if (transition === "unresolved query transition") {
+          projectSettingsMocks.resource.isLoading.value = true;
+          projectSettingsMocks.resource.data.value = undefined;
+          await nextTick();
+        }
+        projectSettingsMocks.resource.data.value = createResource({
+          collaboration: { tone: "direct", requirements: "Refreshed source requirements." }
+        }).data.value;
+        projectSettingsMocks.resource.isLoading.value = false;
+        await nextTick();
+
+        expect(findField(container, "Tone").props.modelValue).toBe("playful");
+        expect(findField(container, "Project requirements (optional)").props.modelValue).toBe("");
+        expect(findButton(container, "Save collaboration").props.disabled).toBe(false);
+        await findButton(container, "Save collaboration").props.onClick();
+        expect(projectSettingsMocks.commands[1].run).toHaveBeenCalledWith({
+          collaboration: {
+            experience: "expert",
+            explanationStyle: "teaching",
+            requirements: "",
+            responseLength: "detailed",
+            tone: "playful"
+          },
+          sessionId: "session-a"
+        });
+      } finally {
+        app.unmount();
+      }
+    }
+  );
+
   it("uses a stable pending label and blocks a duplicate owner submission", async () => {
     const pending = createDeferred();
     const aiCommand = createCommand({ pending });

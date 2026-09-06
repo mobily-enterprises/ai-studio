@@ -535,12 +535,20 @@ watch(() => developmentDatabase.value.scope, (scope) => {
   immediate: true
 });
 
-watch(collaboration, (value) => {
+let collaborationSource = null;
+watch([projectSlug, collaboration], ([slug, value]) => {
+  // A query-key transition can temporarily clear the same source's result.
+  if (!value.source) return;
+  const sourceChanged = !collaborationSource ||
+    collaborationSource.projectSlug !== slug ||
+    collaborationSource.rootKind !== value.source.rootKind ||
+    collaborationSource.sessionId !== value.source.sessionId;
   const next = normalizeCollaborationDraft(value);
-  if (!collaborationChanged.value) {
+  if (sourceChanged || !collaborationChanged.value) {
     collaborationDraft.value = next;
   }
-  savedCollaboration.value = normalizeCollaborationDraft(next);
+  savedCollaboration.value = { ...next };
+  collaborationSource = { projectSlug: slug, ...value.source };
 }, {
   immediate: true
 });
