@@ -626,10 +626,10 @@
             :busy="Boolean(props.page?.busy || props.page?.launchBusy)"
             class="studio-autopilot__preview-launch"
             embedded-preview
-            :preview-displayed="rightPaneTab === 'preview' && props.projectPane === 'preview'"
+            :preview-displayed="props.projectPane === 'preview'"
             :session="props.session"
             :source-operations-suspended="sourceOperationsSuspended || agentActive"
-            :toolbar-teleport-target="rightPaneTab === 'preview' && props.projectPane === 'preview' ? props.previewToolbarTeleportTarget : ''"
+            :toolbar-teleport-target="props.projectPane === 'preview' ? props.previewToolbarTeleportTarget : ''"
             :window-displayed="props.active"
             @preview-attachment-state="updatePreviewAttachmentState"
           />

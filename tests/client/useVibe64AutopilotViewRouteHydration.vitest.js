@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createApp, effectScope, nextTick, reactive, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -88,6 +89,108 @@ describe("useVibe64AutopilotView route hydration", () => {
     router.replace.mockReset();
   });
   afterEach(() => scope.stop());
+
+  it.each([
+    { label: "Files", tool: "editor", segment: "files", component: "Vibe64SessionSourceEditor" },
+    { label: "Database", tool: "database", segment: "database", component: "Vibe64DatabaseWorkspace" },
+    { label: "Cities", tool: "system", segment: "system", component: "Vibe64SystemWorldView" }
+  ])("retains $label inactive across Preview and retires it on an explicit tool switch", async ({ tool, segment, component }) => {
+    route.path = `/app/project/chat-test/dashboard/${segment}`;
+    const props = viewProps();
+    props.session = {
+      ...props.session,
+      metadata: {
+        source_kind: "session_clone",
+        source_path: "/tmp/sessions/active/session-1/source",
+        source_path_authority: "managed_session_source"
+      }
+    };
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
+    const autopilot = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64AutopilotView.vue", import.meta.url
+    ), "utf8");
+    const tag = autopilot.match(new RegExp(`<${component}\\b[\\s\\S]*?/>`, "u"))?.[0];
+    const binding = tag?.match(/:active="([^"]+)"/u)?.[1];
+    expect(binding).toBeDefined();
+    const toolActive = new Function("props", "rightPaneTab", `return (${binding});`);
+
+    expect(view.rightPaneTabMounted(tool)).toBe(true);
+    expect(toolActive(props, view.rightPaneTab.value)).toBe(true);
+    props.projectPane = "preview";
+    route.path = "/app/project/chat-test";
+    await nextTick();
+    expect(toolActive(props, view.rightPaneTab.value)).toBe(false);
+    expect(view.dashboardShellVisible.value).toBe(false);
+    expect(view.rightPaneTabMounted(tool)).toBe(true);
+
+    props.active = false;
+    await nextTick();
+    expect(view.rightPaneTabMounted(tool)).toBe(true);
+    expect(toolActive(props, view.rightPaneTab.value)).toBe(false);
+    props.active = true;
+    props.projectPane = "dashboard";
+    route.path = `/app/project/chat-test/dashboard/${segment}`;
+    await nextTick();
+    expect(view.rightPaneTabMounted(tool)).toBe(true);
+    expect(toolActive(props, view.rightPaneTab.value)).toBe(true);
+    expect(view.sessionId.value).toBe("session-1");
+
+    const nextTool = tool === "editor" ? "database" : "editor";
+    route.path = `/app/project/chat-test/dashboard/${nextTool === "editor" ? "files" : "database"}`;
+    await nextTick();
+    expect(view.rightPaneTabMounted(tool)).toBe(false);
+    expect(view.rightPaneTabMounted(nextTool)).toBe(true);
+    expect(toolActive(props, view.rightPaneTab.value)).toBe(false);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("does not mount a source tool on cold Preview even when source is ready", async () => {
+    route.path = "/app/project/chat-test";
+    const props = viewProps();
+    props.projectPane = "preview";
+    props.session.metadata = {
+      source_kind: "session_clone",
+      source_path: "/tmp/sessions/active/session-1/source",
+      source_path_authority: "managed_session_source"
+    };
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
+
+    expect(view.sessionSourceRoot.value).toBe("/tmp/sessions/active/session-1/source");
+    for (const tool of ["editor", "database", "system", "ai-terminal"]) {
+      expect(view.rightPaneTabMounted(tool)).toBe(false);
+    }
+    expect(view.dashboardShellVisible.value).toBe(false);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it.each(["preview-displayed", "toolbar-teleport-target"])("keeps the actual %s binding active independently of a retained tool", (attribute) => {
+    const autopilot = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64AutopilotView.vue", import.meta.url
+    ), "utf8");
+    const tag = autopilot.match(/<Vibe64OutputControls\b[\s\S]*?\/>/u)?.[0];
+    const binding = tag?.match(new RegExp(`:${attribute}="([^"]+)"`, "u"))?.[1];
+    expect(binding).toBeDefined();
+    const previewValue = new Function("props", "rightPaneTab", `return (${binding});`);
+    const props = { projectPane: "preview", previewToolbarTeleportTarget: "#preview-toolbar" };
+    const visible = attribute === "preview-displayed" ? true : "#preview-toolbar";
+    const hidden = attribute === "preview-displayed" ? false : "";
+
+    expect(previewValue(props, "preview")).toBe(visible);
+    props.projectPane = "dashboard";
+    expect(previewValue(props, "preview")).toBe(hidden);
+    props.projectPane = "preview";
+    for (const tool of ["editor", "database", "system"]) {
+      expect(previewValue(props, tool)).toBe(visible);
+    }
+  });
 
   it("projects retained session activity without hiding the shared dashboard route", async () => {
     route.path = "/app/project/chat-test/dashboard/repository";

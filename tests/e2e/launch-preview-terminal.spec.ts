@@ -8,6 +8,13 @@ import {
 import {
   PREVIEW_IDENTITY_CONTROL_PATH
 } from "../../packages/vibe64-core/src/server/previewAuth.js";
+import {
+  sourceEditorFilePolicy,
+  sourceEditorSourceContractPathExcluded
+} from "../../packages/vibe64-source-editor/src/server/filePolicy.js";
+import {
+  pathMatchesPolicyPattern
+} from "../../packages/vibe64-source-editor/src/server/service.js";
 
 import {
   BASE_URL,
@@ -2192,10 +2199,21 @@ test("chat source links open the editor and editor autosaves file changes", asyn
       }
     ],
     sourceEditorFiles: {
+      ".git/hidden.js": "export const hidden = 'visible needle';\n",
+      "dist/bundle.js": "visible needle\n",
       "node_modules/pkg/hidden.js": "export const hidden = 'visible needle';\n",
       "src/App.js": "import { helper } from './utils/really-long-helper-file-name-that-needs-hover';\nconst value = 1;\nconst status = 'ready';\n",
       "src/utils/really-long-helper-file-name-that-needs-hover.js": "export const helper = 'visible needle';\n"
     }
+  });
+  await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/onboarding?sessionId=${SESSION_ID}`, async (route) => {
+    await fulfillJson(route, {
+      available: true,
+      inspection: { diagnostics: [], state: "ready", templateEligible: false },
+      ok: true,
+      source: { rootKind: "session-source", sessionId: SESSION_ID },
+      templates: []
+    });
   });
 
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
@@ -2217,6 +2235,9 @@ test("chat source links open the editor and editor autosaves file changes", asyn
       path: ""
     }
   ]);
+  await expect(page.locator(".vibe64-source-tree__button", {
+    hasText: "really-long-helper-file-name-that-needs-hover.js"
+  })).toHaveCount(0);
   await expect(page.locator(".cm-content")).toContainText("const status = 'ready';");
 
   await page.getByText("./utils/really-long-helper-file-name-that-needs-hover").click({
@@ -2259,10 +2280,16 @@ test("chat source links open the editor and editor autosaves file changes", asyn
   await expect(page).toHaveURL(`${BASE_URL}${DASHBOARD_PATH}/files`);
   await expect(page.getByLabel("Session source editor")).toBeVisible();
   await expect(page.locator(".vibe64-source-editor__title")).toContainText("really-long-helper-file-name");
-  const composerBottomGap = await page.locator(".studio-autopilot__chat-panel .studio-autopilot__composer .studio-autopilot-prompt-textarea__field").evaluate((element) => (
-    window.innerHeight - element.getBoundingClientRect().bottom
-  ));
-  expect(composerBottomGap).toBeLessThanOrEqual(3);
+  const composerGeometry = await page.locator(".studio-autopilot__chat-panel .studio-autopilot__composer .studio-autopilot-prompt-textarea__field").evaluate((element) => {
+    const composer = element.closest(".studio-autopilot__composer").getBoundingClientRect();
+    return {
+      fieldBottomGap: composer.bottom - element.getBoundingClientRect().bottom,
+      viewportBottomGap: window.innerHeight - composer.bottom
+    };
+  });
+  expect(composerGeometry.viewportBottomGap).toBeGreaterThanOrEqual(0);
+  expect(composerGeometry.viewportBottomGap).toBeLessThanOrEqual(1);
+  expect(composerGeometry.fieldBottomGap).toBeCloseTo(4, 0);
   await page.getByTitle("Collapse file list").click();
   await expect(page.getByTitle("Show files")).toBeVisible();
   await page.getByTitle("Show files").click();
@@ -2274,7 +2301,9 @@ test("chat source links open the editor and editor autosaves file changes", asyn
     name: "Find in files"
   }).fill("visible needle");
   await expect(page.getByTitle("src/utils/really-long-helper-file-name-that-needs-hover.js:1:24")).toBeVisible();
-  await expect(page.getByText("node_modules/pkg/hidden.js")).toHaveCount(0);
+  await expect(page.getByText("node_modules/pkg/hidden.js", { exact: true })).toBeVisible();
+  await expect(page.getByText("dist/bundle.js", { exact: true })).toBeVisible();
+  await expect(page.getByText(".git/hidden.js", { exact: true })).toHaveCount(0);
 });
 
 test("source editor refresh reloads the open file and preserves its viewport", async ({ page }) => {
@@ -2347,6 +2376,7 @@ test("source explanations keep live progress compact and answers above the follo
   ].join("\n");
   await mockLaunchTerminalSocket(page);
   await mockLaunchSession(page, {
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
     conversationLog: [
       {
         assistant: {
@@ -2408,7 +2438,7 @@ test("source explanations keep live progress compact and answers above the follo
   });
   await expect(thinkingDetail).toBeVisible();
   const status = panel.locator(".vibe64-source-explanation__status", {
-    hasText: "Thinking..."
+    hasText: "Thinking…"
   });
   await expect(status).toBeVisible();
   await expect(status.locator(".vibe64-source-explanation__status-mark")).toBeVisible();
@@ -3375,6 +3405,7 @@ function escapeRegExp(value: string) {
 
 function createSourceEditorMock(initialFiles: Record<string, string>) {
   const files = new Map(Object.entries(initialFiles));
+  const policy = sourceEditorFilePolicy();
   const treeRequests: Array<{
     limit: number;
     offset: number;
@@ -3384,6 +3415,11 @@ function createSourceEditorMock(initialFiles: Record<string, string>) {
 
   function fileHash(path: string) {
     return `${path}:${version}`;
+  }
+
+  function sourceEditorPathExcluded(filePath: string) {
+    return sourceEditorSourceContractPathExcluded(filePath) ||
+      policy.exclude.some((pattern) => pathMatchesPolicyPattern(filePath, pattern));
   }
 
   function sortedFilePaths() {
@@ -3403,19 +3439,18 @@ function createSourceEditorMock(initialFiles: Record<string, string>) {
       path: String(input.path || "")
     };
     treeRequests.push(request);
+    const root = sourceEditorTreeFromPaths(sortedFilePaths());
+    const directory = findSourceEditorTreeDirectory(root, request.path);
     return {
       ok: true,
-      policy: {
-        defaultOpenFiles: ["src/App.js"],
-        exclude: [],
-        preexpandedDirectories: ["src"],
-        preloadDirectories: ["src", "packages"]
-      },
+      policy,
       root: "",
-      tree: sourceEditorTreeFromPaths(sortedFilePaths(), request, {
-        preexpandedDirectories: ["src"],
-        preloadDirectories: ["packages"]
-      })
+      tree: sourceEditorDirectoryPage(directory || {
+        children: [],
+        name: request.path.split("/").filter(Boolean).at(-1) || "",
+        path: request.path,
+        type: "directory"
+      }, request)
     };
   }
 
@@ -3471,7 +3506,8 @@ function createSourceEditorMock(initialFiles: Record<string, string>) {
         path,
         text: files.get(path) || ""
       },
-      ok: true
+      ok: true,
+      revealTree: sourceEditorTreeFromPaths([path])
     };
   }
 
@@ -3562,32 +3598,10 @@ function sourceEditorResolveMockCandidates(pathValue: string) {
   ];
 }
 
-function sourceEditorPathExcluded(filePath: string) {
-  return String(filePath || "").split("/").some((segment) => [
-    ".git",
-    ".vibe64",
-    "dist",
-    "node_modules"
-  ].includes(segment));
-}
-
-function sourceEditorTreeFromPaths(paths: string[], {
-  limit = 20,
-  offset = 0,
-  path = ""
-}: {
-  limit?: number;
-  offset?: number;
-  path?: string;
-} = {}, {
-  preexpandedDirectories = [],
-  preloadDirectories = []
-}: {
-  preexpandedDirectories?: string[];
-  preloadDirectories?: string[];
-} = {}) {
+function sourceEditorTreeFromPaths(paths: string[]) {
   const root = {
     children: [] as Array<Record<string, unknown>>,
+    loaded: false,
     name: "",
     path: "",
     type: "directory"
@@ -3615,6 +3629,7 @@ function sourceEditorTreeFromPaths(paths: string[], {
       if (!child) {
         child = {
           children: [],
+          loaded: false,
           name,
           path: childPath,
           type: "directory"
@@ -3626,23 +3641,7 @@ function sourceEditorTreeFromPaths(paths: string[], {
   }
 
   sortSourceEditorTree(root);
-  const directory = findSourceEditorTreeDirectory(root, path);
-  const page = sourceEditorDirectoryPage(directory || {
-    children: [],
-    name: String(path || "").split("/").filter(Boolean).at(-1) || "",
-    path,
-    type: "directory"
-  }, {
-    limit,
-    offset
-  });
-  if (path || offset > 0) {
-    return page;
-  }
-  return sourceEditorTreeWithPolicyDirectories(root, page, {
-    preexpandedDirectories,
-    preloadDirectories
-  });
+  return root;
 }
 
 function sortSourceEditorTree(node: Record<string, unknown>) {
@@ -3721,134 +3720,6 @@ function sourceEditorDirectoryPage(node: Record<string, unknown>, {
     truncated: false,
     type: "directory"
   };
-}
-
-function sourceEditorTreeWithPolicyDirectories(
-  fullTree: Record<string, unknown>,
-  rootPage: Record<string, unknown>,
-  {
-    preexpandedDirectories = [],
-    preloadDirectories = []
-  }: {
-    preexpandedDirectories?: string[];
-    preloadDirectories?: string[];
-  } = {}
-) {
-  let tree = rootPage;
-  const preexpandedSet = new Set(preexpandedDirectories);
-  for (const directoryPath of preloadDirectories) {
-    if (preexpandedSet.has(directoryPath)) {
-      continue;
-    }
-    tree = mergeSourceEditorTreeDirectory(tree, sourceEditorPolicyDirectoryNode(fullTree, directoryPath));
-  }
-  for (const directoryPath of preexpandedDirectories) {
-    tree = mergeSourceEditorTreeDirectory(tree, sourceEditorPolicyDirectoryNode(fullTree, directoryPath, {
-      recursive: true
-    }));
-  }
-  return tree;
-}
-
-function sourceEditorPolicyDirectoryNode(
-  fullTree: Record<string, unknown>,
-  directoryPath: string,
-  {
-    recursive = false
-  }: {
-    recursive?: boolean;
-  } = {}
-) {
-  const directory = findSourceEditorTreeDirectory(fullTree, directoryPath);
-  if (!directory) {
-    return null;
-  }
-  const page = sourceEditorDirectoryPage(directory);
-  if (!recursive) {
-    return page;
-  }
-  let node = page;
-  for (const child of Array.isArray(page.children) ? page.children as Array<Record<string, unknown>> : []) {
-    if (child.type === "directory") {
-      node = mergeSourceEditorTreeDirectory(node, sourceEditorPolicyDirectoryNode(fullTree, String(child.path || ""), {
-        recursive: true
-      }));
-    }
-  }
-  return node;
-}
-
-function mergeSourceEditorTreeDirectory(root: Record<string, unknown>, directory: Record<string, unknown> | null) {
-  if (!directory) {
-    return root;
-  }
-  const directoryPath = String(directory.path || "");
-  if (!directoryPath) {
-    return directory;
-  }
-  const parts = directoryPath.split("/").filter(Boolean);
-
-  function mergeAt(node: Record<string, unknown>, depth: number): Record<string, unknown> {
-    if (depth === parts.length) {
-      return {
-        ...node,
-        ...directory,
-        children: mergeSourceEditorTreeChildren(
-          Array.isArray(node.children) ? node.children as Array<Record<string, unknown>> : [],
-          Array.isArray(directory.children) ? directory.children as Array<Record<string, unknown>> : []
-        )
-      };
-    }
-    const childPath = parts.slice(0, depth + 1).join("/");
-    const children = Array.isArray(node.children) ? node.children as Array<Record<string, unknown>> : [];
-    let found = false;
-    const nextChildren = children.map((child) => {
-      if (child.type === "directory" && child.path === childPath) {
-        found = true;
-        return mergeAt(child, depth + 1);
-      }
-      return child;
-    });
-    if (!found) {
-      nextChildren.push(mergeAt({
-        children: [],
-        hasMore: false,
-        loaded: false,
-        name: parts[depth],
-        path: childPath,
-        type: "directory"
-      }, depth + 1));
-    }
-    return {
-      ...node,
-      children: sortSourceEditorTreeChildren(nextChildren)
-    };
-  }
-
-  return mergeAt(root, 0);
-}
-
-function mergeSourceEditorTreeChildren(
-  existingChildren: Array<Record<string, unknown>>,
-  incomingChildren: Array<Record<string, unknown>>
-) {
-  const byKey = new Map<string, Record<string, unknown>>();
-  for (const child of existingChildren) {
-    byKey.set(`${child.type}:${child.path}`, child);
-  }
-  for (const child of incomingChildren) {
-    byKey.set(`${child.type}:${child.path}`, child);
-  }
-  return sortSourceEditorTreeChildren([...byKey.values()]);
-}
-
-function sortSourceEditorTreeChildren(children: Array<Record<string, unknown>>) {
-  return [...children].sort((left, right) => {
-    if (left.type !== right.type) {
-      return left.type === "directory" ? -1 : 1;
-    }
-    return String(left.name || "").localeCompare(String(right.name || ""));
-  });
 }
 
 function previewAppHtml({

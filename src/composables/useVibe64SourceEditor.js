@@ -592,7 +592,8 @@ function useVibe64SourceEditor({
   const explanationBusy = ref(false);
   const explanationClosing = ref(false);
   const explanationFollowup = ref("");
-  const loadError = ref("");
+  const loadFailure = ref(null);
+  const loadError = computed(() => loadFailure.value?.message || "");
   const saveError = ref("");
   const createFileError = ref("");
   const creatingFile = ref(false);
@@ -618,6 +619,7 @@ function useVibe64SourceEditor({
   let fileMatchesTimer = null;
   let searchTimer = null;
   let pendingFileRevalidation = false;
+  let pendingTreeRefresh = false;
   let savePromise = null;
   let textAtUnmount = null;
   const currentSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
@@ -665,7 +667,11 @@ function useVibe64SourceEditor({
     onEvent: ({ payload = {} } = {}) => {
       void applyRemoteFileChange(payload);
       if (payload.operation === "created") {
-        void loadTree();
+        if (currentActive.value) {
+          void loadTree();
+        } else {
+          pendingTreeRefresh = true;
+        }
       }
     }
   });
@@ -781,7 +787,7 @@ function useVibe64SourceEditor({
     setTreePathError(normalizedPath, "");
     if (!normalizedPath && !append) {
       loadingTree.value = true;
-      loadError.value = "";
+      loadFailure.value = null;
     }
     try {
       const response = await sourceEditorRequest(vibe64SourceEditorTreePath(
@@ -817,7 +823,7 @@ function useVibe64SourceEditor({
         const message = String(error?.message || error || "Source tree could not be loaded.");
         setTreePathError(normalizedPath, message);
         if (!normalizedPath) {
-          loadError.value = message;
+          loadFailure.value = { operation: "tree", message };
         }
       }
       return null;
@@ -853,7 +859,7 @@ function useVibe64SourceEditor({
     treeDirectoryRequestIds.clear();
     treeLoadingPaths.value = [];
     treeLoadErrors.value = {};
-    loadError.value = "";
+    loadFailure.value = null;
     if (!canLoad.value) {
       return;
     }
@@ -944,7 +950,7 @@ function useVibe64SourceEditor({
     const requestId = fileRequestId + 1;
     fileRequestId = requestId;
     fileRevalidationRequestId += 1;
-    loadError.value = "";
+    loadFailure.value = null;
     saveError.value = "";
     loadingFile.value = true;
     loadingPath.value = normalizedPath;
@@ -967,7 +973,10 @@ function useVibe64SourceEditor({
       return true;
     } catch (error) {
       if (requestId === fileRequestId) {
-        loadError.value = String(error?.message || error || "Source file could not be loaded.");
+        loadFailure.value = {
+          operation: "open-file",
+          message: String(error?.message || error || "Source file could not be loaded.")
+        };
       }
       return false;
     } finally {
@@ -992,7 +1001,7 @@ function useVibe64SourceEditor({
     fileRequestId = fileSelectionRequestId;
     fileRevalidationRequestId += 1;
     createFileError.value = "";
-    loadError.value = "";
+    loadFailure.value = null;
     saveError.value = "";
     creatingFile.value = true;
     try {
@@ -1031,7 +1040,7 @@ function useVibe64SourceEditor({
   async function revalidateSelectedFile() {
     const pathAtRequest = selectedPath.value;
     const sessionIdAtRequest = currentSessionId.value;
-    if (!pathAtRequest || !canLoad.value) {
+    if (!pathAtRequest || !canLoad.value || !currentActive.value) {
       return false;
     }
     if (saving.value) {
@@ -1053,6 +1062,9 @@ function useVibe64SourceEditor({
       ) {
         return false;
       }
+      if (loadFailure.value?.operation === "revalidation") {
+        loadFailure.value = null;
+      }
       const nextHash = String(response.file?.hash || "");
       if (dirty.value || saving.value) {
         if (nextHash && nextHash !== savedHash.value) {
@@ -1065,7 +1077,6 @@ function useVibe64SourceEditor({
       if (!nextHash || nextHash === savedHash.value) {
         return false;
       }
-      loadError.value = "";
       return applyFileResponse(response, {
         fallbackPath: pathAtRequest
       });
@@ -1075,7 +1086,10 @@ function useVibe64SourceEditor({
         selectedPath.value === pathAtRequest &&
         currentSessionId.value === sessionIdAtRequest
       ) {
-        loadError.value = String(error?.message || error || "Source file could not be refreshed.");
+        loadFailure.value = {
+          operation: "revalidation",
+          message: String(error?.message || error || "Source file could not be refreshed.")
+        };
       }
       return false;
     }
@@ -1776,7 +1790,15 @@ function useVibe64SourceEditor({
     window.addEventListener("focus", handleWindowFocus);
   }
 
-  watch([currentSessionsApiPath, currentSessionId], async (_current, previous = []) => {
+  watch([currentSessionsApiPath, currentSessionId, currentActive], async (current, previous = []) => {
+    if (current[0] === previous[0] && current[1] === previous[1]) {
+      if (current[2] && pendingTreeRefresh) {
+        pendingTreeRefresh = false;
+        await loadTree();
+      }
+      return;
+    }
+    pendingTreeRefresh = false;
     const closePending = explanationClosing.value;
     clearExplanationStream();
     explanationClosing.value = false;

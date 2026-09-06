@@ -1743,7 +1743,6 @@ function useVibe64AutopilotView(props, emit, {
     assistantDirectAllowed.value
   ].join("|"), () => {
     if (projectPaneValue.value === "preview") {
-      rightPaneTab.value = "preview";
       return;
     }
     if (routeSessionToolId.value) {

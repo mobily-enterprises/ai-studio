@@ -31,13 +31,22 @@ The source browser lists, searches, opens, edits, and saves allowed project
 files inside the selected session source. It rejects paths outside that source
 and reports concurrent changes rather than silently overwriting them. The
 source editor publishes successful creates and saves with project, session,
-path, hash, and originating-tab identity. A foreign create refreshes the file
-tree, while a foreign save refreshes a clean matching file or warns without
-overwriting a dirty draft.
+path, hash, and originating-tab identity. In a visible editor, a foreign create
+refreshes the file tree, while a foreign save refreshes a clean matching file
+or warns without overwriting a dirty draft. A hidden editor admits no new file
+revalidation reads; foreign creates mark its tree for one refresh on return,
+including when no file is selected. Changing source discards that pending tree
+refresh. Reads already in flight may finish.
 Selected-file observation follows the active session and editor pane.
 Retaining an inactive session does not retain its file connection; returning to the
 editor reconnects and revalidates the selected file through the existing sync
 owner. Events from a replaced connection do not update the current editor.
+Successful revalidation clears its own previous error even when the file is
+unchanged or has a local draft, without hiding a failed tree load or another
+file's failed open. Switching to Preview retains the selected dashboard tool
+inactively; returning to Files keeps its selected file and draft. A cold Preview
+does not mount a source tool, and explicitly choosing another dashboard tool
+still unmounts the previous one.
 
 A source explanation is temporary assistance for a selected code range or file.
 A matching cached answer can appear without starting a provider conversation;
@@ -53,6 +62,8 @@ retains the answer and reports action feedback so Close can be retried. Changing
 session or unmounting releases the old stream's pending browser state; a late
 Stop response, cleanup result or streamed event cannot reopen that explanation
 or overwrite a newer request, including a follow-up in the same conversation.
+Hiding a retained editor does not cancel an explanation the person started;
+its answer remains available when they return.
 
 The Repository presents the session's complete current changes against saved project
 work, even when those changes are already committed inside the session. It can

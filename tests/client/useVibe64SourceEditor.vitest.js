@@ -132,8 +132,10 @@ function realtimeForEvent(event) {
 }
 
 async function createLoadedEditor({
+  active = true,
   currentText,
   navigateReferencedSource = null,
+  openFile = true,
   projectSlug = "beepollen",
   sessionId = "session-1"
 } = {}) {
@@ -142,6 +144,7 @@ async function createLoadedEditor({
   } = await import("../../src/composables/useVibe64SourceEditor.js");
   mocks.requestResults.push(treeResponse());
   const editor = useVibe64SourceEditor({
+    active,
     navigateReferencedSource,
     projectSlug: ref(projectSlug),
     readCurrentText: () => currentText.value,
@@ -149,10 +152,12 @@ async function createLoadedEditor({
     sessionsApiPath: ref("/api/app/vibe64/sessions")
   });
   await flushPromises();
-  mocks.requestResults.push(fileResponse());
-  await editor.openFile("src/app.js");
-  currentText.value = editor.text.value;
-  await flushPromises();
+  if (openFile) {
+    mocks.requestResults.push(fileResponse());
+    await editor.openFile("src/app.js");
+    currentText.value = editor.text.value;
+    await flushPromises();
+  }
   return editor;
 }
 
@@ -431,6 +436,136 @@ describe("useVibe64SourceEditor", () => {
     ]]);
   });
 
+  it.each([false, true])("coalesces hidden foreign creates into one tree refresh on return (selected file: %s)", async (selected) => {
+    const active = ref(true);
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ active, currentText, openFile: selected });
+    if (selected) {
+      currentText.value = "console.log('local draft');\n";
+      editor.updateText();
+    }
+    const selectedPath = editor.selectedPath.value;
+    const loadedVersion = editor.loadedVersion.value;
+    const currentDraft = currentText.value;
+    const realtime = realtimeForEvent("vibe64.source-editor.file.changed");
+    active.value = false;
+    await nextTick();
+    const requestCount = mocks.requestCalls.length;
+    for (const path of ["new-one.js", "new-two.js"]) {
+      const payload = {
+        operation: "created",
+        originId: "other-tab",
+        path,
+        projectSlug: "beepollen",
+        sessionId: "session-1"
+      };
+      if (realtime.enabled.value && realtime.matches({ payload })) realtime.onEvent({ payload });
+    }
+    await flushPromises();
+    expect(mocks.requestCalls).toHaveLength(requestCount);
+
+    const updatedTree = treeResponse();
+    updatedTree.tree.children = ["new-one.js", "new-two.js"].map((path) => ({
+      name: path, path, type: "file"
+    }));
+    mocks.requestResults.push(updatedTree);
+    active.value = true;
+    await nextTick();
+    await flushPromises();
+    expect(mocks.requestCalls.slice(requestCount)).toEqual([[
+      "/api/app/vibe64/sessions/session-1/source-editor/tree?limit=20", {}
+    ]]);
+    expect(editor.tree.value.children.map(({ path }) => path)).toEqual(["new-one.js", "new-two.js"]);
+    expect(editor.selectedPath.value).toBe(selectedPath);
+    expect(editor.loadedVersion.value).toBe(loadedVersion);
+    expect(editor.dirty.value).toBe(selected);
+    expect(currentText.value).toBe(currentDraft);
+
+    active.value = false;
+    await nextTick();
+    active.value = true;
+    await nextTick();
+    await flushPromises();
+    expect(mocks.requestCalls).toHaveLength(requestCount + 1);
+    expect(editor.selectedPath.value).toBe(selectedPath);
+    expect(currentText.value).toBe(currentDraft);
+  });
+
+  it.each(["session", "API path"])("discards hidden tree invalidation when the %s changes in the same batch as reactivation", async (changedContext) => {
+    const active = ref(true);
+    const sessionId = ref("session-1");
+    const sessionsApiPath = ref("/api/app/vibe64/sessions");
+    const { useVibe64SourceEditor } = await import("../../src/composables/useVibe64SourceEditor.js");
+    mocks.requestResults.push(treeResponse());
+    const editor = useVibe64SourceEditor({ active, projectSlug: "beepollen", sessionId, sessionsApiPath });
+    await flushPromises();
+    active.value = false;
+    await nextTick();
+    const realtime = realtimeForEvent("vibe64.source-editor.file.changed");
+    const payload = {
+      operation: "created", originId: "other-tab", path: "old-source.js",
+      projectSlug: "beepollen", sessionId: "session-1"
+    };
+    const requestCount = mocks.requestCalls.length;
+    if (realtime.enabled.value && realtime.matches({ payload })) realtime.onEvent({ payload });
+    await flushPromises();
+    expect(mocks.requestCalls).toHaveLength(requestCount);
+
+    mocks.requestResults.push(treeResponse());
+    if (changedContext === "session") sessionId.value = "session-2";
+    else sessionsApiPath.value = "/api/next/vibe64/sessions";
+    active.value = true;
+    await nextTick();
+    await flushPromises();
+    const currentSource = `${sessionsApiPath.value}/${sessionId.value}/source-editor`;
+    expect(mocks.requestCalls.slice(requestCount).map(([url]) => url)).toEqual([
+      `${currentSource}/tree?limit=20`, `${currentSource}/explanations/cleanup`
+    ]);
+    expect(editor.tree.value.children).toEqual([]);
+    expect(editor.selectedPath.value).toBe("");
+
+    active.value = false;
+    await nextTick();
+    active.value = true;
+    await nextTick();
+    await flushPromises();
+    expect(mocks.requestCalls).toHaveLength(requestCount + 2);
+  });
+
+  it("defers hidden selected-file reads to the existing file-sync readiness on return", async () => {
+    const active = ref(true);
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ active, currentText });
+    const realtime = realtimeForEvent("vibe64.source-editor.file.changed");
+    const fileSync = mocks.fileSyncOptions[0];
+    active.value = false;
+    await nextTick();
+    expect(fileSync.active.value).toBe(false);
+    const requestCount = mocks.requestCalls.length;
+    const payload = {
+      hash: "hash-2", originId: "other-tab", path: "src/app.js",
+      projectSlug: "beepollen", sessionId: "session-1"
+    };
+    if (realtime.enabled.value && realtime.matches({ payload })) realtime.onEvent({ payload });
+    await flushPromises();
+    expect(mocks.requestCalls).toHaveLength(requestCount);
+    expect(editor.savedHash.value).toBe("hash-1");
+
+    active.value = true;
+    await nextTick();
+    expect(fileSync.active.value).toBe(true);
+    expect(mocks.requestCalls).toHaveLength(requestCount);
+    mocks.requestResults.push(fileResponse({ hash: "hash-2", text: "console.log('remote');\n" }));
+    fileSync.onReady();
+    await flushPromises();
+    expect(mocks.requestCalls.slice(requestCount)).toEqual([[
+      "/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fapp.js", {}
+    ]]);
+    expect(editor.savedHash.value).toBe("hash-2");
+    expect(editor.text.value).toBe("console.log('remote');\n");
+    expect(editor.dirty.value).toBe(false);
+  });
+
   it("requests abandoned explanation cleanup after startup", async () => {
     const currentText = ref("");
     const {
@@ -532,6 +667,73 @@ describe("useVibe64SourceEditor", () => {
     expect(editor).not.toHaveProperty("updateExplanationAgentSetting");
     expect(editor.activeExplanation.value.agentSettings).toBeNull();
     expect(editor.activeExplanation.value.executionProfile).toEqual(expect.objectContaining(executionProfile));
+  });
+
+  it("retains a user-started explanation through hidden completion until explicit unmount", async () => {
+    const active = ref(true);
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ active, currentText });
+    let finishExplanation;
+    let unmounted = false;
+    mocks.streamEvents.push(new Promise((resolve) => { finishExplanation = resolve; }));
+    const generating = editor.explainSelection({ scope: "file" });
+    const explanation = editor.activeExplanation.value;
+    const signal = mocks.streamCalls.at(-1)[1].signal;
+    const requestCount = mocks.requestCalls.length;
+
+    try {
+      expect(editor.explanationBusy.value).toBe(true);
+      active.value = false;
+      await nextTick();
+      await flushPromises();
+
+      expect(signal.aborted).toBe(false);
+      expect(editor.activeExplanation.value).toBe(explanation);
+      expect(editor.explanationBusy.value).toBe(true);
+      expect(mocks.requestCalls).toHaveLength(requestCount);
+
+      finishExplanation([{
+        explanation: {
+          ...explanation,
+          body: "The answer completed while Preview was visible.",
+          messages: explanation.messages.map((message) => message.role === "assistant"
+            ? { ...message, status: "complete", text: "The answer completed while Preview was visible." }
+            : message),
+          status: "ready"
+        },
+        type: "source-explanation.finished"
+      }]);
+      await generating;
+      const completedExplanation = editor.activeExplanation.value;
+      expect(completedExplanation.id).toBe(explanation.id);
+      expect(completedExplanation.status).toBe("ready");
+      expect(completedExplanation.body).toBe("The answer completed while Preview was visible.");
+      expect(editor.explanationBusy.value).toBe(false);
+
+      active.value = true;
+      await nextTick();
+      await flushPromises();
+      expect(editor.activeExplanation.value).toBe(completedExplanation);
+      expect(editor.selectedPath.value).toBe("src/app.js");
+      expect(editor.explanationError.value).toBe("");
+      expect(signal.aborted).toBe(false);
+      expect(mocks.streamCalls).toHaveLength(1);
+      expect(mocks.requestCalls).toHaveLength(requestCount);
+
+      unmounted = true;
+      mocks.beforeUnmount[0]();
+      await flushPromises();
+      expect(mocks.requestCalls.slice(requestCount)).toEqual([[
+        `/api/app/vibe64/sessions/session-1/source-editor/explanations/${explanation.id}`,
+        { method: "DELETE" }
+      ]]);
+      expect(editor.activeExplanation.value).toBeNull();
+    } finally {
+      finishExplanation([]);
+      await generating;
+      if (!unmounted) mocks.beforeUnmount[0]();
+      await flushPromises();
+    }
   });
 
   it("sends follow-ups for a cached explanation without an agent thread", async () => {
@@ -1158,6 +1360,63 @@ describe("useVibe64SourceEditor", () => {
     expect(editor.text.value).toBe("console.log('filesystem');\n");
     expect(editor.savedHash.value).toBe("hash-2");
     expect(editor.dirty.value).toBe(false);
+  });
+
+  it.each([false, true])("clears a recovered file refresh error without replacing the unchanged file (dirty: %s)", async (dirty) => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    if (dirty) {
+      currentText.value = "console.log('local draft');\n";
+      editor.updateText();
+    }
+    const originalText = currentText.value;
+    const loadedVersion = editor.loadedVersion.value;
+    const requestCount = mocks.requestCalls.length;
+    const fileSync = mocks.fileSyncOptions[0];
+    mocks.requestResults.push({ ok: false, error: "Temporary refresh failure." });
+
+    fileSync.onReady();
+    await flushPromises();
+    expect(editor.loadError.value).toBe("Temporary refresh failure.");
+
+    mocks.requestResults.push(fileResponse());
+    fileSync.onReady();
+    await flushPromises();
+
+    expect(editor.loadError.value).toBe("");
+    expect(editor.selectedPath.value).toBe("src/app.js");
+    expect(editor.savedHash.value).toBe("hash-1");
+    expect(editor.text.value).toBe("console.log('one');\n");
+    expect(currentText.value).toBe(originalText);
+    expect(editor.loadedVersion.value).toBe(loadedVersion);
+    expect(editor.dirty.value).toBe(dirty);
+    expect(mocks.requestCalls.slice(requestCount)).toEqual([
+      ["/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fapp.js", {}],
+      ["/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fapp.js", {}]
+    ]);
+  });
+
+  it.each(["another file", "the root tree"])("keeps an error from %s when the selected file revalidates successfully", async (operation) => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    const message = `Could not load ${operation}.`;
+    mocks.requestResults.push({ ok: false, error: message });
+    if (operation === "another file") {
+      await expect(editor.openFile("src/other.js")).resolves.toBe(false);
+    } else {
+      mocks.requestResults.push(fileResponse());
+      await editor.refresh();
+    }
+    expect(editor.loadError.value).toBe(message);
+
+    mocks.requestResults.push(fileResponse());
+    mocks.fileSyncOptions[0].onReady();
+    await flushPromises();
+
+    expect(editor.loadError.value).toBe(message);
+    expect(editor.selectedPath.value).toBe("src/app.js");
+    expect(editor.savedHash.value).toBe("hash-1");
+    expect(currentText.value).toBe("console.log('one');\n");
   });
 
   it("refreshes both the file tree and a clean open file", async () => {
