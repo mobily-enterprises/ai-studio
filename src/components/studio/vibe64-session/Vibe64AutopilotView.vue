@@ -533,7 +533,7 @@
         </header>
         <Vibe64SessionSourceEditor
           v-if="rightPaneTabMounted('editor')"
-          :active="props.projectPane === 'dashboard' && rightPaneTab === 'editor'"
+          :active="props.active && props.projectPane === 'dashboard' && rightPaneTab === 'editor'"
           :assistant-available="assistantDirectAllowed"
           :assistant-unavailable-message="assistantRestrictionMessage"
           :ask-codex-available="sourceEditorAskCodexAvailable"

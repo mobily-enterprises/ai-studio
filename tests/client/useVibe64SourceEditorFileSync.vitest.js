@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { nextTick, ref } from "vue";
+import { effectScope, nextTick, reactive, ref } from "vue";
+
+const mocks = vi.hoisted(() => ({ beforeUnmount: [] }));
 
 vi.mock("vue", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    onBeforeUnmount() {}
+    onBeforeUnmount(callback) {
+      mocks.beforeUnmount.push(callback);
+    }
   };
 });
 
@@ -40,9 +45,11 @@ describe("useVibe64SourceEditorFileSync", () => {
     originalEventSource = globalThis.EventSource;
     globalThis.EventSource = FakeEventSource;
     FakeEventSource.instances.length = 0;
+    mocks.beforeUnmount.length = 0;
   });
 
   afterEach(() => {
+    mocks.beforeUnmount.forEach((callback) => callback());
     globalThis.EventSource = originalEventSource;
     vi.resetModules();
   });
@@ -107,5 +114,87 @@ describe("useVibe64SourceEditorFileSync", () => {
     active.value = false;
     await nextTick();
     expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it("closes and reopens observation when the actual Autopilot binding hides a retained editor", async () => {
+    const autopilot = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
+      import.meta.url
+    ), "utf8");
+    const editorTag = autopilot.match(/<Vibe64SessionSourceEditor\b[\s\S]*?\/>/u)?.[0];
+    const activeBinding = editorTag?.match(/:active="([^"]+)"/u)?.[1];
+    expect(activeBinding).toBeDefined();
+    const editorActive = new Function("props", "rightPaneTab", `return (${activeBinding});`);
+    const props = reactive({ active: true, projectPane: "dashboard" });
+    const rightPaneTab = ref("editor");
+    const path = ref("src/app.js");
+    const onChange = vi.fn();
+    const onError = vi.fn();
+    const onReady = vi.fn();
+    const observationScope = effectScope();
+    const { useVibe64SourceEditorFileSync } = await import(
+      "../../src/composables/useVibe64SourceEditorFileSync.js"
+    );
+
+    try {
+      observationScope.run(() => useVibe64SourceEditorFileSync({
+        active: () => editorActive(props, rightPaneTab.value),
+        onChange,
+        onError,
+        onReady,
+        path,
+        sessionId: ref("session-1"),
+        sessionsApiPath: ref("/api/app/vibe64/sessions")
+      }));
+      expect(FakeEventSource.instances).toHaveLength(1);
+      const first = FakeEventSource.instances[0];
+      const closeFirst = vi.spyOn(first, "close");
+      expect(first.closed).toBe(false);
+      first.emit("vibe64.source-editor.sync.ready", { path: path.value });
+      first.emit("vibe64.source-editor.file.changed", { path: path.value });
+      expect(onReady).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledTimes(1);
+
+      props.active = false;
+      await nextTick();
+      expect(closeFirst).toHaveBeenCalledTimes(1);
+      expect(first.closed).toBe(true);
+      expect(FakeEventSource.instances).toHaveLength(1);
+      first.emit("vibe64.source-editor.sync.ready", { path: path.value });
+      first.emit("vibe64.source-editor.file.changed", { path: path.value });
+      first.onerror?.();
+      expect(onReady).toHaveBeenCalledTimes(1);
+      expect(onChange).toHaveBeenCalledTimes(1);
+      expect(onError).not.toHaveBeenCalled();
+
+      props.active = true;
+      await nextTick();
+      expect(FakeEventSource.instances).toHaveLength(2);
+      const reopened = FakeEventSource.instances[1];
+      const closeReopened = vi.spyOn(reopened, "close");
+      expect(reopened.url).toBe(first.url);
+      expect(reopened.closed).toBe(false);
+      first.emit("vibe64.source-editor.sync.error", { error: "Obsolete connection.", fatal: true });
+      expect(reopened.closed).toBe(false);
+      expect(onError).not.toHaveBeenCalled();
+      reopened.emit("vibe64.source-editor.sync.ready", { path: path.value });
+      reopened.emit("vibe64.source-editor.file.changed", { path: path.value });
+      expect(onReady).toHaveBeenCalledTimes(2);
+      expect(onChange).toHaveBeenCalledTimes(2);
+
+      expect(mocks.beforeUnmount).toHaveLength(1);
+      mocks.beforeUnmount[0]();
+      observationScope.stop();
+      expect(closeReopened).toHaveBeenCalledTimes(1);
+      expect(reopened.closed).toBe(true);
+      expect(closeFirst).toHaveBeenCalledTimes(1);
+      props.active = false;
+      await nextTick();
+      props.active = true;
+      await nextTick();
+      expect(FakeEventSource.instances).toHaveLength(2);
+    } finally {
+      observationScope.stop();
+    }
   });
 });

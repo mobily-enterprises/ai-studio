@@ -9,6 +9,8 @@ from saved project work, and inspect one exact file change at a time.
 - `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `src/composables/useVibe64SourceEditor.js`
+- `src/composables/useVibe64SourceEditorFileSync.js`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue`
 - `src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue`
 - `src/composables/useVibe64RepositoryWorkspace.js`
@@ -26,6 +28,10 @@ source editor publishes successful creates and saves with project, session,
 path, hash, and originating-tab identity. A foreign create refreshes the file
 tree, while a foreign save refreshes a clean matching file or warns without
 overwriting a dirty draft.
+Selected-file observation follows the active session and editor pane.
+Retaining an inactive session does not retain its file connection; returning to the
+editor reconnects and revalidates the selected file through the existing sync
+owner. Events from a replaced connection do not update the current editor.
 
 A source explanation is temporary assistance for a selected code range or file.
 A matching cached answer can appear without starting a provider conversation;
