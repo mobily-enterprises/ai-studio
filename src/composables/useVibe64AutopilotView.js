@@ -345,9 +345,7 @@ function useVibe64AutopilotView(props, emit, {
   const agentSettings = useVibe64AgentSettings();
   const preferredName = inject(VIBE64_WELCOME_NAME_KEY, () => {
     const accounts = useVibe64Accounts();
-    return computed(() => normalizedAgentTurnText(
-      accounts.status.value?.personalProfile?.preferredName
-    ));
+    return computed(() => accounts.status.value?.personalProfile?.preferredName);
   }, true);
   const currentAgentSettings = computed(() => agentSettings.settings.value);
   const requestAgentSettings = computed(() => {
