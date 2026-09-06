@@ -2,6 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { compile } from "@vue/compiler-dom";
 import { compileScript, parse } from "@vue/compiler-sfc";
+import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
+import {
+  configureHttpWebClient,
+  resetHttpWebClientForTests
+} from "@jskit-ai/http-web/client/lib/httpClient";
 import * as VueRuntime from "vue";
 import {
   createRenderer,
@@ -12,7 +17,15 @@ import {
   ref,
   ssrContextKey
 } from "vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ENGINEERING_ENDPOINT,
+  PROJECT_SETTINGS_ENDPOINT,
+  VIBE64_PROJECT_CHANGED_EVENT,
+  engineeringSettingsQueryKey,
+  projectSettingsQueryKey
+} from "../../src/lib/studioGateApi.js";
+import { useVibe64SessionPanel } from "../../src/composables/useVibe64SessionPanel.js";
 
 const projectSettingsMocks = vi.hoisted(() => ({
   commandOptions: [],
@@ -20,6 +33,7 @@ const projectSettingsMocks = vi.hoisted(() => ({
   dialog: vi.fn(),
   endpointOptions: [],
   engineeringResource: null,
+  liveQueries: false,
   projectSlug: null,
   realtimeOptions: [],
   resource: null,
@@ -28,15 +42,20 @@ const projectSettingsMocks = vi.hoisted(() => ({
   sessionEventMatches: vi.fn(() => true)
 }));
 
-vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
-  useEndpointResource(options) {
-    const index = projectSettingsMocks.endpointOptions.length;
-    projectSettingsMocks.endpointOptions.push(options);
-    return index === 0
-      ? projectSettingsMocks.resource
-      : projectSettingsMocks.engineeringResource;
-  }
-}));
+vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useEndpointResource(options) {
+      if (projectSettingsMocks.liveQueries) return actual.useEndpointResource(options);
+      const index = projectSettingsMocks.endpointOptions.length;
+      projectSettingsMocks.endpointOptions.push(options);
+      return index === 0
+        ? projectSettingsMocks.resource
+        : projectSettingsMocks.engineeringResource;
+    }
+  };
+});
 
 vi.mock("vue-router", () => ({
   useRoute() {
@@ -49,17 +68,23 @@ vi.mock("vue-router", () => ({
 
 vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
   useCommand(options) {
+    if (projectSettingsMocks.liveQueries) return createCommand();
     const index = projectSettingsMocks.commandOptions.length;
     projectSettingsMocks.commandOptions.push(options);
     return projectSettingsMocks.commands[index];
   }
 }));
 
-vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
-  useRealtimeEvent(options) {
-    projectSettingsMocks.realtimeOptions.push(options);
-  }
-}));
+vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useRealtimeEvent(options) {
+      if (projectSettingsMocks.liveQueries) return actual.useRealtimeEvent(options);
+      projectSettingsMocks.realtimeOptions.push(options);
+    }
+  };
+});
 
 vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
   useVibe64ProjectSlug() {
@@ -68,7 +93,20 @@ vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
 }));
 
 vi.mock("@/composables/useVibe64SessionData.js", () => ({
-  sessionListRealtimeShouldRefresh: projectSettingsMocks.sessionEventMatches
+  sessionListRealtimeShouldRefresh: projectSettingsMocks.sessionEventMatches,
+  useVibe64SessionData: () => ({
+    createSessionRunning: ref(false),
+    isSelectedSessionArchived: ref(false),
+    selectedSession: ref(null),
+    selectedSessionId: ref(""),
+    sessionList: { isInitialLoading: false, loadError: "" },
+    sessions: ref([]),
+    sessionsApiPath: ref("/api/vibe64/sessions")
+  })
+}));
+
+vi.mock("@/composables/useVibe64SessionRepositoryStatusRegistry.js", () => ({
+  useVibe64SessionRepositoryStatusRegistry: () => ({ observe: vi.fn() })
 }));
 
 vi.mock("@/lib/vibe64AccountConnectionsDialog.js", () => ({
@@ -335,18 +373,99 @@ function testRenderer() {
   });
 }
 
-function mountPanel() {
+function mountPanel({ liveQueries = false } = {}) {
   const container = { children: [], parent: null, props: {}, type: "root" };
-  const app = testRenderer().createApp(ProjectSettingsPanel);
+  const requests = [];
+  const listeners = new Map();
+  const showSettings = ref(true);
+  const queryClient = liveQueries
+    ? new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    : null;
+  let sessionPanel;
+  projectSettingsMocks.liveQueries = liveQueries;
+  if (liveQueries) {
+    configureHttpWebClient({
+      request(url, options) {
+        expect(options.method).toBe("GET");
+        expect([PROJECT_SETTINGS_ENDPOINT, ENGINEERING_ENDPOINT]).toContain(url);
+        const projectSlug = projectSettingsMocks.projectSlug.value;
+        const sessionId = options.query?.sessionId || "";
+        const source = { rootKind: sessionId ? "session-source" : "standalone-source", sessionId };
+        const data = url === PROJECT_SETTINGS_ENDPOINT
+          ? createResource({ collaboration: { source } }).data.value
+          : createEngineeringResource({ sessionId }).data.value;
+        if (data.engineering) data.engineering.source = source;
+        const key = (url === PROJECT_SETTINGS_ENDPOINT ? projectSettingsQueryKey : engineeringSettingsQueryKey)(
+          "app", "public", projectSlug, sessionId
+        );
+        const response = Promise.withResolvers();
+        requests.push({ data, key, projectSlug, sessionId, url, ...response });
+        return response.promise;
+      }
+    });
+  }
+  const sessionParent = liveQueries
+    ? defineComponent({
+        setup() {
+          sessionPanel = useVibe64SessionPanel({ projectContext: {}, projectPane: "dashboard" }, vi.fn());
+          return () => showSettings.value ? h(ProjectSettingsPanel) : null;
+        }
+      })
+    : ProjectSettingsPanel;
+  const root = liveQueries
+    ? defineComponent({
+        setup: () => () => h(sessionParent, { key: projectSettingsMocks.projectSlug.value })
+      })
+    : ProjectSettingsPanel;
+  const app = testRenderer().createApp(root);
   app.component("VBtn", passthroughComponent("button"));
   app.component("VRadio", passthroughComponent("input"));
   app.component("VRadioGroup", passthroughComponent("fieldset"));
   app.component("VSelect", passthroughComponent("select"));
   app.component("VSwitch", passthroughComponent("input"));
   app.component("VTextarea", passthroughComponent("textarea"));
+  if (queryClient) {
+    app.use(VueQueryPlugin, { queryClient });
+    app.provide("jskit.realtime.runtime.client.socket", {
+      on(event, handler) {
+        if (!listeners.has(event)) listeners.set(event, new Set());
+        listeners.get(event).add(handler);
+      },
+      off(event, handler) {
+        listeners.get(event)?.delete(handler);
+      }
+    });
+  }
   app.provide(ssrContextKey, { modules: new Set() });
   app.mount(container);
-  return { app, container };
+  return {
+    app,
+    container,
+    queryClient,
+    requests,
+    get sessionPanel() { return sessionPanel; },
+    showSettings,
+    async projectChanged() {
+      for (const handler of listeners.get(VIBE64_PROJECT_CHANGED_EVENT) || []) {
+        handler({ projectSlug: projectSettingsMocks.projectSlug.value });
+      }
+      await nextTick();
+    },
+    listenerCount: () => [...listeners.values()].reduce((count, handlers) => count + handlers.size, 0),
+    async resolveReads(from = 0) {
+      const pending = requests.slice(from).map(({ key }) => (
+        queryClient.getQueryCache().find({ queryKey: key, exact: true })?.promise
+      ));
+      for (const request of requests.slice(from)) request.resolve(request.data);
+      await Promise.all(pending);
+      await nextTick();
+    },
+    close() {
+      app.unmount();
+      queryClient?.clear();
+      for (const request of requests) request.resolve({});
+    }
+  };
 }
 
 function findNode(root, predicate) {
@@ -396,12 +515,200 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     projectSettingsMocks.dialog.mockReset();
     projectSettingsMocks.endpointOptions.length = 0;
     projectSettingsMocks.engineeringResource = createEngineeringResource();
+    projectSettingsMocks.liveQueries = false;
     projectSettingsMocks.projectSlug = ref("project-a");
     projectSettingsMocks.realtimeOptions.length = 0;
     projectSettingsMocks.resource = createResource();
     projectSettingsMocks.route = reactive({ query: { sessionId: "session-a" } });
     projectSettingsMocks.router.replace.mockReset();
     projectSettingsMocks.sessionEventMatches.mockClear();
+  });
+
+  afterEach(() => {
+    resetHttpWebClientForTests();
+  });
+
+  it.each(["", "session-a"])("refreshes each active settings source once through the real parent query owner (source %j)", async (sessionId) => {
+    projectSettingsMocks.route.query = sessionId ? { sessionId } : {};
+    const fixture = mountPanel({ liveQueries: true });
+    try {
+      const sources = sessionId ? ["", sessionId] : [""];
+      expect(fixture.requests.filter(({ url }) => url === PROJECT_SETTINGS_ENDPOINT).map((request) => request.sessionId))
+        .toEqual(sources);
+      await fixture.resolveReads();
+      expect(fixture.sessionPanel.promptHintPolicy.value).toEqual({ enabled: false, ready: true });
+      const foreignKey = projectSettingsQueryKey("app", "public", "other-project", sessionId);
+      fixture.queryClient.setQueryData(foreignKey, { promptHints: { enabled: false } });
+      const from = fixture.requests.length;
+
+      await fixture.projectChanged();
+
+      const refreshes = fixture.requests.slice(from);
+      expect(refreshes.filter(({ url }) => url === PROJECT_SETTINGS_ENDPOINT).map((request) => request.sessionId))
+        .toEqual(sources);
+      expect(refreshes.filter(({ url }) => url === ENGINEERING_ENDPOINT)).toHaveLength(1);
+      expect(fixture.queryClient.getQueryState(foreignKey).isInvalidated).toBe(false);
+      for (const request of refreshes) {
+        if (request.data.promptHints) request.data.promptHints.enabled = true;
+      }
+      await fixture.resolveReads(from);
+      expect(fixture.sessionPanel.promptHintPolicy.value).toEqual({ enabled: true, ready: true });
+      expect(findField(fixture.container, "Suggest useful next prompts").props.modelValue).toBe(true);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("replaces a held pre-mutation settings refresh once without publishing its stale draft", async () => {
+    projectSettingsMocks.route.query = {};
+    const fixture = mountPanel({ liveQueries: true });
+    try {
+      await fixture.resolveReads();
+      const key = projectSettingsQueryKey("app", "public", "project-a");
+      const earlierRefresh = fixture.queryClient.refetchQueries({ queryKey: key, exact: true });
+      await nextTick();
+      const earlierRequest = fixture.requests.at(-1);
+      expect(earlierRequest.url).toBe(PROJECT_SETTINGS_ENDPOINT);
+      earlierRequest.data.collaboration.requirements = "Read before the mutation.";
+      const from = fixture.requests.length;
+
+      await fixture.projectChanged();
+
+      const settingsRefreshes = fixture.requests.slice(from).filter(({ url }) => url === PROJECT_SETTINGS_ENDPOINT);
+      expect(settingsRefreshes).toHaveLength(1);
+      settingsRefreshes[0].data.collaboration.requirements = "Freshly saved requirements.";
+      await fixture.resolveReads(from);
+      earlierRequest.resolve(earlierRequest.data);
+      await earlierRefresh;
+      await nextTick();
+      expect(findField(fixture.container, "Project requirements (optional)").props.modelValue)
+        .toBe("Freshly saved requirements.");
+      expect(fixture.queryClient.getQueryData(key).collaboration.requirements).toBe("Freshly saved requirements.");
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("follows active settings sources and keyed project remounts without refreshing inactive scopes", async () => {
+    const fixture = mountPanel({ liveQueries: true });
+    try {
+      await fixture.resolveReads();
+      const earlierKey = projectSettingsQueryKey("app", "public", "project-a", "session-a");
+      const earlierRefresh = fixture.queryClient.refetchQueries({ queryKey: earlierKey, exact: true });
+      await nextTick();
+      const earlierRequest = fixture.requests.at(-1);
+      earlierRequest.data.collaboration.requirements = "Late source A requirements.";
+      const beforeSourceSwitch = fixture.requests.length;
+      projectSettingsMocks.route.query.sessionId = "session-b";
+      await nextTick();
+      expect(fixture.requests.slice(beforeSourceSwitch).map(({ url, sessionId }) => [url, sessionId])).toEqual([
+        [PROJECT_SETTINGS_ENDPOINT, "session-b"],
+        [ENGINEERING_ENDPOINT, "session-b"]
+      ]);
+      await fixture.resolveReads(beforeSourceSwitch);
+
+      const beforeSourceRefresh = fixture.requests.length;
+      await fixture.projectChanged();
+      const sourceRefreshes = fixture.requests.slice(beforeSourceRefresh);
+      expect(sourceRefreshes.filter(({ url }) => url === PROJECT_SETTINGS_ENDPOINT).map(({ sessionId }) => sessionId))
+        .toEqual(["", "session-b"]);
+      expect(fixture.queryClient.getQueryState(earlierKey).isInvalidated).toBe(true);
+      for (const request of sourceRefreshes) {
+        if (request.data.collaboration) request.data.collaboration.requirements = "Current source B requirements.";
+      }
+      await fixture.resolveReads(beforeSourceRefresh);
+      earlierRequest.resolve(earlierRequest.data);
+      await earlierRefresh;
+      await nextTick();
+      expect(findField(fixture.container, "Project requirements (optional)").props.modelValue)
+        .toBe("Current source B requirements.");
+
+      const beforeProjectSwitch = fixture.requests.length;
+      projectSettingsMocks.projectSlug.value = "project-b";
+      await nextTick();
+      expect(fixture.requests.slice(beforeProjectSwitch).map(({ projectSlug, url, sessionId }) => [projectSlug, url, sessionId]))
+        .toEqual([
+          ["project-b", PROJECT_SETTINGS_ENDPOINT, ""],
+          ["project-b", PROJECT_SETTINGS_ENDPOINT, "session-b"],
+          ["project-b", ENGINEERING_ENDPOINT, "session-b"]
+        ]);
+      await fixture.resolveReads(beforeProjectSwitch);
+      const beforeProjectRefresh = fixture.requests.length;
+      await fixture.projectChanged();
+      expect(fixture.requests.slice(beforeProjectRefresh).map(({ projectSlug, url, sessionId }) => [projectSlug, url, sessionId]))
+        .toEqual([
+          ["project-b", PROJECT_SETTINGS_ENDPOINT, ""],
+          ["project-b", PROJECT_SETTINGS_ENDPOINT, "session-b"],
+          ["project-b", ENGINEERING_ENDPOINT, "session-b"]
+        ]);
+      await fixture.resolveReads(beforeProjectRefresh);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("exposes a shared settings refresh failure and retries once on the next event", async () => {
+    projectSettingsMocks.route.query = {};
+    const fixture = mountPanel({ liveQueries: true });
+    try {
+      await fixture.resolveReads();
+      const key = projectSettingsQueryKey("app", "public", "project-a");
+      const from = fixture.requests.length;
+      await fixture.projectChanged();
+      const refreshes = fixture.requests.slice(from);
+      expect(refreshes.filter(({ url }) => url === PROJECT_SETTINGS_ENDPOINT)).toHaveLength(1);
+      const query = fixture.queryClient.getQueryCache().find({ queryKey: key, exact: true });
+      const failedRead = query.promise;
+      for (const request of refreshes) {
+        if (request.url === PROJECT_SETTINGS_ENDPOINT) request.reject(new Error("Settings refresh failed."));
+        else request.resolve(request.data);
+      }
+      await failedRead.catch(() => {});
+      await nextTick();
+      expect(fixture.sessionPanel.promptHintPolicy.value.ready).toBe(false);
+      expect(findField(fixture.container, "Project settings").props.message).toBe("Settings refresh failed.");
+
+      const beforeRetry = fixture.requests.length;
+      await fixture.projectChanged();
+      expect(fixture.requests.slice(beforeRetry).filter(({ url }) => url === PROJECT_SETTINGS_ENDPOINT)).toHaveLength(1);
+      await fixture.resolveReads(beforeRetry);
+      expect(fixture.sessionPanel.promptHintPolicy.value.ready).toBe(true);
+      expect(findField(fixture.container, "Project settings")).toBeNull();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps settings-family invalidation with the mounted parent after the child leaves and releases it on teardown", async () => {
+    const fixture = mountPanel({ liveQueries: true });
+    try {
+      await fixture.resolveReads();
+      const explicitKey = projectSettingsQueryKey("app", "public", "project-a", "session-a");
+      fixture.showSettings.value = false;
+      await nextTick();
+      const from = fixture.requests.length;
+
+      await fixture.projectChanged();
+
+      expect(fixture.requests.slice(from).map(({ url, sessionId }) => [url, sessionId]))
+        .toEqual([[PROJECT_SETTINGS_ENDPOINT, ""]]);
+      expect(fixture.queryClient.getQueryState(explicitKey).isInvalidated).toBe(true);
+      await fixture.resolveReads(from);
+      const beforeReturn = fixture.requests.length;
+      fixture.showSettings.value = true;
+      await nextTick();
+      expect(fixture.requests.slice(beforeReturn).map(({ url, sessionId }) => [url, sessionId])).toEqual([
+        [PROJECT_SETTINGS_ENDPOINT, "session-a"],
+        [ENGINEERING_ENDPOINT, "session-a"]
+      ]);
+      await fixture.resolveReads(beforeReturn);
+    } finally {
+      fixture.close();
+    }
+    const completedRequests = fixture.requests.length;
+    expect(fixture.listenerCount()).toBe(0);
+    await fixture.projectChanged();
+    expect(fixture.requests).toHaveLength(completedRequests);
   });
 
   it("hydrates every writable field synchronously from warm cached project data", () => {
@@ -1117,10 +1424,10 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     mounted.app.unmount();
   });
 
-  it("refreshes manually and through both declared realtime paths", async () => {
+  it("refreshes manually and on session changes while engineering retains its realtime subscription", async () => {
     const { app, container } = mountPanel();
 
-    expect(projectSettingsMocks.endpointOptions[0].realtime).toEqual({
+    expect(projectSettingsMocks.endpointOptions[1].realtime).toEqual({
       event: "vibe64.project.changed"
     });
     const sessionRealtime = projectSettingsMocks.realtimeOptions[0];

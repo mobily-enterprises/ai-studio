@@ -13,6 +13,7 @@ conveniences outside agent prompts.
 - `packages/vibe64-project/src/server/service.js`
 - `packages/vibe64-core/src/server/projectPromptHints.js`
 - `src/components/studio/ProjectSettingsPanel.vue`
+- `src/composables/useVibe64SessionPanel.js`
 - `src/lib/studioGateApi.js`
 
 ## Public contract
@@ -44,6 +45,10 @@ context.
 
 ## Implementation map
 
+- The persistent session panel owns project-settings refresh events for its
+  project. Active selected-source and explicit-session readers refresh through
+  that one owner; inactive source entries become stale without starting reads.
+  Engineering settings keep their separate query and refresh subscription.
 - `collaborationSettingsState()` reads the selected source through Genesis and
   returns Genesis's current choice catalog.
 - `saveCollaborationSettingsState()` serializes source mutation with other

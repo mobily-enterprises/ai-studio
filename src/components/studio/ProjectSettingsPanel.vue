@@ -338,9 +338,6 @@ const resource = useEndpointResource({
   readQuery: computed(() => (
     routeSessionId.value ? { sessionId: routeSessionId.value } : {}
   )),
-  realtime: {
-    event: VIBE64_PROJECT_CHANGED_EVENT
-  },
   refreshOnPull: true,
   requestRecoveryLabel: "Project settings"
 });

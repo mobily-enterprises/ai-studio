@@ -13,6 +13,7 @@ import {
 import {
   PROJECT_SELECTION_ENDPOINT,
   VIBE64_CONNECTIONS_CHANGED_EVENT,
+  VIBE64_PROJECT_CHANGED_EVENT,
   projectSelectionQueryKey
 } from "../../src/lib/studioGateApi.js";
 import {
@@ -121,6 +122,16 @@ function findNode(node, predicate) {
 function mountProjectQueries(slug, { catalog = null } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const requests = [];
+  const listeners = new Map();
+  const socket = {
+    on(event, handler) {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(handler);
+    },
+    off(event, handler) {
+      listeners.get(event)?.delete(handler);
+    }
+  };
   configureHttpWebClient({
     request(url, options) {
       expect(options.method).toBe("GET");
@@ -163,6 +174,7 @@ function mountProjectQueries(slug, { catalog = null } = {}) {
     ["VSkeletonLoader", "div"], ["VTextField", "input"]
   ]) app.component(name, passthroughComponent(element));
   app.use(VueQueryPlugin, { queryClient });
+  app.provide("jskit.realtime.runtime.client.socket", socket);
   app.provide(Vue.ssrContextKey, { modules: new Set() });
   const container = { children: [], props: {}, type: "root" };
   app.mount(container);
@@ -172,6 +184,13 @@ function mountProjectQueries(slug, { catalog = null } = {}) {
     route,
     renderedProject: () => findNode(container, (node) => node.type === "article")?.props["data-project-slug"],
     navigationVisible: () => Boolean(findNode(container, (node) => node.props.role === "tablist")),
+    async projectChanged() {
+      for (const handler of listeners.get(VIBE64_PROJECT_CHANGED_EVENT) || []) {
+        handler({ projectSlug: route.params.slug });
+      }
+      await Vue.nextTick();
+    },
+    listenerCount: () => [...listeners.values()].reduce((count, handlers) => count + handlers.size, 0),
     async resolveProject(projectSlug) {
       const queries = queryClient.getQueryCache().findAll({
         queryKey: projectSelectionQueryKey("app", "public", projectSlug)
@@ -400,6 +419,101 @@ describe("Vibe64 project client scope", () => {
     } finally {
       fixture.close();
     }
+  });
+
+  it("refreshes the shared warm projects query once per realtime event without invalidating other scopes", async () => {
+    const slug = "realtime-query-project";
+    const fixture = mountProjectQueries(slug, { catalog: projectSelection("catalog-project") });
+    try {
+      await fixture.resolveProject(slug);
+      const foreignKey = projectSelectionGateQueryKey({
+        ownershipFilter: "public", projectSlug: "other-project", scopeSelectionToCurrentProject: true, surfaceId: "app"
+      });
+      fixture.queryClient.setQueryData(foreignKey, projectSelection("other-project"));
+
+      await fixture.projectChanged();
+
+      expect(fixture.requests.map(({ url }) => url)).toEqual([
+        `/api/app/${slug}/vibe64/projects`,
+        `/api/app/${slug}/vibe64/projects`
+      ]);
+      expect(fixture.queryClient.getQueryState(foreignKey).isInvalidated).toBe(false);
+      expect(fixture.queryClient.getQueryState(projectSelectionQueryKey("app", "public", slug)).isInvalidated)
+        .toBe(false);
+      await fixture.resolveProject(slug);
+      expect(fixture.renderedProject()).toBe(slug);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("replaces a held pre-mutation projects refresh once and ignores its late stale result", async () => {
+    const slug = "realtime-held-project";
+    const fixture = mountProjectQueries(slug);
+    try {
+      await fixture.resolveProject(slug);
+      const query = fixture.queryClient.getQueryCache().find({
+        queryKey: projectSelectionGateQueryKey({
+          ownershipFilter: "public", projectSlug: slug, scopeSelectionToCurrentProject: true, surfaceId: "app"
+        })
+      });
+      const earlierRefresh = fixture.queryClient.refetchQueries({ queryKey: query.queryKey });
+      await Vue.nextTick();
+      const earlierRequest = fixture.requests.at(-1);
+      expect(fixture.requests).toHaveLength(2);
+
+      await fixture.projectChanged();
+      expect(fixture.requests).toHaveLength(3);
+      const updated = projectSelection(slug);
+      updated.currentProject.path = `/projects/${slug}/after-mutation`;
+      fixture.requests.at(-1).resolve(updated);
+      await query.promise;
+      await Vue.nextTick();
+      earlierRequest.resolve(projectSelection(slug));
+      await earlierRefresh;
+      await Vue.nextTick();
+
+      expect(query.state.data.currentProject.path).toBe(updated.currentProject.path);
+      expect(fixture.renderedProject()).toBe(slug);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("keeps one realtime refresh owner through project changes, refresh failure, retry and teardown", async () => {
+    const fixture = mountProjectQueries("realtime-lifetime-a");
+    try {
+      await fixture.resolveProject("realtime-lifetime-a");
+      fixture.route.params.slug = "realtime-lifetime-b";
+      fixture.route.path = projectAppPath("realtime-lifetime-b");
+      await Vue.nextTick();
+      await fixture.resolveProject("realtime-lifetime-b");
+      const query = fixture.queryClient.getQueryCache().find({
+        queryKey: projectSelectionGateQueryKey({
+          ownershipFilter: "public", projectSlug: "realtime-lifetime-b", scopeSelectionToCurrentProject: true, surfaceId: "app"
+        })
+      });
+      const beforeRefresh = fixture.requests.length;
+      await fixture.projectChanged();
+      expect(fixture.requests.length - beforeRefresh).toBe(1);
+      fixture.requests.at(-1).reject(new Error("Projects refresh failed."));
+      await query.promise.catch(() => {});
+      await Vue.nextTick();
+      expect(query.state.error.message).toBe("Projects refresh failed.");
+
+      await fixture.projectChanged();
+      expect(fixture.requests.length - beforeRefresh).toBe(2);
+      await fixture.resolveProject("realtime-lifetime-b");
+      expect(query.state.error).toBeNull();
+      expect(fixture.renderedProject()).toBe("realtime-lifetime-b");
+      expect(fixture.requests.filter(({ url }) => url.includes("/realtime-lifetime-a/"))).toHaveLength(1);
+    } finally {
+      fixture.close();
+    }
+    const completedRequests = fixture.requests.length;
+    expect(fixture.listenerCount()).toBe(0);
+    await fixture.projectChanged();
+    expect(fixture.requests).toHaveLength(completedRequests);
   });
 
   it("keeps the global catalog cache separate from both scoped project readers", async () => {

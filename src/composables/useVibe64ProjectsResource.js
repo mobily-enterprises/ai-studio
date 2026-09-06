@@ -5,8 +5,7 @@ import {
   VIBE64_SURFACE_ID
 } from "@/lib/vibe64RequestConfig.js";
 import {
-  PROJECT_SELECTION_ENDPOINT,
-  VIBE64_PROJECT_CHANGED_EVENT
+  PROJECT_SELECTION_ENDPOINT
 } from "@/lib/studioGateApi.js";
 import {
   projectSelectionGateQueryKey
@@ -42,10 +41,7 @@ function useVibe64ProjectsResource({
       surfaceId: VIBE64_SURFACE_ID
     })),
     refreshOnPull: true,
-    requestRecoveryLabel: requestRecoveryLabel,
-    realtime: {
-      event: VIBE64_PROJECT_CHANGED_EVENT
-    }
+    requestRecoveryLabel: requestRecoveryLabel
   });
   const loadError = computed(() => vibe64ResourceResponseError(resource.data.value, fallbackLoadError) || resource.loadError.value);
   const currentProject = computed(() => resource.data.value?.currentProject || null);

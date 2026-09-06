@@ -390,7 +390,7 @@
       "implementationMap": "",
       "name": "catalog",
       "path": "genesis/program/projects/catalog.md",
-      "publicContract": "The catalog lists stable project identities, creates projects, and selects one\nproject as the current context. The default creation path produces one real Git\ncommit containing a technology-neutral, current-format Genesis foundation; a\ntrusted technology template is materialized only when a caller selects it\nexplicitly. Selection changes the active project without rewriting its\napplication source. A hosted project namespace may contain repository mirrors\nand session state without itself being a Git worktree; only an explicit checkout\nis treated as inspectable source.\nThe Preview pane uses Genesis's read-only inspection of the current session:\nempty/bootstrap source offers explicit starter choices or conversation; existing\nsource without a completed Genesis description asks what the project does;\ncurrent described projects show their outputs; outdated or incomplete Genesis\nconfiguration shows the specific repair needed. Missing Genesis files never\nauthorize overwriting an existing application.\nStarter catalogues are owned by Genesis and map a namespace-qualified choice to\none technology repository and branch. Applying a choice uses the ordinary\nsession and project source-write locks, preserves Git history and existing\nbootstrap preferences, and leaves the added source for the normal Save flow.\nThe browser sends only the selected catalogue ID. Neither session startup nor\ninspection runs application verification or workspace preparation.\nThe hosted project namespace is the catalog authority. When that namespace has\nbeen removed outside Vibe64, the next catalog read removes its stale private\nproject state so the deleted project cannot remain or block recreation.\nDurable project mutations publish one shared project refresh event. Consumers\nuse it only to invalidate their project list, selection, settings, repository,\nor access reads; the HTTP resources remain authoritative.\nThe routed shell and selection gate share the query for that route's scoped\nproject response. Its cache identity remains separate from the global catalog,\nwhose selected project may differ from the current browser route.\nRuntime lifecycle publication uses that same project-event owner. Deletion\npublishes only a catalog refresh hint, so clients can remove a deleted project\nwithout exposing its former identity to a broader audience.",
+      "publicContract": "The catalog lists stable project identities, creates projects, and selects one\nproject as the current context. The default creation path produces one real Git\ncommit containing a technology-neutral, current-format Genesis foundation; a\ntrusted technology template is materialized only when a caller selects it\nexplicitly. Selection changes the active project without rewriting its\napplication source. A hosted project namespace may contain repository mirrors\nand session state without itself being a Git worktree; only an explicit checkout\nis treated as inspectable source.\nThe Preview pane uses Genesis's read-only inspection of the current session:\nempty/bootstrap source offers explicit starter choices or conversation; existing\nsource without a completed Genesis description asks what the project does;\ncurrent described projects show their outputs; outdated or incomplete Genesis\nconfiguration shows the specific repair needed. Missing Genesis files never\nauthorize overwriting an existing application.\nStarter catalogues are owned by Genesis and map a namespace-qualified choice to\none technology repository and branch. Applying a choice uses the ordinary\nsession and project source-write locks, preserves Git history and existing\nbootstrap preferences, and leaves the added source for the normal Save flow.\nThe browser sends only the selected catalogue ID. Neither session startup nor\ninspection runs application verification or workspace preparation.\nThe hosted project namespace is the catalog authority. When that namespace has\nbeen removed outside Vibe64, the next catalog read removes its stale private\nproject state so the deleted project cannot remain or block recreation.\nDurable project mutations publish one shared project refresh event. Consumers\nuse it only to invalidate their project list, selection, settings, repository,\nor access reads; the HTTP resources remain authoritative.\nThe routed shell and selection gate share the query for that route's scoped\nproject response. The gate owns its refresh-event subscription and invalidates\nthat shared query once, even while both readers are mounted. Its cache identity\nremains separate from the global catalog, whose selected project may differ\nfrom the current browser route.\nRuntime lifecycle publication uses that same project-event owner. Deletion\npublishes only a catalog refresh hint, so clients can remove a deleted project\nwithout exposing its former identity to a broader audience.",
       "sourceFileIds": [
         "file:packages/vibe64-project/src/server/service.js",
         "file:packages/vibe64-project/src/server/actions.js",
@@ -418,7 +418,7 @@
       "description": "People can keep project-wide communication preferences in portable project\nsource while retaining personal naming and Vibe64 prompt suggestions as UI\nconveniences outside agent prompts.",
       "districtId": "subsystem:projects",
       "id": "operation:projects/collaboration-approach",
-      "implementationMap": "- `collaborationSettingsState()` reads the selected source through Genesis and\n  returns Genesis's current choice catalog.\n- `saveCollaborationSettingsState()` serializes source mutation with other\n  project work and delegates validation and writing to Genesis.\n- `savePromptHintsState()` changes only the independent Vibe64 prompt-hints\n  record.",
+      "implementationMap": "- The persistent session panel owns project-settings refresh events for its\n  project. Active selected-source and explicit-session readers refresh through\n  that one owner; inactive source entries become stale without starting reads.\n  Engineering settings keep their separate query and refresh subscription.\n- `collaborationSettingsState()` reads the selected source through Genesis and\n  returns Genesis's current choice catalog.\n- `saveCollaborationSettingsState()` serializes source mutation with other\n  project work and delegates validation and writing to Genesis.\n- `savePromptHintsState()` changes only the independent Vibe64 prompt-hints\n  record.",
       "name": "collaboration-approach",
       "path": "genesis/program/projects/collaboration-approach.md",
       "publicContract": "Project settings presents the tone, response-length, assumed-experience, and\nexplanation-style choices supplied by the exact pinned Genesis contract, plus\noptional project requirements. Vibe64 does not duplicate those choices or\ntheir instruction text. Saving changes `genesis/collaboration.md` in the\nstandalone source or selected hosted session source, so the result follows the\nsame source authority and history as the project.\nAn unsaved choice survives refreshes of that same source. Switching project,\nsource kind or source session loads the new source's choices; the previous\nsource's draft is never submitted as the new source's settings. A temporary\nquery-loading interval does not by itself discard a same-source draft.\nOnly the project owner can change collaboration through hosted Project\nsettings. Anyone independently authorized to edit the source can still change\nthe Genesis file directly. Genesis validates the complete declaration and\nexpands it only in stable session context. The change affects conversations\nwhen they next establish or refresh that context; it does not alter past\nhistory or live Codex developer instructions.\nThe prompt-suggestion switch is a separate Vibe64 project-runtime setting. It\ncontrols whether Vibe64 offers optional next-message ideas and never changes\nagent instructions or `genesis/collaboration.md`. The preferred name is a\npersonal account or local profile choice used in Vibe64 welcomes and\ncollaboration cues. It is never written into project source or sent as agent\ncontext.",
@@ -430,6 +430,7 @@
         "file:packages/vibe64-project/src/server/service.js",
         "file:packages/vibe64-core/src/server/projectPromptHints.js",
         "file:src/components/studio/ProjectSettingsPanel.vue",
+        "file:src/composables/useVibe64SessionPanel.js",
         "file:src/lib/studioGateApi.js"
       ],
       "sources": [
@@ -440,6 +441,7 @@
         "packages/vibe64-project/src/server/service.js",
         "packages/vibe64-core/src/server/projectPromptHints.js",
         "src/components/studio/ProjectSettingsPanel.vue",
+        "src/composables/useVibe64SessionPanel.js",
         "src/lib/studioGateApi.js"
       ],
       "subsystem": "projects",
@@ -1379,6 +1381,11 @@
     {
       "fromId": "operation:projects/collaboration-approach",
       "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64SessionPanel.js"
+    },
+    {
+      "fromId": "operation:projects/collaboration-approach",
+      "kind": "implemented-by",
       "toId": "file:src/lib/studioGateApi.js"
     },
     {
@@ -1622,7 +1629,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:c13277d95390c3b4c3716e98d26fd1f6778945b420f63f1d6bf60b808539aaca",
+  "programHash": "sha256:98b3d3fe9fbcef9efdce7890ea911f5bd33c9e07dbdfcb9d8a92dbf1f8ce8a6e",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

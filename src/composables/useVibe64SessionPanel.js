@@ -76,17 +76,20 @@ function useVibe64SessionPanel(props, emit) {
       emit("title-change", title);
     }
   });
+  const projectSettingsKey = computed(() => projectSettingsQueryKey(
+    VIBE64_SURFACE_ID,
+    ROUTE_VISIBILITY_PUBLIC,
+    projectSlug.value
+  ));
   const projectSettings = useEndpointResource({
     enabled: computed(() => Boolean(projectSlug.value)),
     fallbackLoadError: "Project settings could not load.",
     path: PROJECT_SETTINGS_ENDPOINT,
-    queryKey: computed(() => projectSettingsQueryKey(
-      VIBE64_SURFACE_ID,
-      ROUTE_VISIBILITY_PUBLIC,
-      projectSlug.value
-    )),
+    queryKey: projectSettingsKey,
     realtime: {
-      event: VIBE64_PROJECT_CHANGED_EVENT
+      event: VIBE64_PROJECT_CHANGED_EVENT,
+      // Refresh both the selected-source reader and source-specific settings pages.
+      queryKey: computed(() => projectSettingsKey.value.slice(0, -1))
     },
     refreshOnPull: true,
     requestRecoveryLabel: "Project settings"
