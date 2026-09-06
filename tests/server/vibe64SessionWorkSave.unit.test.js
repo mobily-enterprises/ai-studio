@@ -381,6 +381,83 @@ test("current changes returns a bounded canonical file list and one selected-fil
   }
 });
 
+for (const entry of [
+  { label: "wildcard", path: "[ab].txt", otherPath: "a.txt" },
+  { label: "leading-colon", path: ":literal.txt", otherPath: "literal.txt" }
+]) {
+  test(`current changes treats a ${entry.label} filename literally`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-change-literal-path-"));
+    try {
+      const fixture = await createRemoteFixture(root);
+      const session = await sessionForRemote(root, fixture);
+      const project = githubProject(root, fixture.remote);
+      await writeFile(path.join(session.sourcePath, entry.path), "selected literal filename\n", "utf8");
+      await writeFile(path.join(session.sourcePath, entry.otherPath), "unrelated matching filename\n", "utf8");
+
+      const initialRequests = [];
+      const changes = await inspectSessionChanges({
+        project,
+        runCommand: async (request) => {
+          initialRequests.push(request);
+          return commandRunner(request);
+        },
+        session
+      });
+      assert.equal(changes.canonicalCommit, fixture.baseCommit);
+      assert.equal(changes.totalCount, 2);
+      assert.deepEqual(new Set(changes.files.map((file) => file.path)), new Set([entry.path, entry.otherPath]));
+      assert.equal(initialRequests.length, 1);
+      assert.equal(initialRequests[0].command, "node");
+      assert.equal(initialRequests[0].execution.sessionId, session.sessionId);
+
+      await t.test("initialDiff contains only the selected file from the same snapshot", () => {
+        assert.equal(changes.initialDiff.path, entry.path);
+        assert.equal(changes.initialDiff.worktreeTree, changes.worktreeTree);
+        assert.ok(changes.initialDiff.diff.split("\n").includes("+selected literal filename"), changes.initialDiff.diff);
+        assert.equal(changes.initialDiff.diff.includes("unrelated matching filename"), false, changes.initialDiff.diff);
+      });
+
+      await t.test("explicit selected-file diff contains only that file in one job", async () => {
+        const selectedRequests = [];
+        const fileDiff = await inspectSessionChangeDiff({
+          path: entry.path,
+          project,
+          runCommand: async (request) => {
+            selectedRequests.push(request);
+            return commandRunner(request);
+          },
+          session
+        });
+        assert.equal(selectedRequests.length, 1);
+        assert.equal(selectedRequests[0].command, "node");
+        assert.equal(selectedRequests[0].execution.sessionId, session.sessionId);
+        assert.equal(fileDiff.path, entry.path);
+        assert.equal(fileDiff.canonicalCommit, fixture.baseCommit);
+        assert.equal(fileDiff.worktreeTree, changes.worktreeTree);
+        assert.ok(fileDiff.diff.split("\n").includes("+selected literal filename"), fileDiff.diff);
+        assert.equal(fileDiff.diff.includes("unrelated matching filename"), false, fileDiff.diff);
+      });
+
+      await t.test("unchanged files and traversal remain rejected", async () => {
+        await assert.rejects(inspectSessionChangeDiff({
+          path: "shared.txt",
+          project,
+          runCommand: commandRunner,
+          session
+        }), (error) => error.code === "vibe64_session_change_not_found");
+        await assert.rejects(inspectSessionChangeDiff({
+          path: "../outside.txt",
+          project,
+          runCommand: commandRunner,
+          session
+        }), (error) => error.code === "vibe64_session_change_path_invalid");
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
+
 test("local-source current changes reuses one snapshot for its initial file diff", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-save-"));
   try {

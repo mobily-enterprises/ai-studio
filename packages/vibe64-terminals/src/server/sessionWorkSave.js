@@ -611,6 +611,7 @@ async function sessionChangeDiff(runCommand, context, work, requestedPath, {
     throw saveError("That file is not part of the current saved-work difference.", "vibe64_session_change_not_found");
   }
   const result = await git(runCommand, context, [
+    "--literal-pathspecs",
     "diff",
     "--no-ext-diff",
     "--find-renames",

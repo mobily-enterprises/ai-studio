@@ -105,7 +105,9 @@ function fileStatusLabel(value = "") {
 }
 
 .vibe64-repository-file-browser--embedded .vibe64-repository-file-browser__list {
+  align-self: stretch;
   max-height: none;
+  min-height: 0;
 }
 
 .vibe64-repository-file-browser__list header {
@@ -185,6 +187,10 @@ function fileStatusLabel(value = "") {
 @media (max-width: 780px) {
   .vibe64-repository-file-browser {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vibe64-repository-file-browser--embedded {
+    grid-template-rows: min(16rem, 50%) minmax(0, 1fr);
   }
 
   .vibe64-repository-file-browser__list,

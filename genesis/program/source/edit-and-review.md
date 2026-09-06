@@ -17,6 +17,7 @@ from saved project work, and inspect one exact file change at a time.
 - `src/composables/useVibe64RepositoryWorkspace.js`
 - `src/composables/useVibe64SessionRuntimeHost.js`
 - `src/components/studio/repository/Vibe64RepositoryWorkspace.vue`
+- `src/components/studio/repository/Vibe64RepositoryFileBrowser.vue`
 - `src/components/studio/repository/Vibe64RepositoryDiff.vue`
 - `src/lib/vibe64RepositoryRealtime.js`
 
@@ -66,8 +67,11 @@ History file paging and differences belong to the selected commit. Selecting
 another version clears the previous version's loading and error state. Late
 results from that previous selection cannot change the new view or prevent it
 from loading more files.
-A selected history filename is literal, not a Git search pattern, even when it
-contains wildcard or colon characters.
+In both History and Current Changes, a selected filename is literal, not a Git
+search pattern, even when it contains wildcard or colon characters.
+The full-screen history view scrolls its file list independently from the diff,
+so long versions keep later files and their Load more action reachable without
+moving the selected difference out of view.
 
 ## Implementation map
 
