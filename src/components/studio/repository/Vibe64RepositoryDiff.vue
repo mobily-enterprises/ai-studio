@@ -71,6 +71,8 @@ const truncated = computed(() => props.payload?.truncated === true);
   max-width: 100%;
   min-width: 0;
   overflow: auto;
+  /* Keep Diff2Html's absolute line numbers inside this scroll owner. */
+  position: relative;
 }
 
 .vibe64-repository-diff__rendered :deep(.d2h-wrapper) {
