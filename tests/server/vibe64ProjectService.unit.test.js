@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import fsPromises, { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -802,6 +803,238 @@ test("hosted collaboration follows the selected session source while prompt hint
     assert.equal(second.promptHints.enabled, false);
   });
 });
+
+for (const setting of ["collaboration", "engineering"]) {
+  test(`real Genesis ${setting} settings preserve source identity, validation, and renewal exclusion`, async (t) => {
+    await withTemporaryRoot(async (targetRoot) => {
+      const service = projectService(targetRoot);
+      const store = await service.createSessionStore();
+      const sessionId = `${setting}-selected`;
+      const siblingSessionId = `${setting}-sibling`;
+      const sessionSource = sourcePath(targetRoot, sessionId);
+      const siblingSource = sourcePath(targetRoot, siblingSessionId);
+      for (const projectRoot of [targetRoot, sessionSource, siblingSource]) {
+        await mkdir(projectRoot, { recursive: true });
+        await execFileAsync("git", ["init"], { cwd: projectRoot });
+        await initializeGenesisProject({ projectRoot });
+      }
+      for (const id of [sessionId, siblingSessionId]) {
+        await store.createSession({
+          metadata: sourceMetadata(targetRoot, id),
+          runtimeKind: "genesis",
+          sessionId: id
+        });
+      }
+      await store.updateCurrentSession(siblingSessionId);
+      const fileName = `${setting}.md`;
+      const selectedFile = path.join(sessionSource, "genesis", fileName);
+      const siblingFile = path.join(siblingSource, "genesis", fileName);
+      const standaloneFile = path.join(targetRoot, "genesis", fileName);
+      const siblingBefore = await readFile(siblingFile);
+      const standaloneBefore = await readFile(standaloneFile);
+      const selectedBefore = await readFile(selectedFile);
+      const read = setting === "collaboration"
+        ? service.readSettings.bind(service)
+        : service.readEngineeringSettings.bind(service);
+      const save = setting === "collaboration"
+        ? service.saveCollaborationSettings.bind(service)
+        : service.saveEngineeringProfile.bind(service);
+      const input = {
+        ...(setting === "collaboration"
+          ? {
+              experience: "expert",
+              explanationStyle: "conclusions",
+              requirements: "- Keep this session's explanations practical.",
+              responseLength: "very_short",
+              tone: "direct"
+            }
+          : { profile: "durable.v1" }),
+        sessionId,
+        vibe64User: { role: setting === "collaboration" ? "owner" : "member" }
+      };
+      if (setting === "collaboration") {
+        const denied = await save({ ...input, vibe64User: { role: "member" } });
+        assert.equal(denied.ok, false);
+        assert.equal(denied.code, "vibe64_owner_required");
+        assert.deepEqual(await readFile(selectedFile), selectedBefore);
+      }
+      const saved = await save(input);
+      assert.equal(saved.ok, true);
+      assert.equal(saved[setting].source.sessionId, sessionId);
+      assert.equal(saved[setting].source.rootKind, "session-source");
+      if (setting === "collaboration") {
+        for (const field of ["experience", "explanationStyle", "requirements", "responseLength", "tone"]) {
+          assert.equal(saved.collaboration[field], input[field]);
+        }
+      } else {
+        assert.equal(saved.engineering.profile.id, input.profile);
+      }
+      const readBack = await read(input);
+      assert.equal(readBack.ok, true);
+      assert.deepEqual(readBack[setting], saved[setting]);
+      assert.notDeepEqual(await readFile(selectedFile), selectedBefore);
+      assert.deepEqual(await readFile(siblingFile), siblingBefore);
+      assert.deepEqual(await readFile(standaloneFile), standaloneBefore);
+
+      const savedBytes = await readFile(selectedFile);
+      const invalid = await save({
+        ...input,
+        ...(setting === "collaboration"
+          ? { requirements: "## Unexpected section\nDo something else." }
+          : { profile: "missing-profile.v1" })
+      });
+      assert.equal(invalid.ok, false);
+      assert.equal(invalid.code, setting === "collaboration"
+        ? "COLLABORATION_INVALID"
+        : "ENGINEERING_PROFILE_UNKNOWN");
+      assert.deepEqual(await readFile(selectedFile), savedBytes);
+      const retryInput = {
+        ...input,
+        ...(setting === "collaboration"
+          ? { requirements: "- A valid retry for this source." }
+          : { profile: "high-assurance.v1" })
+      };
+      const retried = await save(retryInput);
+      assert.equal(retried.ok, true);
+      assert.deepEqual((await read(retryInput))[setting], retried[setting]);
+      const retryBytes = await readFile(selectedFile);
+      assert.notDeepEqual(retryBytes, savedBytes);
+
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      const exclusive = runVibe64RenewalAgentWriteExclusive({ store }, sessionId, async () => {
+        entered.resolve();
+        await release.promise;
+      });
+      const exclusiveOutcome = exclusive.then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      );
+      try {
+        await Promise.race([
+          entered.promise,
+          exclusiveOutcome.then((outcome) => assert.fail(
+            `Renewal write exclusion ended before its held operation: ${JSON.stringify(outcome)}`
+          ))
+        ]);
+        const blocked = await save(input);
+        assert.equal(blocked.ok, false);
+        assert.equal(blocked.code, "vibe64_agent_write_mode_busy");
+        assert.deepEqual(await readFile(selectedFile), retryBytes);
+      } finally {
+        release.resolve();
+        await exclusiveOutcome;
+      }
+      assert.equal((await exclusiveOutcome).value.acquired, true);
+      const afterRelease = await save(input);
+      assert.equal(afterRelease.ok, true);
+      assert.deepEqual((await read(input))[setting], afterRelease[setting]);
+
+      const beforeQuiesce = await readFile(selectedFile);
+      const renewalId = `${setting}-renewal`;
+      await store.quiesceSessionForRenewal({ renewalId, sourceSessionId: sessionId });
+      const quiesced = await save(retryInput);
+      assert.equal(quiesced.ok, false);
+      assert.equal(quiesced.code, "vibe64_session_renewal_quiesced");
+      assert.deepEqual(await readFile(selectedFile), beforeQuiesce);
+      await store.restoreSessionAfterRenewalCancellation({ renewalId, sourceSessionId: sessionId });
+      assert.equal((await save(retryInput)).ok, true);
+
+      const beforeSourceLock = await readFile(selectedFile);
+      const sourceLockEntered = Promise.withResolvers();
+      const releaseSourceLock = Promise.withResolvers();
+      const contended = Promise.withResolvers();
+      const lockPath = path.join(service.currentProjectRuntimeRoot(), "locks", "source-mutation.lock");
+      const open = fsPromises.open;
+      const observedOpen = t.mock.method(fsPromises, "open", async (...args) => {
+        try {
+          return await open(...args);
+        } catch (error) {
+          if (args[0] === lockPath && args[1] === "wx" && error.code === "EEXIST") {
+            contended.resolve();
+          }
+          throw error;
+        }
+      });
+      syncBuiltinESMExports();
+      const sourceLock = service.runProjectSourceExclusive(async () => {
+        sourceLockEntered.resolve();
+        await releaseSourceLock.promise;
+      }, { operation: "settings-acceptance-held-source-write" });
+      const sourceLockOutcome = sourceLock.then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      );
+      let sourceSave;
+      let sourceSaveSettled = false;
+      try {
+        await Promise.race([
+          sourceLockEntered.promise,
+          sourceLockOutcome.then((outcome) => assert.fail(
+            `Project source exclusion ended before its held operation: ${JSON.stringify(outcome)}`
+          ))
+        ]);
+        sourceSave = save(input);
+        const sourceSaveOutcome = sourceSave.then(
+          (value) => {
+            sourceSaveSettled = true;
+            return { value };
+          },
+          (error) => {
+            sourceSaveSettled = true;
+            return { error };
+          }
+        );
+        await Promise.race([
+          contended.promise,
+          sourceSaveOutcome.then((outcome) => assert.fail(
+            `Settings save settled without contending on the held source lock: ${JSON.stringify(outcome)}`
+          ))
+        ]);
+        assert.equal(sourceSaveSettled, false);
+        assert.deepEqual(await readFile(selectedFile), beforeSourceLock);
+      } finally {
+        releaseSourceLock.resolve();
+        await Promise.allSettled([sourceLock, sourceSave]);
+        observedOpen.mock.restore();
+        syncBuiltinESMExports();
+      }
+      assert.equal((await sourceLockOutcome).error, undefined);
+      const afterSourceLock = await sourceSave;
+      assert.equal(afterSourceLock.ok, true);
+      assert.deepEqual(afterSourceLock[setting], saved[setting]);
+      assert.deepEqual((await read(input))[setting], afterSourceLock[setting]);
+      assert.deepEqual(await readFile(selectedFile), savedBytes);
+
+      const beforeUnavailableSource = await readFile(selectedFile);
+      for (const operation of [read, save]) {
+        const missing = await operation({ ...input, sessionId: `${setting}-unknown` });
+        assert.equal(missing.ok, false);
+        assert.equal(missing.code, "vibe64_session_not_found");
+      }
+      const unavailableSessionId = `${setting}-without-source`;
+      await store.createSession({ runtimeKind: "genesis", sessionId: unavailableSessionId });
+      const unavailable = await read({ ...input, sessionId: unavailableSessionId });
+      assert.equal(unavailable.ok, true);
+      assert.equal(unavailable[setting].available, false);
+      assert.equal(unavailable[setting].source.sessionId, unavailableSessionId);
+      const unavailableSave = await save({ ...input, sessionId: unavailableSessionId });
+      assert.equal(unavailableSave.ok, false);
+      assert.equal(unavailableSave.code, `vibe64_${setting}_source_required`);
+      assert.deepEqual(await readFile(selectedFile), beforeUnavailableSource);
+
+      await rm(sessionSource, { recursive: true });
+      for (const operation of [read, save]) {
+        const removed = await operation(input);
+        assert.equal(removed.ok, false);
+        assert.equal(removed.code, "vibe64_project_path_not_accessible");
+      }
+      await assert.rejects(stat(sessionSource), { code: "ENOENT" });
+      assert.deepEqual(await readFile(siblingFile), siblingBefore);
+      assert.deepEqual(await readFile(standaloneFile), standaloneBefore);
+    });
+  });
+}
 
 test("standalone collaboration is keyed to the exact local source folder", async () => {
   await withTemporaryRoot(async (temporaryRoot) => {

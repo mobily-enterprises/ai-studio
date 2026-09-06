@@ -510,7 +510,7 @@ const loadError = computed(() => String(
   resource.loadError.value || engineeringResource.loadError.value || ""
 ));
 const databaseSaving = computed(() => databaseSaveCommand.isRunning === true);
-const collaborationSaving = computed(() => collaborationSaveCommand.isRunning === true);
+const collaborationSaving = ref(false);
 const promptHintsSaving = computed(() => promptHintsSaveCommand.isRunning === true);
 const engineeringSaving = ref(false);
 const databaseChanged = computed(() => (
@@ -647,11 +647,16 @@ async function saveCollaboration() {
   ) {
     return;
   }
-  await collaborationSaveCommand.run({
-    collaboration: normalizeCollaborationDraft(collaborationDraft.value),
-    sessionId: routeSessionId.value || String(collaboration.value.source?.sessionId || "").trim()
-  });
-  await resource.reload();
+  collaborationSaving.value = true;
+  try {
+    await collaborationSaveCommand.run({
+      collaboration: normalizeCollaborationDraft(collaborationDraft.value),
+      sessionId: routeSessionId.value || String(collaboration.value.source?.sessionId || "").trim()
+    });
+    await resource.reload();
+  } finally {
+    collaborationSaving.value = false;
+  }
 }
 
 async function savePromptHints() {

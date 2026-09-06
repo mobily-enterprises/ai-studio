@@ -20,6 +20,7 @@ import {
 import { routeLocationKey } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  COLLABORATION_ENDPOINT,
   ENGINEERING_ENDPOINT,
   PROJECT_SETTINGS_ENDPOINT,
   VIBE64_PROJECT_CHANGED_EVENT,
@@ -403,7 +404,7 @@ function mountPanel({ liveQueries = false, liveCommands = false } = {}) {
       request(url, options) {
         if (options.method === "PUT") {
           expect(liveCommands).toBe(true);
-          expect(url).toBe(ENGINEERING_ENDPOINT);
+          expect([COLLABORATION_ENDPOINT, ENGINEERING_ENDPOINT]).toContain(url);
           const response = Promise.withResolvers();
           writes.push({ body: options.body, projectSlug: projectSettingsMocks.projectSlug.value, url, ...response });
           if (closed) response.resolve({ ok: true });
@@ -1012,6 +1013,210 @@ describe("ProjectSettingsPanel AI behaviour", () => {
       expect(fixture.queryClient.getQueryData(key).engineering.profile.id).toBe("high-assurance.v1");
       expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("high-assurance.v1");
       expect(findField(fixture.container, "Engineering profile").props.disabled).toBe(false);
+      expect(fixture.writes).toHaveLength(1);
+    } finally {
+      fixture.close();
+      await saving.catch(() => {});
+    }
+  });
+
+  it("keeps Collaboration pending through its canonical read before accepting an old-value reversion", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    let refreshing = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("military");
+      findField(fixture.container, "Tone").props["onUpdate:modelValue"]("playful");
+      await nextTick();
+      saving = findButton(fixture.container, "Save collaboration").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].url).toBe(COLLABORATION_ENDPOINT);
+      expect(fixture.writes[0].body).toEqual({
+        experience: "expert",
+        explanationStyle: "teaching",
+        requirements: "Use Australian English.",
+        responseLength: "detailed",
+        sessionId: "session-a",
+        tone: "playful"
+      });
+      const afterAcknowledgement = fixture.requests.length;
+      const saved = createResource({ collaboration: { tone: "playful" } }).data.value;
+      fixture.writes[0].resolve({ collaboration: saved.collaboration, ok: true, projectSlug: "project-a" });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      expect(fixture.requests.at(-1).url).toBe(PROJECT_SETTINGS_ENDPOINT);
+      fixture.requests.at(-1).data = saved;
+
+      expect(fixture.queryClient.isMutating()).toBe(0);
+      for (const label of ["Tone", "Response length", "Experience level", "Explanation style", "Project requirements (optional)"]) {
+        expect(findField(fixture.container, label).props.disabled).toBe(true);
+      }
+      const pendingSave = findButton(fixture.container, "Saving…");
+      expect(pendingSave.props.disabled).toBe(true);
+      await pendingSave.props.onClick();
+      expect(fixture.writes).toHaveLength(1);
+      await fixture.resolveReads(afterAcknowledgement);
+      await saving;
+      await nextTick();
+      expect(findField(fixture.container, "Tone").props.disabled).toBe(false);
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("playful");
+      expect(findButton(fixture.container, "Save collaboration").props.disabled).toBe(true);
+
+      // Reverting to the former baseline is a new edit, not a clean old snapshot.
+      findField(fixture.container, "Tone").props["onUpdate:modelValue"]("military");
+      await nextTick();
+      const from = fixture.requests.length;
+      const key = projectSettingsQueryKey("app", "public", "project-a", "session-a");
+      refreshing = fixture.queryClient.refetchQueries({ queryKey: key, exact: true });
+      await nextTick();
+      fixture.requests.at(-1).data = saved;
+      await fixture.resolveReads(from);
+      await refreshing;
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("military");
+      expect(findButton(fixture.container, "Save collaboration").props.disabled).toBe(false);
+      expect(fixture.writes).toHaveLength(1);
+    } finally {
+      fixture.close();
+      await Promise.all([saving.catch(() => {}), refreshing]);
+    }
+  });
+
+  it("releases Collaboration after a real PUT failure and preserves its draft for retry", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Tone").props["onUpdate:modelValue"]("playful");
+      await nextTick();
+      saving = findButton(fixture.container, "Save collaboration").props.onClick();
+      const outcome = saving.then(() => null, (error) => error);
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].url).toBe(COLLABORATION_ENDPOINT);
+      const failure = new Error("Controlled Collaboration PUT failure.");
+      fixture.writes[0].reject(failure);
+      expect(await outcome).toBe(failure);
+      await nextTick();
+      expect(fixture.feedback.report).toHaveBeenCalledWith(expect.objectContaining({
+        cause: failure,
+        intent: "action-feedback",
+        severity: "error"
+      }));
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("playful");
+      expect(findField(fixture.container, "Tone").props.disabled).toBe(false);
+      expect(findButton(fixture.container, "Save collaboration").props.disabled).toBe(false);
+
+      saving = findButton(fixture.container, "Save collaboration").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(2));
+      expect(fixture.writes[1].url).toBe(COLLABORATION_ENDPOINT);
+      expect(fixture.writes[1].body).toEqual(fixture.writes[0].body);
+      const afterRetry = fixture.requests.length;
+      const saved = createResource({ collaboration: { tone: "playful" } }).data.value;
+      fixture.writes[1].resolve({ collaboration: saved.collaboration, ok: true, projectSlug: "project-a" });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterRetry)).toHaveLength(1));
+      expect(fixture.requests.at(-1).url).toBe(PROJECT_SETTINGS_ENDPOINT);
+      fixture.requests.at(-1).data = saved;
+      await fixture.resolveReads(afterRetry);
+      await saving;
+      await nextTick();
+      expect(findField(fixture.container, "Tone").props.disabled).toBe(false);
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("playful");
+      expect(findButton(fixture.container, "Save collaboration").props.disabled).toBe(true);
+    } finally {
+      fixture.close();
+      await saving.catch(() => {});
+    }
+  });
+
+  it("retries a failed canonical Collaboration read without resubmitting the saved choices", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    let retrying = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Tone").props["onUpdate:modelValue"]("playful");
+      await nextTick();
+      saving = findButton(fixture.container, "Save collaboration").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].url).toBe(COLLABORATION_ENDPOINT);
+      const afterAcknowledgement = fixture.requests.length;
+      const saved = createResource({ collaboration: { tone: "playful" } }).data.value;
+      fixture.writes[0].resolve({ collaboration: saved.collaboration, ok: true, projectSlug: "project-a" });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      expect(fixture.requests.at(-1).url).toBe(PROJECT_SETTINGS_ENDPOINT);
+      fixture.requests.at(-1).reject(new Error("Collaboration canonical read failed."));
+      await saving;
+      await nextTick();
+      const notice = findField(fixture.container, "Project settings");
+      expect(notice.props.message).toBe("Collaboration canonical read failed.");
+      expect(fixture.queryClient.isMutating()).toBe(0);
+
+      const beforeRetry = fixture.requests.length;
+      retrying = notice.props.onRetry();
+      await nextTick();
+      expect(fixture.requests.slice(beforeRetry).map(({ url }) => url))
+        .toEqual([PROJECT_SETTINGS_ENDPOINT, ENGINEERING_ENDPOINT]);
+      fixture.requests.find((request, index) => index >= beforeRetry && request.url === PROJECT_SETTINGS_ENDPOINT).data = saved;
+      await fixture.resolveReads(beforeRetry);
+      await retrying;
+      await nextTick();
+      expect(fixture.writes).toHaveLength(1);
+      expect(findField(fixture.container, "Project settings")).toBeNull();
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("playful");
+      expect(findField(fixture.container, "Tone").props.disabled).toBe(false);
+      expect(findButton(fixture.container, "Save collaboration").props.disabled).toBe(true);
+    } finally {
+      fixture.close();
+      await Promise.all([saving.catch(() => {}), retrying]);
+    }
+  });
+
+  it("keeps source B's Collaboration choices isolated through A's late save acknowledgement", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Tone").props["onUpdate:modelValue"]("playful");
+      await nextTick();
+      saving = findButton(fixture.container, "Save collaboration").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].url).toBe(COLLABORATION_ENDPOINT);
+      expect(fixture.writes[0].body.sessionId).toBe("session-a");
+      const beforeSourceSwitch = fixture.requests.length;
+      projectSettingsMocks.route.query.sessionId = "session-b";
+      await nextTick();
+      const sourceB = createResource({ collaboration: {
+        requirements: "Source B requirements.",
+        source: { rootKind: "session-source", sessionId: "session-b" },
+        tone: "direct"
+      } }).data.value;
+      for (const request of fixture.requests.slice(beforeSourceSwitch)) {
+        if (request.url === PROJECT_SETTINGS_ENDPOINT) request.data = sourceB;
+      }
+      await fixture.resolveReads(beforeSourceSwitch);
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("direct");
+
+      const afterAcknowledgement = fixture.requests.length;
+      const savedA = createResource({ collaboration: { tone: "playful" } }).data.value;
+      fixture.writes[0].resolve({ collaboration: savedA.collaboration, ok: true, projectSlug: "project-a" });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      const refresh = fixture.requests.at(-1);
+      expect(refresh.url).toBe(PROJECT_SETTINGS_ENDPOINT);
+      expect(refresh.sessionId).toBe("session-b");
+      refresh.data = sourceB;
+      expect(findField(fixture.container, "Tone").props.disabled).toBe(true);
+      await fixture.resolveReads(afterAcknowledgement);
+      await saving;
+      await nextTick();
+      const key = projectSettingsQueryKey("app", "public", "project-a", "session-b");
+      expect(fixture.queryClient.getQueryData(key).collaboration).toEqual(sourceB.collaboration);
+      expect(findField(fixture.container, "Tone").props.modelValue).toBe("direct");
+      expect(findField(fixture.container, "Project requirements (optional)").props.modelValue).toBe("Source B requirements.");
+      expect(findField(fixture.container, "Tone").props.disabled).toBe(false);
+      expect(findButton(fixture.container, "Save collaboration").props.disabled).toBe(true);
       expect(fixture.writes).toHaveLength(1);
     } finally {
       fixture.close();

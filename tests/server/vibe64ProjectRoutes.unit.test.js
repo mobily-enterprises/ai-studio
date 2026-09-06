@@ -276,15 +276,22 @@ test("collaboration and prompt-hint settings use separate routes and actions", a
       });
 
       const deniedReply = testReply();
+      const member = { role: "member", username: "grace" };
+      const forgedOwnerInput = {
+        ...collaboration,
+        sessionId: "selected-session",
+        vibe64User
+      };
       await collaborationRoute.handler({
-        body: collaboration,
-        input: { body: collaboration },
+        body: forgedOwnerInput,
+        input: { body: forgedOwnerInput },
         params: routeProjectParams(),
-        vibe64User: {
-          role: "member",
-          username: "grace"
-        },
-        async executeAction() {
+        vibe64User: member,
+        async executeAction(action) {
+          assert.deepEqual(action, {
+            actionId: ACTION_SAVE_COLLABORATION_SETTINGS,
+            input: { ...forgedOwnerInput, vibe64User: member }
+          });
           return {
             code: "vibe64_owner_required",
             errors: [{

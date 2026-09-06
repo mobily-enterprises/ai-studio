@@ -1906,6 +1906,292 @@ for (const viewportWidth of [390, 960, 1600]) {
   });
 }
 
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+  test(`source-owned Collaboration and Engineering settings recover and stay isolated at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await mockLaunchTerminalSocket(page);
+    const sessionA = sessionPayload({ sessionId: "settings-a", sessionName: "Settings A" });
+    const sessionB = sessionPayload({ sessionId: "settings-b", sessionName: "Settings B" });
+    await mockLaunchSession(page, { session: sessionA, sessionList: [sessionA, sessionB] });
+    const choices = {
+      tone: [
+        { id: "encouraging", name: "Encouraging" },
+        { id: "playful", name: "Playful and cheeky" },
+        { id: "direct", name: "Direct" },
+        { id: "military", name: "Crisp and military" }
+      ],
+      responseLength: [
+        { id: "very_short", name: "Very short" },
+        { id: "concise", name: "Concise" },
+        { id: "balanced", name: "Balanced" },
+        { id: "detailed", name: "Detailed" }
+      ],
+      experience: [
+        { id: "beginner", name: "Beginner" },
+        { id: "comfortable", name: "Comfortable" },
+        { id: "expert", name: "Expert" }
+      ],
+      explanationStyle: [
+        { id: "conclusions", name: "Conclusions only" },
+        { id: "concise", name: "Concise rationale" },
+        { id: "teaching", name: "Teaching detail" }
+      ]
+    };
+    const profiles = [
+      { id: "focused.v1", name: "Focused", description: "Small, direct changes for ordinary product work." },
+      { id: "durable.v1", name: "Durable product", description: "Long-lived product work with explicit compatibility and operational care." },
+      { id: "high-assurance.v1", name: "High assurance", description: "Security- or reliability-critical work backed by explicit risks and evidence." }
+    ];
+    const settings: Record<string, { collaboration: Record<string, string>; profile: string }> = {
+      "settings-a": {
+        collaboration: {
+          tone: "encouraging", responseLength: "concise", experience: "comfortable",
+          explanationStyle: "concise", requirements: "Source A requirements."
+        },
+        profile: "focused.v1"
+      },
+      "settings-b": {
+        collaboration: {
+          tone: "direct", responseLength: "balanced", experience: "beginner",
+          explanationStyle: "conclusions", requirements: "Source B requirements."
+        },
+        profile: "durable.v1"
+      }
+    };
+    const originalA = structuredClone(settings[sessionA.sessionId]);
+    const writes: Record<string, Record<string, string>[]> = { collaboration: [], engineering: [] };
+    const heldReads: string[] = [];
+    const canonicalReads = {
+      collaboration: Promise.withResolvers<void>(),
+      engineering: Promise.withResolvers<void>()
+    };
+    let failWrite = "";
+    let failRead = "";
+    let holdRead = "";
+    const settingsRoute = new RegExp(
+      `^${escapeRegExp(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/settings`)}(?:/(?:collaboration|engineering))?(?:\\?.*)?$`,
+      "u"
+    );
+    await page.route(settingsRoute, async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const kind = url.pathname.endsWith("/engineering") ? "engineering" : "collaboration";
+      const payload = request.method() === "PUT" ? request.postDataJSON() as Record<string, string> : null;
+      // The persistent session panel also reads the selected-source policy without a query.
+      const sessionId = payload ? payload.sessionId : url.searchParams.get("sessionId") || sessionA.sessionId;
+      expect([sessionA.sessionId, sessionB.sessionId]).toContain(sessionId);
+      const selected = settings[sessionId];
+      if (payload) {
+        writes[kind].push(payload);
+        if (failWrite === kind) {
+          await fulfillJson(route, {
+            errors: [{ code: "validation_failed", message: `${kind} save failed for this test.` }],
+            ok: false
+          }, { status: 400 });
+          return;
+        }
+        if (kind === "engineering") {
+          selected.profile = payload.profile;
+        } else {
+          const { sessionId: targetSessionId, ...collaboration } = payload;
+          expect(targetSessionId).toBe(sessionB.sessionId);
+          selected.collaboration = collaboration;
+        }
+      } else {
+        expect(request.method()).toBe("GET");
+        if (holdRead === kind && sessionId === sessionB.sessionId) {
+          heldReads.push(kind);
+          await canonicalReads[kind].promise;
+        }
+        if (failRead === kind && sessionId === sessionB.sessionId) {
+          await fulfillJson(route, {
+            errors: [{ code: "settings_unavailable", message: `${kind} read failed for this test.` }],
+            ok: false
+          }, { status: 400 });
+          return;
+        }
+      }
+      const source = { projectSlug: "example-target-app", rootKind: "session-source", sessionId };
+      const collaboration = {
+        ...selected.collaboration, available: true, canEdit: true, choices,
+        source, status: "configured", unavailableReason: ""
+      };
+      await fulfillJson(route, kind === "engineering"
+        ? {
+            engineering: {
+              available: true, profile: profiles.find((profile) => profile.id === selected.profile),
+              profiles, source, status: "configured", unavailableReason: ""
+            },
+            ok: true,
+            projectSlug: "example-target-app"
+          }
+        : {
+            collaboration,
+            developmentDatabase: { managed: false },
+            ok: true,
+            projectSlug: "example-target-app",
+            promptHints: { canEdit: true, enabled: true }
+          });
+    });
+
+    const approaches = [
+      {
+        kind: "collaboration", region: "AI behaviour", save: "Save collaboration",
+        fields: [
+          { label: "Tone", dirtyA: "Playful and cheeky", storedB: "Direct", dirtyB: "Crisp and military" },
+          { label: "Response length", dirtyA: "Detailed", storedB: "Balanced", dirtyB: "Very short" },
+          { label: "Experience level", dirtyA: "Expert", storedB: "Beginner", dirtyB: "Comfortable" },
+          { label: "Explanation style", dirtyA: "Teaching detail", storedB: "Conclusions only", dirtyB: "Concise rationale" }
+        ],
+        payload: {
+          tone: "military", responseLength: "very_short", experience: "comfortable",
+          explanationStyle: "concise", requirements: "Source B only.\nUse Australian English.",
+          sessionId: sessionB.sessionId
+        }
+      },
+      {
+        kind: "engineering", region: "Engineering approach", save: "Save engineering approach",
+        fields: [{ label: "Engineering profile", dirtyA: "High assurance", storedB: "Durable product", dirtyB: "Focused" }],
+        payload: { profile: "focused.v1", sessionId: sessionB.sessionId }
+      }
+    ] as const;
+    try {
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/settings?sessionId=${sessionA.sessionId}`);
+      if (viewport.width === 390) {
+        await page.getByRole("button", { name: "Show project", exact: true }).click();
+      }
+      const panel = page.locator(".project-settings:visible");
+      await expect(panel.getByRole("heading", { name: "Project settings", exact: true })).toBeVisible();
+      const originalPanel = await panel.elementHandle();
+      expect(originalPanel).not.toBeNull();
+      for (const approach of approaches) {
+        const section = panel.getByRole("region", { name: approach.region, exact: true });
+        for (const field of approach.fields) {
+          const control = section.getByRole("combobox", { name: field.label, exact: true });
+          await control.focus();
+          await control.press("Enter");
+          const option = page.getByRole("option", { name: field.dirtyA, exact: true });
+          await option.focus();
+          await option.press("Enter");
+          await expect(control).toHaveValue(field.dirtyA);
+        }
+        await expect(section.getByRole("button", { name: approach.save, exact: true })).toBeEnabled();
+      }
+      await panel.getByRole("textbox", { name: "Project requirements (optional)", exact: true }).fill("Unsaved source A only.");
+
+      // Controlled URL navigation exercises Vue Router without remounting Settings.
+      // There is no ordinary Settings link that chooses an explicit source session.
+      await page.evaluate((href) => {
+        window.history.pushState({ ...window.history.state }, "", href);
+        window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
+      }, `${DASHBOARD_PATH}/settings?sessionId=${sessionB.sessionId}`);
+      await expect(page).toHaveURL(`${BASE_URL}${DASHBOARD_PATH}/settings?sessionId=${sessionB.sessionId}`);
+      await expect(panel.getByRole("textbox", { name: "Project requirements (optional)", exact: true })).toHaveValue("Source B requirements.");
+      expect(await originalPanel!.evaluate((node) => node.isConnected && node === document.querySelector(".project-settings"))).toBe(true);
+      for (const approach of approaches) {
+        const section = panel.getByRole("region", { name: approach.region, exact: true });
+        for (const field of approach.fields) {
+          await expect(section.getByRole("combobox", { name: field.label, exact: true })).toHaveValue(field.storedB);
+        }
+        await expect(section.getByRole("button", { name: approach.save, exact: true })).toBeDisabled();
+      }
+
+      for (const approach of approaches) {
+        const section = panel.getByRole("region", { name: approach.region, exact: true });
+        for (const field of approach.fields) {
+          const control = section.getByRole("combobox", { name: field.label, exact: true });
+          await control.scrollIntoViewIfNeeded();
+          await expect(control).toBeVisible();
+          const bounds = await control.boundingBox();
+          expect(bounds).not.toBeNull();
+          expect(bounds!.x).toBeGreaterThanOrEqual(0);
+          expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+          await control.focus();
+          await control.press("Enter");
+          const option = page.getByRole("option", { name: field.dirtyB, exact: true });
+          await option.focus();
+          await option.press("Enter");
+          await expect(control).toHaveValue(field.dirtyB);
+        }
+        const requirements = panel.getByRole("textbox", { name: "Project requirements (optional)", exact: true });
+        if (approach.kind === "collaboration") {
+          await requirements.fill(approach.payload.requirements);
+        }
+        const save = section.getByRole("button", { name: approach.save, exact: true });
+        failWrite = approach.kind;
+        await save.focus();
+        await save.press("Enter");
+        await expect(page.locator(".v-snackbar", { hasText: `${approach.kind} save failed for this test.` })).toBeVisible();
+        const attention = page.getByRole("dialog").filter({ hasText: "Attention required" });
+        await expect(attention).toBeVisible();
+        await expect(attention).toContainText(`${approach.kind} save failed for this test.`);
+        await attention.getByRole("button", { name: "Close", exact: true }).click();
+        await expect(attention).toBeHidden();
+        await expect(page.locator(".v-overlay__scrim:visible")).toHaveCount(0);
+        await expect(save).toBeEnabled();
+        expect(writes[approach.kind]).toEqual([approach.payload]);
+        for (const field of approach.fields) {
+          const control = section.getByRole("combobox", { name: field.label, exact: true });
+          await expect(control).toBeEnabled();
+          await expect(control).toHaveValue(field.dirtyB);
+        }
+        if (approach.kind === "collaboration") {
+          await expect(requirements).toHaveValue(approach.payload.requirements);
+        }
+
+        failWrite = "";
+        holdRead = approach.kind;
+        await save.focus();
+        await save.press("Enter");
+        await expect.poll(() => heldReads.includes(approach.kind)).toBe(true);
+        // The PUT is fulfilled; only its follow-up canonical GET remains pending.
+        const pendingSave = section.getByRole("button", { name: "Saving…", exact: true });
+        await expect(pendingSave).toBeDisabled();
+        for (const field of approach.fields) {
+          await expect(section.getByRole("combobox", { name: field.label, exact: true })).toBeDisabled();
+        }
+        if (approach.kind === "collaboration") {
+          await expect(requirements).toBeDisabled();
+        }
+        await pendingSave.evaluate((button) => (button as HTMLButtonElement).click());
+        expect(writes[approach.kind]).toEqual([approach.payload, approach.payload]);
+        await pendingSave.scrollIntoViewIfNeeded();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        await page.screenshot({ path: testInfo.outputPath(`${approach.kind}-canonical-read-pending.png`) });
+
+        failRead = approach.kind;
+        holdRead = "";
+        canonicalReads[approach.kind].resolve();
+        await expect(panel.getByRole("heading", { name: "Project settings could not load", exact: true })).toBeVisible();
+        await expect(panel).toContainText(`${approach.kind} read failed for this test.`);
+        failRead = "";
+        const retry = panel.getByRole("button", { name: "Retry", exact: true });
+        await retry.focus();
+        await retry.press("Enter");
+        for (const field of approach.fields) {
+          const control = section.getByRole("combobox", { name: field.label, exact: true });
+          await expect(control).toBeEnabled();
+          await expect(control).toHaveValue(field.dirtyB);
+        }
+        if (approach.kind === "collaboration") {
+          await expect(requirements).toHaveValue(approach.payload.requirements);
+        }
+        await expect(save).toBeDisabled();
+        expect(writes[approach.kind]).toEqual([approach.payload, approach.payload]);
+        await save.scrollIntoViewIfNeeded();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        await page.screenshot({ path: testInfo.outputPath(`${approach.kind}-read-retry-ready.png`) });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      }
+      expect(settings[sessionA.sessionId]).toEqual(originalA);
+    } finally {
+      canonicalReads.collaboration.resolve();
+      canonicalReads.engineering.resolve();
+      await page.unroute(settingsRoute);
+    }
+  });
+}
+
 for (const viewportWidth of [390, 960, 1600]) {
   test(`@preview-lifecycle shared database choice is unavailable with multiple sessions at ${viewportWidth}px`, async ({ page }) => {
     await page.setViewportSize({

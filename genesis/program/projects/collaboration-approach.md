@@ -28,6 +28,10 @@ An unsaved choice survives refreshes of that same source. Switching project,
 source kind or source session loads the new source's choices; the previous
 source's draft is never submitted as the new source's settings. A temporary
 query-loading interval does not by itself discard a same-source draft.
+Save keeps the choices disabled through the follow-up canonical settings read, so
+the previous save's refresh cannot overwrite a newly enabled choice. A failed
+save releases the controls and preserves the draft for retry; a failed read
+uses the existing settings error and Retry view.
 
 Only the project owner can change collaboration through hosted Project
 settings. Anyone independently authorized to edit the source can still change
