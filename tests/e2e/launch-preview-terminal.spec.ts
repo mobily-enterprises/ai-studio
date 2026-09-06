@@ -1906,7 +1906,7 @@ for (const viewportWidth of [390, 960, 1600]) {
   });
 }
 
-for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+for (const viewport of [{ width: 1280, height: 900 }, { width: 960, height: 900 }, { width: 390, height: 844 }]) {
   test(`source-owned Collaboration and Engineering settings recover and stay isolated at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     await mockLaunchTerminalSocket(page);
@@ -2057,7 +2057,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     ] as const;
     try {
       await page.goto(`${BASE_URL}${DASHBOARD_PATH}/settings?sessionId=${sessionA.sessionId}`);
-      if (viewport.width === 390) {
+      if (viewport.width <= 960) {
         await page.getByRole("button", { name: "Show project", exact: true }).click();
       }
       const panel = page.locator(".project-settings:visible");
@@ -2122,11 +2122,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
         await save.focus();
         await save.press("Enter");
         await expect(page.locator(".v-snackbar", { hasText: `${approach.kind} save failed for this test.` })).toBeVisible();
-        const attention = page.getByRole("dialog").filter({ hasText: "Attention required" });
-        await expect(attention).toBeVisible();
-        await expect(attention).toContainText(`${approach.kind} save failed for this test.`);
-        await attention.getByRole("button", { name: "Close", exact: true }).click();
-        await expect(attention).toBeHidden();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
         await expect(page.locator(".v-overlay__scrim:visible")).toHaveCount(0);
         await expect(save).toBeEnabled();
         expect(writes[approach.kind]).toEqual([approach.payload]);

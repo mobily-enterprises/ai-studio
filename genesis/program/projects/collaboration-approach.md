@@ -31,7 +31,8 @@ query-loading interval does not by itself discard a same-source draft.
 Save keeps the choices disabled through the follow-up canonical settings read, so
 the previous save's refresh cannot overwrite a newly enabled choice. A failed
 save releases the controls and preserves the draft for retry; a failed read
-uses the existing settings error and Retry view.
+uses the existing settings error and Retry view. Save failures use the shared
+action feedback, without also opening an unexpected-UI-error dialog.
 
 Only the project owner can change collaboration through hosted Project
 settings. Anyone independently authorized to edit the source can still change

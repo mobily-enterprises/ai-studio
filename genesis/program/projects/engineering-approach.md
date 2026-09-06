@@ -29,6 +29,9 @@ be overwritten by the previous save's refresh. Project-change events received
 while the save request is pending defer to that refresh, including after a
 failed save. Events received during or after the refresh remain eligible to
 reload the current source.
+Save failures use the shared action feedback and keep the selection retryable,
+without also opening an unexpected-UI-error dialog. A failed canonical read
+uses the existing settings error and Retry view.
 
 When a hosted project has no available source, the setting stays visibly
 unavailable instead of treating the project metadata namespace as source. An

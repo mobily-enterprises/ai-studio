@@ -649,10 +649,15 @@ async function saveCollaboration() {
   }
   collaborationSaving.value = true;
   try {
-    await collaborationSaveCommand.run({
-      collaboration: normalizeCollaborationDraft(collaborationDraft.value),
-      sessionId: routeSessionId.value || String(collaboration.value.source?.sessionId || "").trim()
-    });
+    try {
+      await collaborationSaveCommand.run({
+        collaboration: normalizeCollaborationDraft(collaborationDraft.value),
+        sessionId: routeSessionId.value || String(collaboration.value.source?.sessionId || "").trim()
+      });
+    } catch {
+      // The command already presents the failure through shared action feedback.
+      return;
+    }
     await resource.reload();
   } finally {
     collaborationSaving.value = false;
@@ -679,6 +684,8 @@ async function saveEngineeringProfile() {
       profile: engineeringProfileDraft.value,
       sessionId: routeSessionId.value || String(engineering.value.source?.sessionId || "").trim()
     });
+  } catch {
+    // The command already presents the failure through shared action feedback.
   } finally {
     try {
       await engineeringResource.reload();

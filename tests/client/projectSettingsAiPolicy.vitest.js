@@ -883,7 +883,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     }
   });
 
-  it("refreshes canonical engineering after a real PUT failure and keeps the draft retryable", async () => {
+  it("handles a real engineering PUT failure once and keeps canonical refresh and draft retry", async () => {
     const fixture = mountPanel({ liveQueries: true, liveCommands: true });
     let saving = Promise.resolve();
     try {
@@ -899,8 +899,9 @@ describe("ProjectSettingsPanel AI behaviour", () => {
       await vi.waitFor(() => expect(fixture.requests.slice(afterFailure)).toHaveLength(1));
       expect(fixture.requests.at(-1).url).toBe(ENGINEERING_ENDPOINT);
       await fixture.resolveReads(afterFailure);
-      expect(await outcome).toBe(failure);
+      expect(await outcome).toBeNull();
       await nextTick();
+      expect(fixture.feedback.report).toHaveBeenCalledOnce();
       expect(fixture.feedback.report).toHaveBeenCalledWith(expect.objectContaining({
         cause: failure,
         intent: "action-feedback",
@@ -1082,7 +1083,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     }
   });
 
-  it("releases Collaboration after a real PUT failure and preserves its draft for retry", async () => {
+  it("handles a real Collaboration PUT failure once and preserves its draft for retry", async () => {
     const fixture = mountPanel({ liveQueries: true, liveCommands: true });
     let saving = Promise.resolve();
     try {
@@ -1095,8 +1096,9 @@ describe("ProjectSettingsPanel AI behaviour", () => {
       expect(fixture.writes[0].url).toBe(COLLABORATION_ENDPOINT);
       const failure = new Error("Controlled Collaboration PUT failure.");
       fixture.writes[0].reject(failure);
-      expect(await outcome).toBe(failure);
+      expect(await outcome).toBeNull();
       await nextTick();
+      expect(fixture.feedback.report).toHaveBeenCalledOnce();
       expect(fixture.feedback.report).toHaveBeenCalledWith(expect.objectContaining({
         cause: failure,
         intent: "action-feedback",
@@ -1798,6 +1800,26 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     }
   });
 
+  it("propagates an unexpected Collaboration refresh failure and releases its pending state", async () => {
+    const { app, container } = mountPanel();
+    try {
+      const failure = new Error("Unexpected Collaboration refresh failure");
+      projectSettingsMocks.resource.reload.mockRejectedValueOnce(failure);
+      findField(container, "Tone").props["onUpdate:modelValue"]("playful");
+      await nextTick();
+
+      await expect(findButton(container, "Save collaboration").props.onClick()).rejects.toBe(failure);
+      await nextTick();
+      expect(findField(container, "Tone").props.modelValue).toBe("playful");
+      expect(findField(container, "Tone").props.disabled).toBe(false);
+      expect(findButton(container, "Save collaboration").props.disabled).toBe(false);
+      await findButton(container, "Save collaboration").props.onClick();
+      expect(projectSettingsMocks.commands[1].run).toHaveBeenCalledTimes(2);
+    } finally {
+      app.unmount();
+    }
+  });
+
   it.each(["save", "refresh"])("releases the engineering action after a %s failure and permits retry", async (stage) => {
     const { app, container } = mountPanel();
     try {
@@ -1807,7 +1829,9 @@ describe("ProjectSettingsPanel AI behaviour", () => {
       findField(container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
       await nextTick();
 
-      await expect(findButton(container, "Save engineering approach").props.onClick()).rejects.toBe(failure);
+      const saving = findButton(container, "Save engineering approach").props.onClick();
+      if (stage === "save") await expect(saving).resolves.toBeUndefined();
+      else await expect(saving).rejects.toBe(failure);
       await nextTick();
       expect(findField(container, "Engineering profile").props.modelValue).toBe("durable.v1");
       expect(findField(container, "Engineering profile").props.disabled).toBe(false);
