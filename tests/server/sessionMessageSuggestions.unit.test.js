@@ -120,12 +120,12 @@ async function createSuggestionRuntime(targetRoot) {
   };
 }
 
-test("message suggestions survive restart, retain attachments, and deliver idempotently after owner approval", async () => {
+test("message suggestions retain preferred-name attribution and attachments through restart and idempotent approval", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const runtime = await createSuggestionRuntime(targetRoot);
     const harness = queueHarness(runtime);
-    const member = { displayName: "Grace", role: "user", username: "grace" };
-    const owner = { displayName: "Ada", role: "owner", username: "ada" };
+    const member = { displayName: "Grace Account", preferredName: "Amazing Grace", role: "user", username: "grace" };
+    const owner = { displayName: "Ada Account", preferredName: "Countess Ada", role: "owner", username: "ada" };
     const displayAttachments = [{
       fileName: "context.png",
       size: 2048
@@ -138,7 +138,7 @@ test("message suggestions survive restart, retain attachments, and deliver idemp
       vibe64User: member
     });
     assert.equal(created.ok, true);
-    assert.equal(created.suggestion.author.username, "grace");
+    assert.deepEqual(created.suggestion.author, { displayName: "Amazing Grace", username: "grace" });
     assert.deepEqual(created.suggestion.displayAttachments, displayAttachments);
     assert.equal(harness.pins.length, 1);
 
@@ -163,6 +163,7 @@ test("message suggestions survive restart, retain attachments, and deliver idemp
     });
     assert.equal(approved.ok, true);
     assert.equal(approved.suggestion.status, "delivered");
+    assert.deepEqual(approved.suggestion.decidedBy, { displayName: "Countess Ada", username: "ada" });
     assert.equal(harness.deliveries.length, 1);
     assert.deepEqual(harness.deliveries[0].displayAttachments, displayAttachments);
     assert.equal(harness.deliveries[0].message, "Please update the tests.");
@@ -170,9 +171,14 @@ test("message suggestions survive restart, retain attachments, and deliver idemp
       harness.deliveries[0].messageId,
       `vibe64-suggestion:${created.suggestion.id}`
     );
-    assert.match(harness.deliveries[0].displayMessage, /Suggested by Grace.*approved by Ada/u);
+    assert.equal(
+      harness.deliveries[0].displayMessage,
+      "Suggested by Amazing Grace (grace); approved by Countess Ada (ada).\n\nPlease update the tests."
+    );
     assert.equal(harness.unpins.length, 1);
 
+    member.preferredName = "Grace Updated";
+    owner.preferredName = "Ada Updated";
     const reloaded = queueHarness(runtime);
     const duplicate = await reloaded.service.approveMessageSuggestion("session-1", {
       suggestionId: created.suggestion.id,
@@ -180,6 +186,8 @@ test("message suggestions survive restart, retain attachments, and deliver idemp
     });
     assert.equal(duplicate.ok, true);
     assert.equal(duplicate.duplicate, true);
+    assert.deepEqual(duplicate.suggestion.author, { displayName: "Amazing Grace", username: "grace" });
+    assert.deepEqual(duplicate.suggestion.decidedBy, { displayName: "Countess Ada", username: "ada" });
     assert.equal(reloaded.deliveries.length, 0);
   });
 });
@@ -249,7 +257,7 @@ test("authors withdraw only their own suggestions and only the owner may discard
     const publications = [];
     const harness = queueHarness(runtime, { publications });
     const grace = { displayName: "Grace", role: "user", username: "grace" };
-    const owner = { displayName: "Ada", role: "owner", username: "ada" };
+    const owner = { displayName: "Ada Account", preferredName: "Countess Ada", role: "owner", username: "ada" };
     const first = await harness.service.suggestAgentMessage("session-1", {
       attachmentIds: ["11111111-1111-4111-8111-111111111111"],
       message: "Withdraw this.",
@@ -288,6 +296,8 @@ test("authors withdraw only their own suggestions and only the owner may discard
     });
     assert.equal(discarded.ok, true);
     assert.equal(discarded.suggestion.status, "discarded");
+    assert.deepEqual(discarded.suggestion.decidedBy, { displayName: "Countess Ada", username: "ada" });
+    assert.deepEqual(discarded.suggestion.author, { displayName: "Grace", username: "grace" });
     assert.deepEqual(publications.map(([, event]) => event.reason), [
       "session-message-suggestion-created",
       "session-message-suggestion-withdrawn",

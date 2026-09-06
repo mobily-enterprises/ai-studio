@@ -9,6 +9,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-sessions/src/server/inputSchemas.js`
 - `packages/vibe64-sessions/src/server/registerRoutes.js`
 - `packages/vibe64-sessions/src/server/service.js`
+- `packages/vibe64-sessions/src/server/sessionMessageSuggestions.js`
 - `packages/vibe64-runtime/src/server/sessionStore.js`
 - `packages/vibe64-runtime/src/shared/conversationAttachments.js`
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
@@ -76,6 +77,13 @@ that each reader can expand or collapse.
 Sent attachments remain distinct from the person's message as compact,
 read-only file details. Their safe file names and sizes remain durable with the
 conversation, while temporary provider paths stay out of visible history.
+
+When a host reserves an AI connection for its owner, collaborators can submit
+message suggestions for the owner's approval or dismissal. A new suggestion
+and each owner decision capture that person's preferred name, falling back to
+their trusted account name. Those stored names do not change when a person
+later edits their preference. Normal approved delivery sends the authored
+message unchanged; its visible attribution names the author and approving owner.
 
 Vibe64 expands the session's opening project request with Genesis guidance once.
 Ordinary follow-ups and active-turn steering remain ordinary conversation

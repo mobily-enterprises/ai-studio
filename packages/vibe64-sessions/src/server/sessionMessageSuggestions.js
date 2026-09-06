@@ -55,7 +55,7 @@ function actor(value = null, field = "actor") {
     );
   }
   return Object.freeze({
-    displayName: text(input?.displayName || input?.preferredName || input?.name || username).slice(0, 160),
+    displayName: text(input?.preferredName || input?.displayName || input?.name || username).slice(0, 160),
     username
   });
 }

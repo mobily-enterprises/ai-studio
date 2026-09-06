@@ -695,14 +695,10 @@ function createService({
           );
         }
         const now = new Date().toISOString();
-        const approvingActor = {
-          displayName: text(vibe64User?.displayName || vibe64User?.preferredName || vibe64User?.username),
-          username: text(vibe64User?.username).toLowerCase()
-        };
         const next = strictSuggestion({
           ...current,
           decidedAt: now,
-          decidedBy: approvingActor,
+          decidedBy: vibe64User,
           deliveryAttempts: current.deliveryAttempts + 1,
           lastDeliveryError: "",
           status: "delivering",
