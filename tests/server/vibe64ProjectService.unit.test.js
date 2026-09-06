@@ -834,11 +834,11 @@ for (const setting of ["collaboration", "engineering"]) {
       const standaloneBefore = await readFile(standaloneFile);
       const selectedBefore = await readFile(selectedFile);
       const read = setting === "collaboration"
-        ? service.readSettings.bind(service)
-        : service.readEngineeringSettings.bind(service);
+        ? service.readSettings
+        : service.readEngineeringSettings;
       const save = setting === "collaboration"
-        ? service.saveCollaborationSettings.bind(service)
-        : service.saveEngineeringProfile.bind(service);
+        ? service.saveCollaborationSettings
+        : service.saveEngineeringProfile;
       const input = {
         ...(setting === "collaboration"
           ? {
