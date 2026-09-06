@@ -6,7 +6,6 @@ import path from "node:path";
 import {
   isMissingPathError,
   normalizeText,
-  pathExists,
   vibe64Error
 } from "@local/vibe64-core/server/core";
 import {
@@ -624,7 +623,17 @@ function createService({
       );
     }
     const sourceRoot = sessionSourcePath(session);
-    if (!sourceRoot || !await pathExists(sourceRoot)) {
+    let sourceRootStats = null;
+    if (sourceRoot) {
+      try {
+        sourceRootStats = await sourceEditorPathStats(sourceRoot);
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          throw error;
+        }
+      }
+    }
+    if (!sourceRootStats?.isDirectory()) {
       throw sourceEditorError(
         "Create the session source before opening the editor.",
         "vibe64_source_editor_source_unavailable",
@@ -1133,6 +1142,22 @@ function absoluteSourceEditorPath(sourceRoot = "", relativePath = "") {
   return absolutePath;
 }
 
+async function sourceEditorPathStats(sourceRoot = "", relativePath = "") {
+  const absolutePath = absoluteSourceEditorPath(sourceRoot, relativePath);
+  let currentPath = path.resolve(sourceRoot);
+  let stats;
+  for (const segment of path.relative(currentPath, absolutePath).split(path.sep)) {
+    currentPath = path.join(currentPath, segment);
+    stats = await lstat(currentPath);
+    if (stats.isSymbolicLink()) {
+      throw sourceEditorError("Source editor does not access paths containing symbolic links.", "vibe64_source_editor_symlink", {
+        path: relativePath
+      }, 403);
+    }
+  }
+  return stats;
+}
+
 function normalizeSourceEditorPolicyPath(value = "") {
   return normalizeText(value)
     .replaceAll("\\", "/")
@@ -1540,18 +1565,14 @@ async function sourceEditorResolvableFile(context = {}, relativePath = "") {
   if (sourceEditorPathExcluded(context.policy, relativePath)) {
     return null;
   }
-  const absolutePath = absoluteSourceEditorPath(context.sourceRoot, relativePath);
   let stats = null;
   try {
-    stats = await lstat(absolutePath);
+    stats = await sourceEditorPathStats(context.sourceRoot, relativePath);
   } catch (error) {
-    if (isMissingPathError(error)) {
+    if (isMissingPathError(error) || error?.code === "vibe64_source_editor_symlink") {
       return null;
     }
     throw error;
-  }
-  if (stats.isSymbolicLink()) {
-    return null;
   }
   if (stats.isFile()) {
     return {
@@ -1702,16 +1723,13 @@ async function sourceEditorDirectoryPage(context = {}, {
     }, 403);
   }
   const absolutePath = absoluteSourceEditorPath(sourceRoot, relativePath);
-  const stats = await lstat(absolutePath);
-  if (stats.isSymbolicLink()) {
-    throw sourceEditorError("Source editor does not browse symbolic links.", "vibe64_source_editor_symlink", {
-      path: relativePath
-    }, 403);
-  }
-  if (!stats.isDirectory()) {
-    throw sourceEditorError("Choose a source directory.", "vibe64_invalid_source_editor_path", {
-      path: relativePath
-    });
+  if (relativePath) {
+    const stats = await sourceEditorPathStats(sourceRoot, relativePath);
+    if (!stats.isDirectory()) {
+      throw sourceEditorError("Choose a source directory.", "vibe64_invalid_source_editor_path", {
+        path: relativePath
+      });
+    }
   }
 
   const depth = relativePath ? relativePath.split("/").length : 0;
@@ -2103,12 +2121,7 @@ async function sourceEditorExistingFile(context = {}, relativePathValue = "") {
   }
 
   const absolutePath = absoluteSourceEditorPath(context.sourceRoot, relativePath);
-  const stats = await lstat(absolutePath);
-  if (stats.isSymbolicLink()) {
-    throw sourceEditorError("Source editor does not edit symbolic links.", "vibe64_source_editor_symlink", {
-      path: relativePath
-    }, 403);
-  }
+  const stats = await sourceEditorPathStats(context.sourceRoot, relativePath);
   if (!stats.isFile()) {
     throw sourceEditorError("Choose a source file, not a directory.", "vibe64_invalid_source_editor_path", {
       path: relativePath

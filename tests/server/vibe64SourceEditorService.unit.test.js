@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
-import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -3653,6 +3653,162 @@ test("source editor search uses ripgrep and excludes VCS internals", async (t) =
     assert.equal(sourceResult?.line, 1);
     assert.match(sourceResult?.preview || "", /visible needle/u);
   } finally {
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor reports unavailable when its source root is missing or not a directory", async () => {
+  const fixture = await createSourceEditorFixture();
+  try {
+    await rename(fixture.sourceRoot, path.join(fixture.root, "original-source"));
+    const missing = await fixture.service.readTree({ sessionId: "session-1" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.statusCode, 409);
+    assert.equal(missing.errors[0].code, "vibe64_source_editor_source_unavailable");
+
+    await writeFile(fixture.sourceRoot, "This is not a source directory.\n");
+    const notDirectory = await fixture.service.listFiles({ sessionId: "session-1" });
+    assert.equal(notDirectory.ok, false);
+    assert.equal(notDirectory.statusCode, 409);
+    assert.equal(notDirectory.errors[0].code, "vibe64_source_editor_source_unavailable");
+  } finally {
+    fixture.service.close();
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor rejects a symbolic link as the session source root", async (t) => {
+  const fixture = await createSourceEditorFixture();
+  const outsideRoot = path.join(fixture.root, "outside");
+  try {
+    await mkdir(outsideRoot);
+    await writeFile(path.join(outsideRoot, "outside-file.js"), "export const outsideNeedle = true;\n");
+    await rename(fixture.sourceRoot, path.join(fixture.root, "original-source"));
+    await symlink(outsideRoot, fixture.sourceRoot, "dir");
+
+    await t.test("does not list files through a linked source root", async () => {
+      const result = await fixture.service.listFiles({
+        query: "outside-file",
+        sessionId: "session-1"
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.errors[0].code, "vibe64_source_editor_symlink");
+      assert.equal(result.files, undefined);
+    });
+
+    await t.test("does not search files through a linked source root", async () => {
+      const result = await fixture.service.search({
+        query: "outsideNeedle",
+        sessionId: "session-1"
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.errors[0].code, "vibe64_source_editor_symlink");
+      assert.equal(result.results, undefined);
+    });
+  } finally {
+    fixture.service.close();
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
+test("source editor rejects symbolic links in ancestor directories", async (t) => {
+  let observedFiles = 0;
+  const fixture = await createSourceEditorFixture({
+    sourceFileObserver: {
+      close() {},
+      subscribe() {
+        observedFiles += 1;
+        throw new Error("A linked source path must not reach file observation.");
+      }
+    }
+  });
+  const outsideRoot = path.join(fixture.root, "outside");
+  const originalText = "export const linked = 'original';\n";
+  try {
+    for (const target of [
+      { name: "outside", root: outsideRoot },
+      { name: "inside", root: path.join(fixture.sourceRoot, "ordinary") }
+    ]) {
+      await mkdir(path.join(target.root, "nested"), { recursive: true });
+      const targetFile = path.join(target.root, "nested", "linked.js");
+      await writeFile(targetFile, originalText);
+      const linkPath = `linked-${target.name}`;
+      await symlink(target.root, path.join(fixture.sourceRoot, linkPath), "dir");
+      const linkedFile = `${linkPath}/nested/linked.js`;
+      const input = { path: linkedFile, sessionId: "session-1" };
+
+      await t.test(`rejects reading through a link to ${target.name} source`, async () => {
+        const result = await fixture.service.readFile(input);
+        assert.equal(result.ok, false);
+        assert.equal(result.errors[0].code, "vibe64_source_editor_symlink");
+      });
+
+      await t.test(`rejects browsing beneath a link to ${target.name} source`, async () => {
+        const result = await fixture.service.readTree({
+          ...input,
+          path: `${linkPath}/nested`
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.errors[0].code, "vibe64_source_editor_symlink");
+      });
+
+      await t.test(`does not resolve a file through a link to ${target.name} source`, async () => {
+        const result = await fixture.service.resolvePath({
+          fromPath: "src/app.js",
+          sessionId: "session-1",
+          target: `../${linkedFile}`
+        });
+        assert.equal(result.ok, true);
+        assert.equal(result.resolved, false);
+      });
+
+      await t.test(`does not save through a link to ${target.name} source`, async () => {
+        const result = await fixture.service.saveFile({
+          ...input,
+          baseHash: crypto.createHash("sha256").update(originalText).digest("hex"),
+          text: "export const linked = 'overwritten';\n"
+        });
+        assert.deepEqual({
+          code: result.errors?.[0]?.code,
+          ok: result.ok,
+          text: await readFile(targetFile, "utf8")
+        }, {
+          code: "vibe64_source_editor_symlink",
+          ok: false,
+          text: originalText
+        });
+      });
+
+      await t.test(`does not create files through a link to ${target.name} source`, async () => {
+        const result = await fixture.service.createFile({
+          ...input,
+          path: `${linkPath}/nested/created.js`
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.errors[0].code, "vibe64_source_editor_symlink");
+        await assert.rejects(readFile(path.join(target.root, "nested", "created.js")), { code: "ENOENT" });
+      });
+
+      await t.test(`does not observe files through a link to ${target.name} source`, async () => {
+        await assert.rejects(fixture.service.streamFileChanges(input, {
+          emit() {},
+          isClosed: () => false,
+          onClose() {}
+        }), { code: "vibe64_source_editor_symlink" });
+        assert.equal(observedFiles, 0);
+      });
+    }
+  } finally {
+    fixture.service.close();
     await rm(fixture.root, {
       force: true,
       recursive: true
