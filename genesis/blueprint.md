@@ -7,6 +7,12 @@ People can open or create a project, work in isolated sessions, and have a
 direct conversation with the agent while seeing the source, changes, running
 application, environment, and the system's explained structure in one place.
 Each session keeps valuable work recoverable and separate from unrelated work.
+People can explore a project's database through a readable relationship diagram,
+starting with its keys and expanding detail when needed. Connections identify
+the linked fields and their relationship, remain traceable while tables move,
+and avoid covering tables where space permits. People can search fields, focus
+on a table's neighbours, arrange or group tables, pin important positions, undo
+layout changes, and keep named views for their own session.
 The first project message carries the relevant Genesis task prompt; later
 messages and active-turn steering stay concise instead of rebuilding it. The
 project's shorter durable operating guide is loaded when a conversation is

@@ -185,7 +185,7 @@ function finiteCoordinate(value) {
     : 0;
 }
 
-function normalizedLayout(value = null) {
+function normalizedDiagram(value = null) {
   const record = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const nodes = Array.isArray(record.nodes) ? record.nodes : [];
   if (nodes.length > LAYOUT_NODE_LIMIT) {
@@ -194,12 +194,37 @@ function normalizedLayout(value = null) {
   return {
     nodes: nodes.map((node) => ({
       collapsed: node?.collapsed === true,
+      expanded: node?.expanded === true,
+      pinned: node?.pinned === true,
+      group: text(node?.group).slice(0, 80),
       hidden: node?.hidden === true,
       table: text(node?.table).slice(0, 512),
       x: finiteCoordinate(node?.x),
       y: finiteCoordinate(node?.y)
     })).filter((node) => node.table),
-    updatedAt: text(record.updatedAt),
+    columnMode: record.columnMode === "all" ? "all" : "keys",
+    focusTable: text(record.focusTable).slice(0, 512),
+    activeGroup: text(record.activeGroup).slice(0, 524),
+    groups: (Array.isArray(record.groups) ? record.groups : []).slice(0, 50)
+      .map((group) => ({ id: text(group?.id).slice(0, 80), name: text(group?.name).slice(0, 80) }))
+      .filter((group) => group.id && group.name),
+    viewport: {
+      x: finiteCoordinate(record.viewport?.x),
+      y: finiteCoordinate(record.viewport?.y),
+      zoom: Math.max(0.08, Math.min(1.8, Number(record.viewport?.zoom) || 1))
+    }
+  };
+}
+
+function normalizedLayout(value = null) {
+  return {
+    ...normalizedDiagram(value),
+    views: (Array.isArray(value?.views) ? value.views : []).slice(0, 20).map((view) => ({
+      ...normalizedDiagram(view),
+      id: text(view?.id).slice(0, 80),
+      name: text(view?.name).slice(0, 80)
+    })).filter((view) => view.id && view.name),
+    updatedAt: text(value?.updatedAt),
     version: 1
   };
 }
@@ -217,7 +242,8 @@ async function saveErdLayout(store, sessionId = "", vibe64User = null, layout = 
     ...layout,
     updatedAt: new Date().toISOString()
   });
-  await store.writeJsonArtifact(sessionId, layoutArtifactPath(vibe64User), normalized);
+  const path = layoutArtifactPath(vibe64User);
+  await serializeWrite(`${sessionId}\u0000${path}`, () => store.writeJsonArtifact(sessionId, path, normalized));
   return normalized;
 }
 

@@ -169,6 +169,7 @@
 
         <main class="database-workspace__main">
           <DatabaseErd
+            :key="sessionId"
             v-if="activeView === 'erd'"
             :layout="erdLayout"
             :schema="schema"
@@ -1126,15 +1127,22 @@ async function removeSnippet(id) {
   await reload();
 }
 
-async function saveDiagramLayout(layout) {
+let diagramSaveQueue = Promise.resolve();
+let diagramSaveRevision = 0;
+function saveDiagramLayout(layout) {
+  const sessionId = props.sessionId;
+  const revision = ++diagramSaveRevision;
   const previousLayout = erdLayout.value;
-  erdLayout.value = layout;
-  const result = await saveLayout(layout);
-  if (result?.layout) {
-    erdLayout.value = result.layout;
-  } else {
-    erdLayout.value = previousLayout;
-  }
+  const pending = JSON.parse(JSON.stringify(layout));
+  erdLayout.value = pending;
+  diagramSaveQueue = diagramSaveQueue.catch(() => null).then(async () => {
+    if (props.sessionId !== sessionId) return;
+    const result = await saveLayout(pending);
+    if (props.sessionId === sessionId && revision === diagramSaveRevision) {
+      erdLayout.value = result?.layout || previousLayout;
+    }
+  });
+  return diagramSaveQueue;
 }
 
 function useAssistantSql(sql) {

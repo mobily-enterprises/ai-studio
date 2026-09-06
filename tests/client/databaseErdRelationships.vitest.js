@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createErdOrthogonalPath,
-  createErdRelationshipRoutes
-} from "../../packages/vibe64-database-tools/src/client/erdRelationships.js";
+import { createErdRelationshipRoutes } from "../../packages/vibe64-database-tools/src/client/erdRelationships.js";
+import { erdObstacles, erdPathClear } from "../../packages/vibe64-database-tools/src/client/erdRouting.js";
+import { erdCardinality, erdColumns, erdLayoutGroups, erdNeighbours, erdSearch, placeErdNodes } from "../../packages/vibe64-database-tools/src/client/erdModel.js";
 
 function tableNode(id, x, columns, { collapsed = false, y = 0 } = {}) {
   return {
@@ -75,21 +74,108 @@ describe("Database ERD relationships", () => {
     });
   });
 
-  it("draws a distinct orthogonal lane between the relationship ports", () => {
-    expect(createErdOrthogonalPath({
-      laneX: 360,
-      sourcePosition: "right",
-      sourceTrackOffset: -6,
-      sourceX: 280,
-      sourceY: 90,
-      targetPosition: "left",
-      targetTrackOffset: 6,
-      targetX: 420,
-      targetY: 410
-    })).toEqual([
-      "M280 90H298V84H360V416H402V410H420",
-      360,
-      250
-    ]);
+  it("routes around intervening cards and keeps every segment orthogonal", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 800, ["id", "parent_id"]), tableNode("blocker", 380, ["id"], { y: -40 })];
+    const { routes } = createErdRelationshipRoutes(nodes, relationships.slice(0, 1));
+    const route = routes[0];
+    expect(route.obstructed).toBe(false);
+    expect(erdPathClear(route.points, erdObstacles(nodes), route.source, route.target)).toBe(true);
+    expect(route.points[0]).toEqual(route.start);
+    expect(route.points.at(-1)).toEqual(route.end);
+    expect(route.points.slice(1).every((point, i) => point.x === route.points[i].x || point.y === route.points[i].y)).toBe(true);
+  });
+
+  it("represents every composite column pair as one selectable relationship", () => {
+    const relation = { ...relationships[0], columns: ["parent_id", "tenant_id"], referencedColumns: ["id", "tenant_id"] };
+    const { routes } = createErdRelationshipRoutes([tableNode("parent", 0, ["id", "tenant_id"]), tableNode("child", 600, ["parent_id", "tenant_id"])], [relation]);
+    expect(routes.map((route) => [route.sourceColumn, route.targetColumn])).toEqual([["id", "parent_id"], ["tenant_id", "tenant_id"]]);
+    expect(new Set(routes.map((route) => route.relationshipId)).size).toBe(1);
+    expect(new Set(routes.map((route) => route.id)).size).toBe(2);
+  });
+
+  it("preserves unrelated routes and port sides during dragging", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 600, ["parent_id", "backup_parent_id"])];
+    const first = createErdRelationshipRoutes(nodes, relationships);
+    const stable = createErdRelationshipRoutes(nodes, relationships, { previousRoutes: first.routes, dragging: true });
+    expect(stable.routes[0].points).toBe(first.routes[0].points);
+    nodes[1].position = { x: -600, y: 400 };
+    const moved = createErdRelationshipRoutes(nodes, relationships, { previousRoutes: first.routes, dragging: true });
+    expect(moved.routes[0].targetPosition).toBe(first.routes[0].targetPosition);
+    expect(moved.routes[0].end.x).not.toBe(first.routes[0].end.x);
+    expect(moved.routes[0].points.at(-1)).toEqual(moved.routes[0].end);
+  });
+
+  it("routes self references outside the table", () => {
+    const node = tableNode("parent", 0, ["id", "parent_id"]);
+    const { routes } = createErdRelationshipRoutes([node], [{ ...relationships[0], sourceTable: "parent" }]);
+    expect(routes[0].obstructed).toBe(false);
+    expect(erdPathClear(routes[0].points, erdObstacles([node]), "parent", "parent")).toBe(true);
+  });
+
+  it("separates parallel horizontal and vertical runs for multiple foreign keys", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 600, ["parent_id", "backup_parent_id"], { y: 380 })];
+    const { routes } = createErdRelationshipRoutes(nodes, relationships);
+    const segments = (route) => route.points.slice(1).map((b, i) => [route.points[i], b]);
+    for (const [a, b] of segments(routes[0])) {
+      for (const [c, d] of segments(routes[1])) {
+        const sameVertical = a.x === b.x && c.x === d.x && a.x === c.x;
+        const sameHorizontal = a.y === b.y && c.y === d.y && a.y === c.y;
+        const overlap = sameVertical
+          ? Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) - Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y))
+          : sameHorizontal ? Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) - Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x)) : 0;
+        expect(overlap).toBeLessThanOrEqual(0);
+      }
+    }
+  });
+
+  it("keeps another relationship's route unchanged while a table moves", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 600, ["parent_id"]), tableNode("other-parent", 0, ["id"], { y: 700 }), tableNode("other-child", 600, ["parent_id"], { y: 700 })];
+    const relations = [relationships[0], { ...relationships[0], id: "other", referencedTable: "other-parent", sourceTable: "other-child" }];
+    const before = createErdRelationshipRoutes(nodes, relations);
+    nodes[1].position = { x: 900, y: 100 };
+    const during = createErdRelationshipRoutes(nodes, relations, { previousRoutes: before.routes, dragging: true });
+    expect(during.routes.find((route) => route.id === "other").points).toBe(before.routes.find((route) => route.id === "other").points);
+    expect(during.routes[0].end).not.toEqual(before.routes[0].end);
+  });
+});
+
+describe("Database ERD exploration", () => {
+  const parent = { qualifiedName: "parent", name: "Parent", columns: [{ name: "id", nullable: false }, { name: "name" }], keys: [{ columns: ["id"], primary: true }] };
+  const child = { qualifiedName: "child", name: "Child", columns: [{ name: "parent_id", nullable: true }, { name: "notes" }], keys: [{ columns: ["parent_id"] }] };
+  it("derives optional and unique relationships without promising a child exists", () => {
+    expect(erdCardinality(relationships[0], parent, child)).toEqual({ parent: "0..1", child: "0..1", optional: true });
+    expect(erdCardinality(relationships[0], parent, { ...child, columns: [{ name: "parent_id", nullable: false }], keys: [] })).toEqual({ parent: "1", child: "0..N", optional: false });
+    expect(erdCardinality(relationships[0], parent, { ...child, columns: [{ name: "parent_id" }] }).parent).toBe("?..1");
+  });
+  it("shows relationship columns in keys mode and restores all fields on expansion", () => {
+    expect(erdColumns(parent, relationships).map((column) => column.name)).toEqual(["id"]);
+    expect(erdColumns(child, relationships).map((column) => column.name)).toEqual(["parent_id"]);
+    expect(erdColumns(child, relationships, "keys", true)).toEqual(child.columns);
+    expect(erdColumns(child, relationships, "all")).toEqual(child.columns);
+  });
+  it("searches columns and focuses only immediate neighbours", () => {
+    expect(erdSearch([parent, child], "notes")).toEqual([{ table: "child", column: "notes", title: "Child.notes" }]);
+    expect([...erdNeighbours("parent", [...relationships, { sourceTable: "grandchild", referencedTable: "child" }])].sort()).toEqual(["child", "parent"]);
+  });
+  it("keeps pinned positions and places reset nodes outside their bounds", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 0, ["parent_id"])];
+    const placed = placeErdNodes(nodes, [{ id: "parent", x: 900, y: 0 }, { id: "child", x: 0, y: 0 }], [{ table: "parent", pinned: true, x: 0, y: 0 }], true);
+    expect(placed[0].position).toEqual({ x: 0, y: 0 });
+    expect(placed[1].position.y).toBeGreaterThan(nodes[0].dimensions.height);
+  });
+  it("finds stable relationship neighbourhoods, with explicit groups taking precedence", () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "isolated"];
+    const nodes = ids.map((id) => ({ id, data: { table: { name: id } } }));
+    const relations = [["a", "b"], ["b", "c"], ["c", "a"], ["d", "e"], ["e", "f"], ["f", "d"], ["a", "d"]]
+      .map(([sourceTable, referencedTable]) => ({ sourceTable, referencedTable }));
+    const groups = erdLayoutGroups(nodes, relations);
+    expect(groups.map((group) => group.tables)).toEqual([["a", "b", "c"], ["d", "e", "f"], ["isolated"]]);
+    const memberships = (result) => Object.fromEntries(result.flatMap((group) => group.tables.map((id) => [id, group.id])));
+    expect(memberships(erdLayoutGroups([...nodes].reverse(), [...relations].reverse()))).toEqual(memberships(groups));
+    nodes[0].data.group = "chosen";
+    nodes[3].data.group = "chosen";
+    expect(erdLayoutGroups(nodes, relations).find((group) => group.id === "chosen").tables).toEqual(["a", "d"]);
+    expect(groups.find((group) => group.id === "erd-disconnected").tables).toEqual(["isolated"]);
+    expect(erdLayoutGroups([{ id: "self" }], [{ sourceTable: "self", referencedTable: "self" }])[0].id).toBe("erd-auto:self");
   });
 });

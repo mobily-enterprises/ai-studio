@@ -1,10 +1,7 @@
 import ELK from "elkjs/lib/elk-api.js";
 import ElkWorker from "elkjs/lib/elk-worker.min.js?worker";
 
-import {
-  createErdLayoutGraph,
-  fallbackErdLayout
-} from "./erdLayout.js";
+import { layoutErdGroups } from "./erdLayout.js";
 
 let elk = null;
 
@@ -13,23 +10,11 @@ self.addEventListener("message", async (event) => {
   try {
     const nodes = Array.isArray(request.nodes) ? request.nodes : [];
     const edges = Array.isArray(request.edges) ? request.edges : [];
-    let positions;
-    try {
-      elk ||= new ELK({
-        workerFactory: () => new ElkWorker()
-      });
-      const graph = await elk.layout(createErdLayoutGraph(nodes, edges));
-      positions = (graph.children || []).map((node) => ({
-        id: node.id,
-        x: Number(node.x || 0),
-        y: Number(node.y || 0)
-      }));
-    } catch {
-      positions = fallbackErdLayout(nodes, edges);
-    }
+    elk ||= new ELK({ workerFactory: () => new ElkWorker() });
+    const result = await layoutErdGroups(elk, nodes, edges, request.groups);
     self.postMessage({
+      ...result,
       id: request.id,
-      nodes: positions,
       ok: true
     });
   } catch (error) {

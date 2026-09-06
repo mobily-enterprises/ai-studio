@@ -1,112 +1,47 @@
 <template>
   <BaseEdge
     :id="id"
-    :interaction-width="interactionWidth"
-    :label="label"
-    :label-bg-border-radius="labelBgBorderRadius"
-    :label-bg-padding="labelBgPadding"
-    :label-bg-style="labelBgStyle"
-    :label-show-bg="labelShowBg"
-    :label-style="labelStyle"
-    :label-x="edgePath[1]"
-    :label-y="edgePath[2]"
+    :interaction-width="20"
     :marker-end="markerEnd"
-    :marker-start="markerStart"
     :path="edgePath[0]"
     :style="style"
+  />
+  <EdgeText
+    v-if="data.emphasized"
+    :x="sourceX + (sourcePosition === 'left' ? -38 : 38)"
+    :y="sourceY - 12"
+    :label="data.cardinality.parent"
+    :label-show-bg="true"
+    :label-bg-padding="[3, 2]"
+  />
+  <EdgeText
+    v-if="data.emphasized"
+    :x="targetX + (targetPosition === 'left' ? -38 : 38)"
+    :y="targetY - 12"
+    :label="data.cardinality.child"
+    :label-show-bg="true"
+    :label-bg-padding="[3, 2]"
   />
 </template>
 
 <script setup>
 import { computed } from "vue";
-import { BaseEdge } from "@vue-flow/core";
+import { BaseEdge, EdgeText } from "@vue-flow/core";
+import { erdPolylinePath } from "../erdRouting.js";
 
-import { createErdOrthogonalPath } from "../erdRelationships.js";
+defineOptions({ inheritAttrs: false });
 
 const props = defineProps({
-  data: {
-    default: () => ({}),
-    type: Object
-  },
-  id: {
-    required: true,
-    type: String
-  },
-  interactionWidth: {
-    default: 20,
-    type: Number
-  },
-  label: {
-    default: "",
-    type: [String, Object]
-  },
-  labelBgBorderRadius: {
-    default: 0,
-    type: Number
-  },
-  labelBgPadding: {
-    default: () => [0, 0],
-    type: Array
-  },
-  labelBgStyle: {
-    default: () => ({}),
-    type: Object
-  },
-  labelShowBg: {
-    default: false,
-    type: Boolean
-  },
-  labelStyle: {
-    default: () => ({}),
-    type: Object
-  },
-  markerEnd: {
-    default: "",
-    type: String
-  },
-  markerStart: {
-    default: "",
-    type: String
-  },
-  sourceX: {
-    required: true,
-    type: Number
-  },
-  sourceY: {
-    required: true,
-    type: Number
-  },
-  sourcePosition: {
-    default: "right",
-    type: String
-  },
-  style: {
-    default: () => ({}),
-    type: Object
-  },
-  targetX: {
-    required: true,
-    type: Number
-  },
-  targetY: {
-    required: true,
-    type: Number
-  },
-  targetPosition: {
-    default: "left",
-    type: String
-  }
+  data: { default: () => ({}), type: Object },
+  id: { required: true, type: String },
+  markerEnd: { default: "", type: String },
+  sourceX: { required: true, type: Number },
+  sourceY: { required: true, type: Number },
+  sourcePosition: { default: "right", type: String },
+  targetX: { required: true, type: Number },
+  targetY: { required: true, type: Number },
+  targetPosition: { default: "left", type: String },
+  style: { default: () => ({}), type: Object }
 });
-
-const edgePath = computed(() => createErdOrthogonalPath({
-  laneX: props.data?.laneX,
-  sourcePosition: props.sourcePosition,
-  sourceTrackOffset: props.data?.sourceTrackOffset,
-  sourceX: props.sourceX,
-  sourceY: props.sourceY,
-  targetPosition: props.targetPosition,
-  targetTrackOffset: props.data?.targetTrackOffset,
-  targetX: props.targetX,
-  targetY: props.targetY
-}));
+const edgePath = computed(() => erdPolylinePath(props.data.points));
 </script>
