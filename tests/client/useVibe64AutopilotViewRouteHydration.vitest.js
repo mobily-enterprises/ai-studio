@@ -89,6 +89,32 @@ describe("useVibe64AutopilotView route hydration", () => {
   });
   afterEach(() => scope.stop());
 
+  it("projects retained session activity without hiding the shared dashboard route", async () => {
+    route.path = "/app/project/chat-test/dashboard/repository";
+    const props = viewProps();
+    const { useVibe64AutopilotView } = await import(
+      "../../src/composables/useVibe64AutopilotView.js"
+    );
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
+    const requestSaveWork = view.dashboardSessionContext.value.requestSaveWork;
+
+    expect(view.dashboardSessionContext.value.active).toBe(true);
+    props.active = false;
+    await nextTick();
+    expect(view.dashboardSessionContext.value).toMatchObject({
+      active: false, requestSaveWork, sessionId: "session-1"
+    });
+    expect(view.dashboardRouteVisible.value).toBe(true);
+
+    props.active = true;
+    await nextTick();
+    expect(view.dashboardSessionContext.value).toMatchObject({
+      active: true, requestSaveWork, sessionId: "session-1"
+    });
+    expect(router.push).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("opens a directly routed source tool when the selected source arrives", async () => {
     const props = viewProps();
     const { useVibe64AutopilotView } = await import(

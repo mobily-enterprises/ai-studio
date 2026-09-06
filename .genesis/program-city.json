@@ -514,7 +514,7 @@
       "implementationMap": "- The source-editor service owns explanation cache lookup, temporary conversation\n  creation and cleanup. `useVibe64SourceEditor()` owns the selected explanation,\n  request generation, streamed messages and acknowledged Close state;\n  `Vibe64SourceExplanationPanel` presents the answer, follow-up, cancellation\n  and recovery controls. An answered cache record does not need a thread id to\n  enable its first follow-up.\n- Server interruption stays outside the streaming write lock. If a new message\n  has not received its provider turn identity, Stop waits for that exact message's\n  identity or startup failure; it never reuses the previous message's turn. After\n  its provider acknowledgement, Stop compares the targeted assistant message and\n  provider turn before publishing state; it cannot overwrite a newer turn or restore an\n  explanation that has already been deleted.\n- `runSessionWorkOperation()` admits each Current Changes, file-diff, work-state,\n  or update-check request as one managed job. Canonical Save uses one managed\n  checkpoint-and-summary job before commit naming and one managed\n  publish-and-reconcile transaction under the project source lock.\n  `sessionWorkOperationCommand.js` performs each operation's exact Git work\n  inside its admitted child instead of paying managed-host admission cost for\n  every individual Git command.\n- `refreshWorkState(observedWork)` accepts the complete work-state snapshot\n  already returned by Current Changes. The runtime host also projects Save and\n  Update task events directly from the mounted realtime session, so visible\n  progress does not wait for repository inspection behind an active source\n  lock.\n- Current Changes calculates its initial selected-file difference inside the\n  file-list managed job, reusing that job's exact worktree tree instead of\n  admitting and scanning the worktree a second time.\n- Concurrent update checks for one session share the same exact server\n  operation, and repeated repository refresh events collapse into one bounded\n  follow-up Current Changes inspection.\n- History validates its pinned Git snapshot once per files or diff request. When\n  that exact commit is selected, its object resolution is reused; older selected\n  commits still receive their own resolution and reachability checks.",
       "name": "edit-and-review",
       "path": "genesis/program/source/edit-and-review.md",
-      "publicContract": "The source browser lists, searches, opens, edits, and saves allowed project\nfiles inside the selected session source. It rejects paths outside that source\nand reports concurrent changes rather than silently overwriting them. The\nsource editor publishes successful creates and saves with project, session,\npath, hash, and originating-tab identity. A foreign create refreshes the file\ntree, while a foreign save refreshes a clean matching file or warns without\noverwriting a dirty draft.\nSelected-file observation follows the active session and editor pane.\nRetaining an inactive session does not retain its file connection; returning to the\neditor reconnects and revalidates the selected file through the existing sync\nowner. Events from a replaced connection do not update the current editor.\nA source explanation is temporary assistance for a selected code range or file.\nA matching cached answer can appear without starting a provider conversation;\nits first follow-up starts an independently owned conversation through the same\nverified low-cost execution profile. The server retains source, account, profile,\nand conversation authorization. The browser submits the explanation identity\nand question, not a provider thread or model configuration. Failed conversations\noffer regeneration instead of another follow-up; unavailable assistants leave\nthe existing answer readable with generation and follow-up actions disabled.\nStop targets the selected explanation. Closing keeps its answer visible and\ndisables conflicting actions until cleanup is acknowledged. Failed cleanup\nretains the answer and reports action feedback so Close can be retried. Changing\nsession or unmounting releases the old stream's pending browser state; a late\nStop response, cleanup result or streamed event cannot reopen that explanation\nor overwrite a newer request, including a follow-up in the same conversation.\nThe Repository presents the session's complete current changes against saved project\nwork, even when those changes are already committed inside the session. It can\nopen an exact changed file without exposing staging mechanics to the user.\nCurrent changes refreshes when an assistant turn becomes idle and when Vibe64\nobserves editor, Save, or repository-status events, so work completed during a\nturn appears without a manual reload. Arbitrary filesystem writes that produce\nnone of those events are not promised to appear immediately.\nCurrent Changes first renders from the last locally proven canonical version\nwhile Vibe64 checks the configured GitHub, managed-Git, or local-repository\nauthority in the background. Save remains unavailable until that authority\ncheck succeeds. The initially selected file difference comes from the same\nimmutable worktree snapshot as the file list.\nHistory file paging and differences belong to the selected commit. Selecting\nanother version clears the previous version's loading and error state. Late\nresults from that previous selection cannot change the new view or prevent it\nfrom loading more files.\nClosing version details retires that selection, including a pending file list;\nits later response cannot start an unused diff behind the closed dialog.\nAfter Save, History refreshes before a separate authority-check result is applied,\nincluding a check already in flight. A check for the displayed version does not\nload it again; a newer version still refreshes the list, and a failed check does\nnot discard the successfully refreshed history.\nA replaced Save request does not keep the current authority check busy after\nthe latest History response has arrived.\nLoaded history and version files remain usable if a later page fails, and the\nsame page can be retried without discarding earlier content. A failed first load\noffers an explicit retry. Once a version's file list arrives, its files are\nselectable while the independently owned first diff is still loading.\nIn both History and Current Changes, a selected filename is literal, not a Git\nsearch pattern, even when it contains wildcard or colon characters. Whitespace,\ntabs and literal backslashes remain part of the exact filename through listing,\nselection and diff requests. An exact file diff never includes descendant files,\nincluding when a deleted file has been replaced by a directory; Git submodule\nentries remain independently readable.\nThe full-screen history view scrolls its file list independently from the diff,\nso long versions keep later files and their Load more action reachable without\nmoving the selected difference out of view.",
+      "publicContract": "The source browser lists, searches, opens, edits, and saves allowed project\nfiles inside the selected session source. It rejects paths outside that source\nand reports concurrent changes rather than silently overwriting them. The\nsource editor publishes successful creates and saves with project, session,\npath, hash, and originating-tab identity. A foreign create refreshes the file\ntree, while a foreign save refreshes a clean matching file or warns without\noverwriting a dirty draft.\nSelected-file observation follows the active session and editor pane.\nRetaining an inactive session does not retain its file connection; returning to the\neditor reconnects and revalidates the selected file through the existing sync\nowner. Events from a replaced connection do not update the current editor.\nA source explanation is temporary assistance for a selected code range or file.\nA matching cached answer can appear without starting a provider conversation;\nits first follow-up starts an independently owned conversation through the same\nverified low-cost execution profile. The server retains source, account, profile,\nand conversation authorization. The browser submits the explanation identity\nand question, not a provider thread or model configuration. Failed conversations\noffer regeneration instead of another follow-up; unavailable assistants leave\nthe existing answer readable with generation and follow-up actions disabled.\nStop targets the selected explanation. Closing keeps its answer visible and\ndisables conflicting actions until cleanup is acknowledged. Failed cleanup\nretains the answer and reports action feedback so Close can be retried. Changing\nsession or unmounting releases the old stream's pending browser state; a late\nStop response, cleanup result or streamed event cannot reopen that explanation\nor overwrite a newer request, including a follow-up in the same conversation.\nThe Repository presents the session's complete current changes against saved project\nwork, even when those changes are already committed inside the session. It can\nopen an exact changed file without exposing staging mechanics to the user.\nCurrent changes refreshes when an assistant turn becomes idle and when Vibe64\nobserves editor, Save, or repository-status events, so work completed during a\nturn appears without a manual reload. Arbitrary filesystem writes that produce\nnone of those events are not promised to appear immediately.\nCurrent Changes first renders from the last locally proven canonical version\nwhile Vibe64 checks the configured GitHub, managed-Git, or local-repository\nauthority in the background. Save remains unavailable until that authority\ncheck succeeds. The initially selected file difference comes from the same\nimmutable worktree snapshot as the file list.\nSwitching away from a retained session retires its History and Current Changes\nreaders and realtime listeners. Late responses cannot start further review work.\nReturning starts a fresh read; transient History paging and version details\nreset. This does not tear down chat or session-wide status tracking.\nHistory file paging and differences belong to the selected commit. Selecting\nanother version clears the previous version's loading and error state. Late\nresults from that previous selection cannot change the new view or prevent it\nfrom loading more files.\nClosing version details retires that selection, including a pending file list;\nits later response cannot start an unused diff behind the closed dialog.\nAfter Save, History refreshes before a separate authority-check result is applied,\nincluding a check already in flight. A check for the displayed version does not\nload it again; a newer version still refreshes the list, and a failed check does\nnot discard the successfully refreshed history.\nA replaced Save request does not keep the current authority check busy after\nthe latest History response has arrived.\nLoaded history and version files remain usable if a later page fails, and the\nsame page can be retried without discarding earlier content. A failed first load\noffers an explicit retry. Once a version's file list arrives, its files are\nselectable while the independently owned first diff is still loading.\nIn both History and Current Changes, a selected filename is literal, not a Git\nsearch pattern, even when it contains wildcard or colon characters. Whitespace,\ntabs and literal backslashes remain part of the exact filename through listing,\nselection and diff requests. An exact file diff never includes descendant files,\nincluding when a deleted file has been replaced by a directory; Git submodule\nentries remain independently readable.\nThe full-screen history view scrolls its file list independently from the diff,\nso long versions keep later files and their Load more action reachable without\nmoving the selected difference out of view.",
       "sourceFileIds": [
         "file:packages/vibe64-source-editor/src/server/service.js",
         "file:packages/vibe64-terminals/src/server/repositoryHistory.js",
@@ -526,11 +526,14 @@
         "file:src/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue",
         "file:src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue",
         "file:src/composables/useVibe64RepositoryWorkspace.js",
+        "file:src/composables/useVibe64AutopilotView.js",
         "file:src/composables/useVibe64SessionRuntimeHost.js",
         "file:src/components/studio/repository/Vibe64RepositoryWorkspace.vue",
         "file:src/components/studio/repository/Vibe64RepositoryFileBrowser.vue",
         "file:src/components/studio/repository/Vibe64RepositoryDiff.vue",
-        "file:src/lib/vibe64RepositoryRealtime.js"
+        "file:src/lib/vibe64RepositoryRealtime.js",
+        "file:src/pages/app/project/[slug]/dashboard/changes/index.vue",
+        "file:src/pages/app/project/[slug]/dashboard/repository/index.vue"
       ],
       "sources": [
         "packages/vibe64-source-editor/src/server/service.js",
@@ -543,11 +546,14 @@
         "src/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue",
         "src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue",
         "src/composables/useVibe64RepositoryWorkspace.js",
+        "src/composables/useVibe64AutopilotView.js",
         "src/composables/useVibe64SessionRuntimeHost.js",
         "src/components/studio/repository/Vibe64RepositoryWorkspace.vue",
         "src/components/studio/repository/Vibe64RepositoryFileBrowser.vue",
         "src/components/studio/repository/Vibe64RepositoryDiff.vue",
-        "src/lib/vibe64RepositoryRealtime.js"
+        "src/lib/vibe64RepositoryRealtime.js",
+        "src/pages/app/project/[slug]/dashboard/changes/index.vue",
+        "src/pages/app/project/[slug]/dashboard/repository/index.vue"
       ],
       "subsystem": "source",
       "title": "Source editing and change review"
@@ -1508,6 +1514,11 @@
     {
       "fromId": "operation:source/edit-and-review",
       "kind": "implemented-by",
+      "toId": "file:src/composables/useVibe64AutopilotView.js"
+    },
+    {
+      "fromId": "operation:source/edit-and-review",
+      "kind": "implemented-by",
       "toId": "file:src/composables/useVibe64SessionRuntimeHost.js"
     },
     {
@@ -1529,6 +1540,16 @@
       "fromId": "operation:source/edit-and-review",
       "kind": "implemented-by",
       "toId": "file:src/lib/vibe64RepositoryRealtime.js"
+    },
+    {
+      "fromId": "operation:source/edit-and-review",
+      "kind": "implemented-by",
+      "toId": "file:src/pages/app/project/[slug]/dashboard/changes/index.vue"
+    },
+    {
+      "fromId": "operation:source/edit-and-review",
+      "kind": "implemented-by",
+      "toId": "file:src/pages/app/project/[slug]/dashboard/repository/index.vue"
     },
     {
       "fromId": "operation:source/save-work",
@@ -1601,7 +1622,7 @@
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
     }
   ],
-  "programHash": "sha256:d48d15f4acd64386255861cc16114a0b12b0b8fab4be6f86da9e9b1636616808",
+  "programHash": "sha256:c13277d95390c3b4c3716e98d26fd1f6778945b420f63f1d6bf60b808539aaca",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

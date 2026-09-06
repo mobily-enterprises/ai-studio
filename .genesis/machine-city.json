@@ -13514,7 +13514,7 @@
       "title": "useVibe64AssistantCatalog.js"
     },
     {
-      "bytes": 68119,
+      "bytes": 68154,
       "districtId": "directory:src/composables",
       "extractors": [
         "javascript"
@@ -13587,18 +13587,18 @@
         "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.selectSessionTool:function:1610:3",
         "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.backToDashboard:function:1629:3",
         "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.rightPaneTabMounted:function:1636:3",
-        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.openSourceEditorFile:function:1673:3",
-        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.backToSystemFromEditor:function:1694:3",
-        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.prefillComposer:function:1713:3",
-        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.askCodexAboutSourceEditorFile:function:1723:3",
-        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.updateAgentSetting:function:1730:3",
-        "function:src/composables/useVibe64AutopilotView.js:executionAttentionForError:function:1949:1"
+        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.openSourceEditorFile:function:1674:3",
+        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.backToSystemFromEditor:function:1695:3",
+        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.prefillComposer:function:1714:3",
+        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.askCodexAboutSourceEditorFile:function:1724:3",
+        "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.updateAgentSetting:function:1731:3",
+        "function:src/composables/useVibe64AutopilotView.js:executionAttentionForError:function:1950:1"
       ],
-      "hash": "sha256:a76019cc31375e3168a2a24df765c82dc79aa103ebf7fb99b6862d717f1ef3be",
+      "hash": "sha256:bce57e6848ac55776e1e5d999adc07cef47f4d712b7de9bcbef1c67e679d530c",
       "id": "file:src/composables/useVibe64AutopilotView.js",
       "internalFunctionCount": 68,
       "language": "javascript",
-      "lines": 1974,
+      "lines": 1975,
       "mode": 33188,
       "path": "src/composables/useVibe64AutopilotView.js",
       "presentationCampusId": "presentation-campus:source:src/composables",
@@ -16600,19 +16600,19 @@
       "title": "index.vue"
     },
     {
-      "bytes": 323,
+      "bytes": 368,
       "districtId": "directory:src/pages/app/project/[slug]/dashboard/changes",
       "extractors": [
         "javascript"
       ],
       "functionIds": [
-        "function:src/pages/app/project/[slug]/dashboard/changes/index.vue:default:function:12:32"
+        "function:src/pages/app/project/[slug]/dashboard/changes/index.vue:default:function:13:32"
       ],
-      "hash": "sha256:954a23a683f7f08046e6fe344d171b1011cc8c729c439b83a31d13c32f9a704a",
+      "hash": "sha256:221c1850c029a31b36dd2b516259a10e6a61b0f15874bde667ba2e72131faa4c",
       "id": "file:src/pages/app/project/[slug]/dashboard/changes/index.vue",
       "internalFunctionCount": 1,
       "language": "javascript",
-      "lines": 14,
+      "lines": 15,
       "mode": 33188,
       "path": "src/pages/app/project/[slug]/dashboard/changes/index.vue",
       "presentationCampusId": "presentation-campus:source:src/pages",
@@ -16702,19 +16702,19 @@
       "title": "index.vue"
     },
     {
-      "bytes": 323,
+      "bytes": 368,
       "districtId": "directory:src/pages/app/project/[slug]/dashboard/repository",
       "extractors": [
         "javascript"
       ],
       "functionIds": [
-        "function:src/pages/app/project/[slug]/dashboard/repository/index.vue:default:function:12:32"
+        "function:src/pages/app/project/[slug]/dashboard/repository/index.vue:default:function:13:32"
       ],
-      "hash": "sha256:caaf7b4c5ecba701efd3fa3c9debad3e6edef9974427a72fdc20a48896c1bf31",
+      "hash": "sha256:421d767fec35f989d82dc87466146ba173a73b21a1b0aa66ac3ad404b5e90107",
       "id": "file:src/pages/app/project/[slug]/dashboard/repository/index.vue",
       "internalFunctionCount": 1,
       "language": "javascript",
-      "lines": 14,
+      "lines": 15,
       "mode": 33188,
       "path": "src/pages/app/project/[slug]/dashboard/repository/index.vue",
       "presentationCampusId": "presentation-campus:source:src/pages",
@@ -17035,7 +17035,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:bbdcda90b1061961c9c6bebe423339488e8edcd7a7e95d6803cec2936af27cbf",
+  "codeHash": "sha256:210f3bdae8ce11bcb09307e1b5886328d18c37e7f287685edeeee6ec286c19c6",
   "diagnostics": [],
   "districts": [
     {
@@ -144428,10 +144428,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64AutopilotView.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.openSourceEditorFile:function:1673:3",
+      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.openSourceEditorFile:function:1674:3",
       "kind": "function",
       "language": "javascript",
-      "line": 1673,
+      "line": 1674,
       "name": "openSourceEditorFile",
       "parameters": [
         "target = {}"
@@ -144449,10 +144449,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64AutopilotView.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.backToSystemFromEditor:function:1694:3",
+      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.backToSystemFromEditor:function:1695:3",
       "kind": "function",
       "language": "javascript",
-      "line": 1694,
+      "line": 1695,
       "name": "backToSystemFromEditor",
       "parameters": [],
       "path": "src/composables/useVibe64AutopilotView.js",
@@ -144468,10 +144468,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64AutopilotView.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.prefillComposer:function:1713:3",
+      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.prefillComposer:function:1714:3",
       "kind": "function",
       "language": "javascript",
-      "line": 1713,
+      "line": 1714,
       "name": "prefillComposer",
       "parameters": [
         "text = \"\""
@@ -144489,10 +144489,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64AutopilotView.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.askCodexAboutSourceEditorFile:function:1723:3",
+      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.askCodexAboutSourceEditorFile:function:1724:3",
       "kind": "function",
       "language": "javascript",
-      "line": 1723,
+      "line": 1724,
       "name": "askCodexAboutSourceEditorFile",
       "parameters": [
         "path = \"\""
@@ -144510,10 +144510,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64AutopilotView.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.updateAgentSetting:function:1730:3",
+      "id": "function:src/composables/useVibe64AutopilotView.js:useVibe64AutopilotView.updateAgentSetting:function:1731:3",
       "kind": "function",
       "language": "javascript",
-      "line": 1730,
+      "line": 1731,
       "name": "updateAgentSetting",
       "parameters": [
         "parameterId = \"\"",
@@ -144532,10 +144532,10 @@
       "extractor": "javascript",
       "fileId": "file:src/composables/useVibe64AutopilotView.js",
       "generator": false,
-      "id": "function:src/composables/useVibe64AutopilotView.js:executionAttentionForError:function:1949:1",
+      "id": "function:src/composables/useVibe64AutopilotView.js:executionAttentionForError:function:1950:1",
       "kind": "function",
       "language": "javascript",
-      "line": 1949,
+      "line": 1950,
       "name": "executionAttentionForError",
       "parameters": [
         "error = null",
@@ -167290,10 +167290,10 @@
       "extractor": "javascript",
       "fileId": "file:src/pages/app/project/[slug]/dashboard/changes/index.vue",
       "generator": false,
-      "id": "function:src/pages/app/project/[slug]/dashboard/changes/index.vue:default:function:12:32",
+      "id": "function:src/pages/app/project/[slug]/dashboard/changes/index.vue:default:function:13:32",
       "kind": "function",
       "language": "javascript",
-      "line": 12,
+      "line": 13,
       "name": "default",
       "parameters": [],
       "path": "src/pages/app/project/[slug]/dashboard/changes/index.vue",
@@ -167309,10 +167309,10 @@
       "extractor": "javascript",
       "fileId": "file:src/pages/app/project/[slug]/dashboard/repository/index.vue",
       "generator": false,
-      "id": "function:src/pages/app/project/[slug]/dashboard/repository/index.vue:default:function:12:32",
+      "id": "function:src/pages/app/project/[slug]/dashboard/repository/index.vue:default:function:13:32",
       "kind": "function",
       "language": "javascript",
-      "line": 12,
+      "line": 13,
       "name": "default",
       "parameters": [],
       "path": "src/pages/app/project/[slug]/dashboard/repository/index.vue",

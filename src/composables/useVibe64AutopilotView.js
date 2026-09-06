@@ -1652,6 +1652,7 @@ function useVibe64AutopilotView(props, emit, {
     visible: Boolean(props.session)
   }));
   const dashboardSessionContext = computed(() => ({
+    active: Boolean(props.active),
     activeSessionNav: activeSessionNav.value,
     copyText: typeof props.page?.copyText === "function" ? props.page.copyText : null,
     embeddedShell: true,

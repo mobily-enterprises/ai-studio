@@ -15,11 +15,14 @@ from saved project work, and inspect one exact file change at a time.
 - `src/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue`
 - `src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue`
 - `src/composables/useVibe64RepositoryWorkspace.js`
+- `src/composables/useVibe64AutopilotView.js`
 - `src/composables/useVibe64SessionRuntimeHost.js`
 - `src/components/studio/repository/Vibe64RepositoryWorkspace.vue`
 - `src/components/studio/repository/Vibe64RepositoryFileBrowser.vue`
 - `src/components/studio/repository/Vibe64RepositoryDiff.vue`
 - `src/lib/vibe64RepositoryRealtime.js`
+- `src/pages/app/project/[slug]/dashboard/changes/index.vue`
+- `src/pages/app/project/[slug]/dashboard/repository/index.vue`
 
 ## Public contract
 
@@ -62,6 +65,11 @@ while Vibe64 checks the configured GitHub, managed-Git, or local-repository
 authority in the background. Save remains unavailable until that authority
 check succeeds. The initially selected file difference comes from the same
 immutable worktree snapshot as the file list.
+
+Switching away from a retained session retires its History and Current Changes
+readers and realtime listeners. Late responses cannot start further review work.
+Returning starts a fresh read; transient History paging and version details
+reset. This does not tear down chat or session-wide status tracking.
 
 History file paging and differences belong to the selected commit. Selecting
 another version clears the previous version's loading and error state. Late

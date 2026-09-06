@@ -1,5 +1,6 @@
 <template>
   <Vibe64RepositoryWorkspace
+    v-if="dashboardContext.active !== false"
     :dashboard-context="dashboardContext"
     view="changes"
   />

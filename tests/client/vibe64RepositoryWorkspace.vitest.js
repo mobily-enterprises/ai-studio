@@ -9,8 +9,11 @@ import {
   configureHttpWebClient,
   resetHttpWebClientForTests
 } from "@jskit-ai/http-web/client/lib/httpClient";
+import {
+  VIBE64_SESSION_CHANGED_EVENT,
+  VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT
+} from "../../src/lib/vibe64SessionRequestConfig.js";
 
-vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({ useRealtimeEvent() {} }));
 vi.mock("@/components/studio/Vibe64TemporaryAiFixAction.vue", () => ({ default: { render: () => null } }));
 vi.mock("vuetify/components/VBtn", () => ({ VBtn: passthroughComponent("button") }));
 vi.mock("vuetify/components/VChip", () => ({ VChip: passthroughComponent("span") }));
@@ -30,15 +33,19 @@ import Vibe64RepositoryWorkspace from "../../src/components/studio/repository/Vi
 import Vibe64RepositoryFileBrowser from "../../src/components/studio/repository/Vibe64RepositoryFileBrowser.vue";
 import Vibe64RepositoryDiff from "../../src/components/studio/repository/Vibe64RepositoryDiff.vue";
 import StudioErrorNotice from "../../src/components/studio/StudioErrorNotice.vue";
+import RepositoryPage from "../../src/pages/app/project/[slug]/dashboard/repository/index.vue";
+import ChangesPage from "../../src/pages/app/project/[slug]/dashboard/changes/index.vue";
 
 const ROOT = new URL("../../", import.meta.url);
 
-// Exercise real repository setup/templates; stub Vuetify presentation, realtime and Temporary AI.
+// Exercise real repository setup/templates and realtime; stub Vuetify presentation and Temporary AI.
 for (const [component, file] of [
   [Vibe64RepositoryWorkspace, "src/components/studio/repository/Vibe64RepositoryWorkspace.vue"],
   [Vibe64RepositoryFileBrowser, "src/components/studio/repository/Vibe64RepositoryFileBrowser.vue"],
   [Vibe64RepositoryDiff, "src/components/studio/repository/Vibe64RepositoryDiff.vue"],
-  [StudioErrorNotice, "src/components/studio/StudioErrorNotice.vue"]
+  [StudioErrorNotice, "src/components/studio/StudioErrorNotice.vue"],
+  [RepositoryPage, "src/pages/app/project/[slug]/dashboard/repository/index.vue"],
+  [ChangesPage, "src/pages/app/project/[slug]/dashboard/changes/index.vue"]
 ]) {
   const filename = new URL(file, ROOT).pathname;
   const { descriptor } = parse(readFileSync(filename, "utf8"), { filename });
@@ -83,8 +90,21 @@ function nodeText(node) {
   return [node.text || "", ...(node.children || []).map(nodeText)].join("");
 }
 
-function mountHistoryWorkspace() {
+function mountHistoryWorkspace({ component = Vibe64RepositoryWorkspace, context = {} } = {}) {
   const requests = [];
+  const dashboardContext = Vue.reactive({
+    sessionId: "history-session",
+    sessionsApiPath: "/api/app/sample/vibe64/sessions",
+    ...context
+  });
+  const listeners = new Map();
+  const socket = {
+    on: vi.fn((event, listener) => {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(listener);
+    }),
+    off: vi.fn((event, listener) => listeners.get(event)?.delete(listener))
+  };
   configureHttpWebClient({
     request(path, options) {
       const response = Promise.withResolvers();
@@ -117,12 +137,9 @@ function mountHistoryWorkspace() {
     },
     setText: (node, text) => { node.text = text; }
   });
-  const app = renderer.createApp(Vibe64RepositoryWorkspace, {
-    dashboardContext: {
-      sessionId: "history-session",
-      sessionsApiPath: "/api/app/sample/vibe64/sessions"
-    },
-    view: "history"
+  const app = renderer.createApp(component, {
+    dashboardContext,
+    ...(component === Vibe64RepositoryWorkspace ? { view: "history" } : {})
   });
   for (const [name, element] of [
     ["VBtn", "button"], ["VChip", "span"], ["VIcon", "span"], ["VSheet", "section"],
@@ -131,11 +148,15 @@ function mountHistoryWorkspace() {
     ["VExpandTransition", "div"]
   ]) app.component(name, passthroughComponent(element));
   app.provide(Vue.ssrContextKey, { modules: new Set() });
+  app.provide("jskit.realtime.runtime.client.socket", socket);
   const container = { children: [], props: {}, type: "root" };
   app.mount(container);
   return {
     container,
+    dashboardContext,
+    listeners,
     requests,
+    socket,
     button: (label) => findNode(container, (node) => node.type === "button" && nodeText(node).includes(label)),
     renderedDiff: () => findNode(container, (node) => Boolean(node.props.innerHTML))?.props.innerHTML || "",
     async respond(index, payload) {
@@ -168,8 +189,119 @@ const firstVersionDiff = {
   ok: true,
   path: "a.txt"
 };
+const repositoryRoutes = [
+  {
+    component: RepositoryPage,
+    label: "History",
+    path: "/api/app/sample/vibe64/repository/history?sessionId=history-session",
+    payload: { historySnapshotCommit: historyCommit, ok: true, versions: [historyVersion] },
+    subscriptions: 1
+  },
+  {
+    component: ChangesPage,
+    label: "Current Changes",
+    path: "/api/app/sample/vibe64/sessions/history-session/changes",
+    payload: { canonicalCommit: historyCommit, files: [], ok: true, totalCount: 0, unsaved: false },
+    subscriptions: 2
+  }
+];
 
 describe("Vibe64 Repository workspace", () => {
+  it.each(repositoryRoutes)("does not mount an initially inactive $label reader or listener", async ({ component }) => {
+    const fixture = mountHistoryWorkspace({ component, context: { active: false } });
+    try {
+      await Vue.nextTick();
+      expect(fixture.requests).toHaveLength(0);
+      expect(fixture.socket.on).not.toHaveBeenCalled();
+      expect(fixture.button("Check for updates")).toBeNull();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.each(repositoryRoutes.flatMap((route) => [true, false].map((hasSession) => ({ ...route, hasSession }))))(
+    "keeps $label mounted when activity is absent (session: $hasSession)",
+    async ({ component, hasSession, payload, subscriptions }) => {
+      const fixture = mountHistoryWorkspace({ component, context: hasSession ? {} : { sessionId: "" } });
+      try {
+        expect(fixture.dashboardContext).not.toHaveProperty("active");
+        expect(fixture.button("Check for updates")).not.toBeNull();
+        expect(fixture.requests).toHaveLength(hasSession ? 1 : 0);
+        expect(fixture.socket.on).toHaveBeenCalledTimes(hasSession ? subscriptions : 0);
+        if (hasSession) {
+          await fixture.respond(0, payload);
+          await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+          expect(fixture.requests).toHaveLength(2);
+        } else {
+          expect(fixture.button("Check for updates").props.disabled).toBe(true);
+        }
+      } finally {
+        await fixture.close();
+      }
+    }
+  );
+
+  it.each(repositoryRoutes)("retires hidden $label work and refreshes once on return", async ({ component, label, path, payload, subscriptions }) => {
+    const fixture = mountHistoryWorkspace({ component, context: { active: true } });
+    try {
+      expect(fixture.requests[0].path).toBe(path);
+      await fixture.respond(0, payload);
+      await fixture.respond(1, { canonicalCommit: historyCommit, ok: true });
+      expect(fixture.socket.on).toHaveBeenCalledTimes(subscriptions);
+      for (const listener of fixture.listeners.get(VIBE64_SESSION_CHANGED_EVENT)) {
+        listener({ reason: "session-save-completed", sessionId: "another-session" });
+      }
+      expect(fixture.requests).toHaveLength(2);
+
+      if (label === "History") {
+        fixture.button(historyVersion.message).props.onClick();
+      } else {
+        for (const listener of fixture.listeners.get(VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT)) {
+          listener({ path: "a.txt", sessionId: "history-session" });
+        }
+      }
+      await Vue.nextTick();
+      expect(fixture.requests).toHaveLength(3);
+      expect(fixture.requests[2].path).toBe(label === "History"
+        ? `/api/app/sample/vibe64/repository/history/${historyCommit}/files?sessionId=history-session&historySnapshotCommit=${historyCommit}`
+        : path);
+
+      fixture.dashboardContext.active = false;
+      await Vue.nextTick();
+      expect(fixture.socket.off).toHaveBeenCalledTimes(subscriptions);
+      expect(fixture.button("Check for updates")).toBeNull();
+      for (const [event, eventPayload] of [
+        [VIBE64_SESSION_CHANGED_EVENT, { reason: "session-save-completed", sessionId: "history-session" }],
+        [VIBE64_SESSION_CHANGED_EVENT, { reason: "repository-canonical-changed", sessionId: "history-session" }],
+        [VIBE64_SOURCE_EDITOR_FILE_CHANGED_EVENT, { path: "a.txt", sessionId: "history-session" }]
+      ]) {
+        for (const listener of fixture.listeners.get(event) || []) listener(eventPayload);
+      }
+      await fixture.respond(2, {
+        canonicalCommit: historyCommit, files: [firstVersionFile], ok: true,
+        totalCount: 1, truncated: false, unsaved: true
+      });
+      expect(fixture.requests).toHaveLength(3);
+      expect(findNode(fixture.container, (node) => node.type === "dialog")).toBeNull();
+
+      fixture.dashboardContext.active = true;
+      await Vue.nextTick();
+      expect(fixture.requests).toHaveLength(4);
+      expect(fixture.requests[3].path).toBe(path);
+      expect(fixture.socket.on).toHaveBeenCalledTimes(subscriptions * 2);
+      await fixture.respond(3, payload);
+      await fixture.respond(4, { canonicalCommit: historyCommit, ok: true });
+      expect(fixture.requests).toHaveLength(5);
+      expect(fixture.button("Check for updates")).not.toBeNull();
+      expect(findNode(fixture.container, (node) => node.type === "dialog")).toBeNull();
+      expect(fixture.button("a.txt")).toBeNull();
+    } finally {
+      await fixture.close();
+    }
+    expect(fixture.socket.off).toHaveBeenCalledTimes(subscriptions * 2);
+    expect([...fixture.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
+  });
+
   it.each(["header", "modal"])("retires pending version files on %s dismissal without starting a hidden diff", async (dismissal) => {
     const fixture = mountHistoryWorkspace();
     try {
