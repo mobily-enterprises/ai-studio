@@ -2802,7 +2802,7 @@
       "title": "DatabaseSqlEditor.vue"
     },
     {
-      "bytes": 59323,
+      "bytes": 59366,
       "districtId": "directory:packages/vibe64-database-tools/src/client/components",
       "extractors": [
         "javascript"
@@ -2851,7 +2851,7 @@
         "function:packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue:askCopilot:function:1154:1",
         "function:packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue:columnKeyIcon:function:1169:1"
       ],
-      "hash": "sha256:b85d1f3b3ae7474cbc16caa6dbea99accf422d8a6ee2e7481a2c9bc4ad1723ff",
+      "hash": "sha256:bca17912182492fe362a60e4121f54c0e7ab755916a9a882f8fe8acbed47361b",
       "id": "file:packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue",
       "internalFunctionCount": 42,
       "language": "javascript",
@@ -11997,7 +11997,7 @@
       "title": "Vibe64AutopilotPromptTextarea.vue"
     },
     {
-      "bytes": 52697,
+      "bytes": 52729,
       "districtId": "directory:src/components/studio/vibe64-session",
       "extractors": [
         "javascript"
@@ -12027,7 +12027,7 @@
         "function:src/components/studio/vibe64-session/Vibe64AutopilotView.vue:attachPreviewFileProducer:function:1273:1",
         "function:src/components/studio/vibe64-session/Vibe64AutopilotView.vue:requestSessionRenewal:function:1278:1"
       ],
-      "hash": "sha256:eb758abd32d6b3a0868ef44d9a1b707a3565b9ba6255759eb9d4538cfa378dc3",
+      "hash": "sha256:f17240beb3f555dee757bf1b8409bf815ca0c1b3d8ba31b1f370335e3cf96388",
       "id": "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
       "internalFunctionCount": 23,
       "language": "javascript",
@@ -17035,7 +17035,7 @@
       "title": "vite.config.mjs"
     }
   ],
-  "codeHash": "sha256:c4e9ae7820159a978666198ae6d363c6246ce6a37fb42ce29fb83453668ed85c",
+  "codeHash": "sha256:855fba15a196fa15e44a7850060b847a0120d307471ca28e0ce1c797acd913ae",
   "diagnostics": [],
   "districts": [
     {

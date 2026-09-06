@@ -564,7 +564,7 @@
         </header>
         <Vibe64DatabaseWorkspace
           v-if="rightPaneTabMounted('database')"
-          :active="props.projectPane === 'dashboard' && rightPaneTab === 'database'"
+          :active="props.active && props.projectPane === 'dashboard' && rightPaneTab === 'database'"
           :assistant-available="assistantDirectAllowed"
           :assistant-unavailable-message="assistantRestrictionMessage"
           class="studio-autopilot__session-tool-content"
@@ -592,7 +592,7 @@
         </header>
         <Vibe64SystemWorldView
           v-if="rightPaneTabMounted('system')"
-          :active="props.projectPane === 'dashboard' && rightPaneTab === 'system'"
+          :active="props.active && props.projectPane === 'dashboard' && rightPaneTab === 'system'"
           class="studio-autopilot__session-tool-content"
           :resolve-request-url="resolveStudioRequestUrl"
           :restore-request="systemRestoreRequest"

@@ -9,6 +9,8 @@ requiring every table and field to be read at once.
 - `packages/vibe64-database-tools/src/client/components/DatabaseErdNode.vue`
 - `packages/vibe64-database-tools/src/client/components/DatabaseErdEdge.vue`
 - `packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue`
+- `packages/vibe64-database-tools/src/client/composables/useVibe64DatabaseTools.js`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `packages/vibe64-database-tools/src/client/erdModel.js`
 - `packages/vibe64-database-tools/src/client/erdRelationships.js`
 - `packages/vibe64-database-tools/src/client/erdRouting.js`
@@ -17,6 +19,11 @@ requiring every table and field to be read at once.
 - `packages/vibe64-database-tools/src/server/sessionState.js`
 
 ## Public contract
+
+Automatic database reads follow the visible Database pane. A retained hidden
+workspace defers automatic table opening until it is active again, including
+when schema data arrives after leaving. Returning to the same selected table
+keeps its mounted SQL draft and results rather than running that table again.
 
 Given the selected session's schema snapshot and the current user's saved
 diagram, the ERD starts in Keys only mode unless another mode was saved. All

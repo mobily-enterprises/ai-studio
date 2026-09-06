@@ -13,6 +13,8 @@ Genesis without creating another interpretation of the application.
 - `packages/vibe64-genesis/src/server/promptContext.js`
 - `packages/vibe64-system-graph/src/server/service.js`
 - `packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue`
+- `packages/vibe64-system-graph/src/client/composables/useVibe64SystemGraph.js`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 
 ## Public contract
 
@@ -48,7 +50,9 @@ People can
 refresh and explore the detailed Machine City and explanatory Program City,
 navigate subsystems and operations to their participating files, and open those
 files for editing or discussion. Task guidance names Genesis operations without
-assuming a machine-global executable. Managed agent command environments expose
+assuming a machine-global executable. Automatic City reads follow the visible
+Cities pane; retaining another session keeps its view mounted without admitting
+those hidden reads. Managed agent command environments expose
 Vibe64's bundled, pinned Genesis command and Stack catalog; projects that pin
 their own Genesis compiler continue to invoke that local version explicitly. A
 person's first City visit in a browser gives

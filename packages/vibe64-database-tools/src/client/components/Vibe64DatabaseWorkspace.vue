@@ -765,8 +765,8 @@ const resultSubtitle = computed(() => {
   return `${queryResult.value.durationMs || 0} ms${truncation}${editHint}`;
 });
 
-watch(state, (next) => {
-  if (!next) return;
+watch([state, () => props.active], ([next, active]) => {
+  if (!active || !next) return;
   const sessionChanged = hydratedSessionId.value !== props.sessionId;
   if (sessionChanged) {
     hydratedSessionId.value = props.sessionId;

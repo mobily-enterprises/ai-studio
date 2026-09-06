@@ -218,12 +218,14 @@
       "implementationMap": "`erdModel.js` owns column visibility, cardinality, one-hop focus, deterministic\nneighbourhood grouping, and collision placement. The layout worker supplies\nELK fixed-port routes as well as node coordinates. `erdRelationships.js` assigns\nper-column handles and accepts clear worker routes; `erdRouting.js` repairs\ncross-group and moved routes using obstacle-aware orthogonal routing with\nlane-sharing penalties. `sessionState.js` normalizes bounded layout/view data\nand stores it through the existing actor/session artifact boundary.",
       "name": "diagram-exploration",
       "path": "genesis/program/database/diagram-exploration.md",
-      "publicContract": "Given the selected session's schema snapshot and the current user's saved\ndiagram, the ERD starts in Keys only mode unless another mode was saved. All\ncolumns, per-table expansion, and collapse change visible detail. Search finds\ntables or columns, reveals the matching field, and centres its table. Selecting\na table highlights its immediate relationships and linked fields; Focus hides\neverything except that table and its immediate neighbours. Open data retains\nthe database workspace's table-selection operation.\nConnections point from referenced parent columns to child foreign-key columns.\nEvery pair in a composite foreign key is drawn and selects the same constraint.\nSelected or hovered connections show endpoint multiplicity; the inspector lists\nall field pairs and delete/update actions. Multiplicity derives from known\nunique keys and nullability, never implies that a parent must have children,\nand marks unknown nullability with `?`. Optional or unknown-requiredness links\nare dashed. Collapsed tables use header ports instead of pretending their\nhidden fields are visible.\nReset positions uses port-aware orthogonal layout within automatic relationship\nneighbourhoods or user-named groups, packs those groups with space between them,\nand separates disconnected tables. Named membership takes precedence over\nautomatic membership. Pinned tables cannot be dragged and retain their exact\npositions on Reset; other cards are placed outside occupied bounds. The router\navoids cards and penalizes shared horizontal/vertical runs and crossings. It\ndoes not promise a crossing-free graph or clear routes through overlapping\npinned cards. An obstructed-route notice explains how to recover. Worker\nfailures use an announced basic arrangement where available, or show an error\nwith Retry; they do not silently claim the recommended layout succeeded.\nDuring dragging, incident paths update on animation frames while unchanged\nunrelated routes remain stable. Drop reroutes paths obstructed by the moved\ncard and persists positions. Undo/Redo retains up to 30 diagram snapshots for\nthe mounted view, including moves, Reset, display/focus/group changes and\nloading a saved view; it does not undo saving or deleting named views.\nUp to 20 named views store positions, pins, groups, focus, column display, and\nviewport. Saving an existing name replaces that view with a visible notice.\nViews and current layout are persisted in user-specific session artifacts, not\nin database tables or a shared schema snapshot. Reload restores saved zoom and\npositions. Layout writes are serialized, and responses from older saves or a\nprevious session cannot replace the latest visible state. Fullscreen keeps\ncontrols, menus, and dialogs inside the fullscreen element.",
+      "publicContract": "Automatic database reads follow the visible Database pane. A retained hidden\nworkspace defers automatic table opening until it is active again, including\nwhen schema data arrives after leaving. Returning to the same selected table\nkeeps its mounted SQL draft and results rather than running that table again.\nGiven the selected session's schema snapshot and the current user's saved\ndiagram, the ERD starts in Keys only mode unless another mode was saved. All\ncolumns, per-table expansion, and collapse change visible detail. Search finds\ntables or columns, reveals the matching field, and centres its table. Selecting\na table highlights its immediate relationships and linked fields; Focus hides\neverything except that table and its immediate neighbours. Open data retains\nthe database workspace's table-selection operation.\nConnections point from referenced parent columns to child foreign-key columns.\nEvery pair in a composite foreign key is drawn and selects the same constraint.\nSelected or hovered connections show endpoint multiplicity; the inspector lists\nall field pairs and delete/update actions. Multiplicity derives from known\nunique keys and nullability, never implies that a parent must have children,\nand marks unknown nullability with `?`. Optional or unknown-requiredness links\nare dashed. Collapsed tables use header ports instead of pretending their\nhidden fields are visible.\nReset positions uses port-aware orthogonal layout within automatic relationship\nneighbourhoods or user-named groups, packs those groups with space between them,\nand separates disconnected tables. Named membership takes precedence over\nautomatic membership. Pinned tables cannot be dragged and retain their exact\npositions on Reset; other cards are placed outside occupied bounds. The router\navoids cards and penalizes shared horizontal/vertical runs and crossings. It\ndoes not promise a crossing-free graph or clear routes through overlapping\npinned cards. An obstructed-route notice explains how to recover. Worker\nfailures use an announced basic arrangement where available, or show an error\nwith Retry; they do not silently claim the recommended layout succeeded.\nDuring dragging, incident paths update on animation frames while unchanged\nunrelated routes remain stable. Drop reroutes paths obstructed by the moved\ncard and persists positions. Undo/Redo retains up to 30 diagram snapshots for\nthe mounted view, including moves, Reset, display/focus/group changes and\nloading a saved view; it does not undo saving or deleting named views.\nUp to 20 named views store positions, pins, groups, focus, column display, and\nviewport. Saving an existing name replaces that view with a visible notice.\nViews and current layout are persisted in user-specific session artifacts, not\nin database tables or a shared schema snapshot. Reload restores saved zoom and\npositions. Layout writes are serialized, and responses from older saves or a\nprevious session cannot replace the latest visible state. Fullscreen keeps\ncontrols, menus, and dialogs inside the fullscreen element.",
       "sourceFileIds": [
         "file:packages/vibe64-database-tools/src/client/components/DatabaseErd.vue",
         "file:packages/vibe64-database-tools/src/client/components/DatabaseErdNode.vue",
         "file:packages/vibe64-database-tools/src/client/components/DatabaseErdEdge.vue",
         "file:packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue",
+        "file:packages/vibe64-database-tools/src/client/composables/useVibe64DatabaseTools.js",
+        "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
         "file:packages/vibe64-database-tools/src/client/erdModel.js",
         "file:packages/vibe64-database-tools/src/client/erdRelationships.js",
         "file:packages/vibe64-database-tools/src/client/erdRouting.js",
@@ -236,6 +238,8 @@
         "packages/vibe64-database-tools/src/client/components/DatabaseErdNode.vue",
         "packages/vibe64-database-tools/src/client/components/DatabaseErdEdge.vue",
         "packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue",
+        "packages/vibe64-database-tools/src/client/composables/useVibe64DatabaseTools.js",
+        "src/components/studio/vibe64-session/Vibe64AutopilotView.vue",
         "packages/vibe64-database-tools/src/client/erdModel.js",
         "packages/vibe64-database-tools/src/client/erdRelationships.js",
         "packages/vibe64-database-tools/src/client/erdRouting.js",
@@ -594,7 +598,7 @@
       "implementationMap": "",
       "name": "genesis-context",
       "path": "genesis/program/understanding/genesis-context.md",
-      "publicContract": "The library integration explicitly trusts only the validated source worktree\npassed to each Genesis operation. That grant stays within the operation's\nasync context, so shared Unix ownership does not prevent inspection and\nconcurrent projects cannot inherit each other's trust. Git configuration,\nrepository ownership, and filesystem permissions remain unchanged.\nNew projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance, while new and\ncompacted conversations receive the shorter portable Genesis session context.\nFor persistent conversations, Genesis composes Engineering and Collaboration\nguidance with one provider-neutral Vibe64 session contribution. Vibe64's\nnumbered-question presentation and managed-session operating rules live in\nthat stable contribution rather than being appended to each user message. The\nVibe64 driver has no turn form and Vibe64 adds nothing to ordinary user turns.\nGenesis still offers a generic bounded turn-context capability, but Vibe64 does\nnot use it. Genesis supports the one host driver and process bridge, not a\ngeneral prompt-plugin system.\nFor a new project, Genesis's opening task establishes product intent, presents\nonly relevant installed Stack choices, and waits for explicit confirmation\nbefore selecting a technology. Vibe64 supplies the pinned catalog and its\nconversation presentation contract but does not replace those onboarding rules\nor choose a technology itself.\nFor an existing initialized project, the opening carries the full Blueprint,\nbounded selected-Stack and Program summaries, and complete selected guidance\nunder its owning component headings. Exact Program modules, indexed source,\noperations, verification commands, and applicable skills are loaded only after\nthe relevant path is known through `genesis context <path...>`.\nPeople can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Task guidance names Genesis operations without\nassuming a machine-global executable. Managed agent command environments expose\nVibe64's bundled, pinned Genesis command and Stack catalog; projects that pin\ntheir own Genesis compiler continue to invoke that local version explicitly. A\nperson's first City visit in a browser gives\ndismissible guidance for trackpad, mouse, and keyboard movement, rotation, and\nzoom. Exploring the City does not create or submit an assistant prompt. Routine\nautomatic follow-ups that produce no result remain hidden, but an explicitly\nrequested final user-facing summary is preserved even though it changes no\nfiles. Vibe64 displays only Genesis documents and does not infer a parallel\narchitecture.",
+      "publicContract": "The library integration explicitly trusts only the validated source worktree\npassed to each Genesis operation. That grant stays within the operation's\nasync context, so shared Unix ownership does not prevent inspection and\nconcurrent projects cannot inherit each other's trust. Git configuration,\nrepository ownership, and filesystem permissions remain unchanged.\nNew projects begin with Genesis and existing repositories can be adopted without\nmoving their source. Agent turns receive Genesis task guidance, while new and\ncompacted conversations receive the shorter portable Genesis session context.\nFor persistent conversations, Genesis composes Engineering and Collaboration\nguidance with one provider-neutral Vibe64 session contribution. Vibe64's\nnumbered-question presentation and managed-session operating rules live in\nthat stable contribution rather than being appended to each user message. The\nVibe64 driver has no turn form and Vibe64 adds nothing to ordinary user turns.\nGenesis still offers a generic bounded turn-context capability, but Vibe64 does\nnot use it. Genesis supports the one host driver and process bridge, not a\ngeneral prompt-plugin system.\nFor a new project, Genesis's opening task establishes product intent, presents\nonly relevant installed Stack choices, and waits for explicit confirmation\nbefore selecting a technology. Vibe64 supplies the pinned catalog and its\nconversation presentation contract but does not replace those onboarding rules\nor choose a technology itself.\nFor an existing initialized project, the opening carries the full Blueprint,\nbounded selected-Stack and Program summaries, and complete selected guidance\nunder its owning component headings. Exact Program modules, indexed source,\noperations, verification commands, and applicable skills are loaded only after\nthe relevant path is known through `genesis context <path...>`.\nPeople can\nrefresh and explore the detailed Machine City and explanatory Program City,\nnavigate subsystems and operations to their participating files, and open those\nfiles for editing or discussion. Task guidance names Genesis operations without\nassuming a machine-global executable. Automatic City reads follow the visible\nCities pane; retaining another session keeps its view mounted without admitting\nthose hidden reads. Managed agent command environments expose\nVibe64's bundled, pinned Genesis command and Stack catalog; projects that pin\ntheir own Genesis compiler continue to invoke that local version explicitly. A\nperson's first City visit in a browser gives\ndismissible guidance for trackpad, mouse, and keyboard movement, rotation, and\nzoom. Exploring the City does not create or submit an assistant prompt. Routine\nautomatic follow-ups that produce no result remain hidden, but an explicitly\nrequested final user-facing summary is preserved even though it changes no\nfiles. Vibe64 displays only Genesis documents and does not infer a parallel\narchitecture.",
       "sourceFileIds": [
         "file:packages/studio-terminal-core/src/server/codexRuntimeContext.js",
         "file:packages/vibe64-terminals/src/server/agentCommandEnvironment.js",
@@ -603,7 +607,9 @@
         "file:packages/vibe64-genesis/src/server/index.js",
         "file:packages/vibe64-genesis/src/server/promptContext.js",
         "file:packages/vibe64-system-graph/src/server/service.js",
-        "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
+        "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue",
+        "file:packages/vibe64-system-graph/src/client/composables/useVibe64SystemGraph.js",
+        "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
       ],
       "sources": [
         "packages/studio-terminal-core/src/server/codexRuntimeContext.js",
@@ -613,7 +619,9 @@
         "packages/vibe64-genesis/src/server/index.js",
         "packages/vibe64-genesis/src/server/promptContext.js",
         "packages/vibe64-system-graph/src/server/service.js",
-        "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
+        "packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue",
+        "packages/vibe64-system-graph/src/client/composables/useVibe64SystemGraph.js",
+        "src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
       ],
       "subsystem": "understanding",
       "title": "Genesis project context"
@@ -1117,6 +1125,16 @@
       "fromId": "operation:database/diagram-exploration",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-database-tools/src/client/components/Vibe64DatabaseWorkspace.vue"
+    },
+    {
+      "fromId": "operation:database/diagram-exploration",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-database-tools/src/client/composables/useVibe64DatabaseTools.js"
+    },
+    {
+      "fromId": "operation:database/diagram-exploration",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
     },
     {
       "fromId": "operation:database/diagram-exploration",
@@ -1627,9 +1645,19 @@
       "fromId": "operation:understanding/genesis-context",
       "kind": "implemented-by",
       "toId": "file:packages/vibe64-system-graph/src/client/components/Vibe64SystemWorldView.vue"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:packages/vibe64-system-graph/src/client/composables/useVibe64SystemGraph.js"
+    },
+    {
+      "fromId": "operation:understanding/genesis-context",
+      "kind": "implemented-by",
+      "toId": "file:src/components/studio/vibe64-session/Vibe64AutopilotView.vue"
     }
   ],
-  "programHash": "sha256:b53219ed315804dd45f5bda2976722d6dc61253babcb00234c5d6448add7c4bb",
+  "programHash": "sha256:e1a1902d094a8e5d552b146eb1aca32e95f352e848bec00cb6a0ecd435045df0",
   "schema": "genesis.program-city.v1",
   "schemaVersion": 1,
   "status": "valid"

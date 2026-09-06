@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { effectScope, ref } from "vue";
+import { computed, effectScope, nextTick, reactive, ref, unref } from "vue";
 
 const endpointMocks = vi.hoisted(() => ({
   calls: [],
@@ -9,6 +10,9 @@ const endpointMocks = vi.hoisted(() => ({
 
 vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
   useEndpointResource: endpointMocks.useEndpointResource
+}));
+vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
+  useCommand: () => ({ isRunning: false, run: vi.fn() })
 }));
 
 vi.mock("@jskit-ai/shell-web/client/navigation/usePaths", () => ({
@@ -20,6 +24,9 @@ vi.mock("@jskit-ai/shell-web/client/navigation/usePaths", () => ({
 import {
   useVibe64SystemGraph
 } from "../../packages/vibe64-system-graph/src/client/composables/useVibe64SystemGraph.js";
+import {
+  useVibe64DatabaseTools
+} from "../../packages/vibe64-database-tools/src/client/composables/useVibe64DatabaseTools.js";
 
 function endpointResource(data = null) {
   return {
@@ -55,6 +62,59 @@ describe("Genesis City client resources", () => {
     });
   });
 
+  it.each([
+    { component: "Vibe64DatabaseWorkspace", pane: "database", useTool: useVibe64DatabaseTools, resources: 1 },
+    { component: "Vibe64SystemWorldView", pane: "system", useTool: useVibe64SystemGraph, resources: 4 }
+  ])("pauses $component resource admission through the actual retained-session binding", async ({ component, pane, useTool, resources }) => {
+    const autopilot = readFileSync(new URL(
+      "../../src/components/studio/vibe64-session/Vibe64AutopilotView.vue", import.meta.url
+    ), "utf8");
+    const tag = autopilot.match(new RegExp(`<${component}\\b[\\s\\S]*?/>`, "u"))?.[0];
+    const binding = tag?.match(/:active="([^"]+)"/u)?.[1];
+    expect(binding).toBeDefined();
+    const childActive = new Function("props", "rightPaneTab", `return (${binding});`);
+    const props = reactive({ active: true, projectPane: "dashboard" });
+    const rightPaneTab = ref(pane);
+    const sessionId = ref("session/a");
+    const scope = effectScope();
+    try {
+      scope.run(() => useTool({
+        active: computed(() => childActive(props, rightPaneTab.value)),
+        sessionId
+      }));
+      expect(endpointMocks.calls).toHaveLength(resources);
+      expect(endpointMocks.calls[0].enabled.value).toBe(true);
+      const paths = endpointMocks.calls.map((call) => call.path.value);
+      const keys = endpointMocks.calls.map((call) => call.queryKey.value);
+      expect(paths[0]).toContain("/sessions/session%2Fa");
+
+      props.active = false;
+      await nextTick();
+      expect(endpointMocks.calls.every((call) => unref(call.enabled) === false)).toBe(true);
+      expect(endpointMocks.calls.map((call) => call.path.value)).toEqual(Array(resources).fill(""));
+
+      props.active = true;
+      await nextTick();
+      expect(endpointMocks.calls.map((call) => call.path.value)).toEqual(paths);
+      expect(endpointMocks.calls.map((call) => call.queryKey.value)).toEqual(keys);
+      expect(endpointMocks.calls).toHaveLength(resources);
+      expect(sessionId.value).toBe("session/a");
+
+      rightPaneTab.value = "editor";
+      await nextTick();
+      expect(endpointMocks.calls.every((call) => unref(call.enabled) === false)).toBe(true);
+      rightPaneTab.value = pane;
+      props.projectPane = "preview";
+      await nextTick();
+      expect(endpointMocks.calls.every((call) => unref(call.enabled) === false)).toBe(true);
+      props.projectPane = "dashboard";
+      await nextTick();
+      expect(endpointMocks.calls.map((call) => call.path.value)).toEqual(paths);
+    } finally {
+      scope.stop();
+    }
+  });
+
   it("reads status and native Cities, then refreshes synchronously", async () => {
     const scope = effectScope();
     let graph;
@@ -74,6 +134,7 @@ describe("Genesis City client resources", () => {
     ]);
     expect(endpointMocks.calls[1].enabled.value).toBe(true);
     expect(endpointMocks.calls[2].enabled.value).toBe(false);
+    expect(endpointMocks.calls[3].enabled).toBe(false);
     expect(graph.machineCity.value).toEqual({ schema: "genesis.machine-city.v1" });
     expect(graph.programCity.value).toBeNull();
 
