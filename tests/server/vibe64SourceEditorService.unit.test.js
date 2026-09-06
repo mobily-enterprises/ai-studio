@@ -370,6 +370,69 @@ test("source editor does not invent technology-specific preload directories", as
   }
 });
 
+test("source editor root pages preserve neutral metadata for query-style inputs", async () => {
+  const fixture = await createSourceEditorFixture({
+    extraFiles: [{ path: "a-root.txt", text: "Root file\n" }]
+  });
+  try {
+    for (const page of [
+      { offset: "0", nextOffset: 2, hasMore: true, paths: ["dist", "node_modules"] },
+      { offset: "2", nextOffset: 4, hasMore: false, paths: ["src", "a-root.txt"] }
+    ]) {
+      const response = await fixture.service.readTree({
+        limit: "2",
+        offset: page.offset,
+        path: ".",
+        sessionId: "session-1"
+      });
+      assert.equal(response.ok, true);
+      assert.equal(response.root, "");
+      assert.deepEqual(response.policy.defaultOpenFiles, []);
+      assert.deepEqual(response.policy.preexpandedDirectories, []);
+      assert.deepEqual(response.policy.preloadDirectories, []);
+      const { children, ...metadata } = response.tree;
+      assert.deepEqual(metadata, {
+        hasMore: page.hasMore,
+        limit: 2,
+        loaded: true,
+        name: "",
+        nextOffset: page.nextOffset,
+        offset: Number(page.offset),
+        path: "",
+        total: 4,
+        truncated: false,
+        type: "directory"
+      });
+      assert.deepEqual(children.map((child) => child.path), page.paths);
+      for (const child of children) {
+        if (child.path === "a-root.txt") {
+          assert.equal(child.type, "file");
+        } else {
+          assert.equal(child.type, "directory");
+          assert.equal(child.loaded, false);
+          assert.deepEqual(child.children, []);
+        }
+      }
+    }
+
+    const acceptedPath = await fixture.service.readTree({
+      limit: "2",
+      offset: "0",
+      path: "./ src",
+      sessionId: "session-1"
+    });
+    assert.equal(acceptedPath.ok, true);
+    assert.equal(acceptedPath.tree.path, "src");
+    assert.deepEqual(acceptedPath.tree.children.map((child) => child.path), ["src/index", "src/pages"]);
+  } finally {
+    fixture.service.close();
+    await rm(fixture.root, {
+      force: true,
+      recursive: true
+    });
+  }
+});
+
 test("source editor tree reads one directory page at a time", async () => {
   const fixture = await createSourceEditorFixture();
   try {
