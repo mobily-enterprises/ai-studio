@@ -365,14 +365,13 @@ async function executeDatabaseQuery({
     );
   }
   const startedAt = Date.now();
-  const connection = await knex.client.acquireConnection();
+  let connection = null;
   let readTransaction = false;
-  activeQueries.set(normalizedId, {
-    cancel: () => knex.client.cancelQuery(connection),
-    connection,
-    engine: descriptor.engine
-  });
+  const active = { cancel: null };
+  activeQueries.set(normalizedId, active);
   try {
+    connection = await knex.client.acquireConnection();
+    active.cancel = () => knex.client.cancelQuery(connection);
     if (readOnly) {
       await beginReadOnly(knex, connection, descriptor.engine);
       readTransaction = true;
@@ -394,17 +393,17 @@ async function executeDatabaseQuery({
     if (readTransaction) {
       await rollbackReadOnly(knex, connection);
     }
-    if (activeQueries.get(normalizedId)?.connection === connection) {
+    if (activeQueries.get(normalizedId) === active) {
       activeQueries.delete(normalizedId);
     }
-    await knex.client.releaseConnection(connection);
+    if (connection) await knex.client.releaseConnection(connection);
   }
 }
 
 async function cancelDatabaseQuery(activeQueries = new Map(), value = "") {
   const normalizedId = normalizeQueryId(value);
   const active = activeQueries.get(normalizedId);
-  if (!active) {
+  if (!active?.cancel) {
     return {
       cancelled: false,
       ok: true,

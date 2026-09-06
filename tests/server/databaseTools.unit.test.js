@@ -1352,6 +1352,296 @@ test("database service is owner-only and routes read-only SQL through the reader
   await service.close();
 });
 
+for (const { name, scenario } of [
+  { name: "database cancellation remains reachable after an early Stop during acquisition", scenario: "early-stop" },
+  { name: "database cancellation remains reachable when another query finishes during acquisition", scenario: "other-query" },
+  { name: "database acquisition rejects a concurrent duplicate query id", scenario: "duplicate" },
+  { name: "database acquisition failure releases ownership for a same-id retry", scenario: "acquire-error" },
+  { name: "database close reaches assistant SQL after an unrelated Stop during its provider turn", scenario: "assistant" },
+  { name: "database cancellation failure retains exact query ownership for retry", scenario: "cancel-error" },
+  { name: "database cancellation isolates the same query id in different sessions", scenario: "session-isolation" },
+  { name: "database close skips pending acquisition without cancelling an unavailable connection", scenario: "pending-close" }
+]) {
+  test(name, async () => {
+    const artifacts = new Map([["database/schema.json", JSON.stringify(testSchema())]]);
+    const attempts = [0, 1].map((id) => ({
+      acquire: Promise.withResolvers(),
+      connection: { id },
+      execute: Promise.withResolvers(),
+      requested: Promise.withResolvers(),
+      started: Promise.withResolvers(),
+      statements: []
+    }));
+    for (const attempt of attempts) void attempt.execute.promise.catch(() => {});
+    const released = [];
+    const cancelled = [];
+    const acquisitionRequests = [];
+    const pending = [];
+    const completed = { command: "SELECT", fields: [], rowCount: 0, rows: [] };
+    const providerStarted = Promise.withResolvers();
+    const providerResponse = Promise.withResolvers();
+    const providerDeletions = [];
+    const providerAnswer = {
+      ok: true,
+      text: JSON.stringify({ action: "answer", answer: "Done.", intent: "read", schema: "", sql: "" }),
+      threadId: "acquisition-assistant"
+    };
+    let providerTurns = 0;
+    let attemptIndex = 0;
+    const service = createDatabaseService({
+      projectService: {
+        async createSessionStore() {
+          return {
+            async readArtifact(_sessionId, artifactPath) {
+              return artifacts.get(artifactPath) || "";
+            },
+            async readSession(sessionId) {
+              return {
+                metadata: {
+                  assistant_selection: JSON.stringify({
+                    agentId: "build", catalogRevision: `sha256:${"b".repeat(64)}`,
+                    engineId: "opencode", modelId: "deepseek-chat", modelProviderId: "deepseek",
+                    schema: "vibe64.assistant-selection.v1", variantId: ""
+                  })
+                },
+                sessionId
+              };
+            },
+            async writeJsonArtifact(_sessionId, artifactPath, value) {
+              artifacts.set(artifactPath, JSON.stringify(value));
+            }
+          };
+        },
+        async sessionDatabaseEnvironment() {
+          const endpoint = {
+            database: "catalogue", host: "127.0.0.1", password: "fixture-only",
+            port: 5432, username: "fixture-reader"
+          };
+          return {
+            databaseToolEnvironment: {
+              contract: "vibe64.database-tool-environment.v1",
+              kind: "postgresql",
+              read: endpoint,
+              write: endpoint
+            }
+          };
+        }
+      },
+      terminalService: {
+        async requireAssistantAccess(sessionId, options) {
+          assert.equal(sessionId, "acquisition-session");
+          assert.equal(options.vibe64User.role, "owner");
+          return { ok: true };
+        },
+        async runDetachedAgentChatTurn(sessionId, _input, options) {
+          assert.equal(sessionId, "acquisition-session");
+          options.onEvent({ executionProfile: databaseExecutionProfile(), type: "execution-profile" });
+          options.onEvent({ threadId: "acquisition-assistant", type: "thread" });
+          providerTurns += 1;
+          providerStarted.resolve();
+          return providerTurns === 1 ? providerResponse.promise : providerAnswer;
+        },
+        async deleteDetachedAgentChatThread(sessionId, input) {
+          assert.equal(sessionId, "acquisition-session");
+          providerDeletions.push(input.threadId);
+          return { deleted: true, ok: true };
+        }
+      },
+      async withKnex(_endpoint, operation) {
+        const attempt = attempts[attemptIndex++];
+        assert.ok(attempt, "Only the two fixture query operations may acquire connections.");
+        const knex = {
+          client: {
+            async acquireConnection() {
+              acquisitionRequests.push(attempt.connection);
+              attempt.requested.resolve();
+              return attempt.acquire.promise;
+            },
+            async cancelQuery(connection) {
+              assert.equal(connection, attempt.connection);
+              cancelled.push(connection);
+              if (scenario === "cancel-error" && cancelled.length === 1) {
+                const error = new Error("Controlled database cancellation failure.");
+                error.code = "fixture_cancel_failed";
+                throw error;
+              }
+              const error = new Error("Controlled database query cancellation.");
+              error.code = "57014";
+              attempt.execute.reject(error);
+            },
+            async releaseConnection(connection) {
+              assert.equal(connection, attempt.connection);
+              released.push(connection);
+            }
+          },
+          raw(sql) {
+            attempt.statements.push(sql);
+            const chain = {
+              connection(connection) {
+                assert.equal(connection, attempt.connection);
+                return ["BEGIN READ ONLY", "ROLLBACK"].includes(sql) ? Promise.resolve() : chain;
+              },
+              options(options) {
+                assert.deepEqual(options, { rowMode: "array" });
+                return chain;
+              },
+              timeout(milliseconds, options) {
+                assert.equal(milliseconds, 20_000);
+                assert.deepEqual(options, { cancel: true });
+                attempt.started.resolve();
+                return attempt.execute.promise;
+              }
+            };
+            return chain;
+          }
+        };
+        return operation({ connection: { database: "catalogue", engine: "postgresql" }, knex });
+      }
+    });
+    const input = {
+      queryId: "query-a",
+      readOnly: true,
+      sessionId: "acquisition-session",
+      sql: "SELECT title FROM public.books;",
+      vibe64User: { role: "owner", username: "owner" }
+    };
+    try {
+      if (scenario === "assistant") {
+        const assistant = service.askAssistant({
+          ...input,
+          messages: [{ content: "Read the book titles.", role: "user" }]
+        });
+        pending.push(assistant);
+        await providerStarted.promise;
+        assert.deepEqual(acquisitionRequests, []);
+        assert.equal((await service.cancelQuery({ ...input, queryId: "unrelated-query" })).cancelled, false);
+        providerResponse.resolve({
+          ok: true,
+          text: JSON.stringify({ action: "query", answer: "", intent: "read", schema: "", sql: input.sql }),
+          threadId: "acquisition-assistant"
+        });
+        await attempts[0].requested.promise;
+        attempts[0].acquire.resolve(attempts[0].connection);
+        await attempts[0].started.promise;
+        await service.close();
+        assert.deepEqual(cancelled, [attempts[0].connection]);
+        assert.equal((await assistant).ok, false);
+        assert.deepEqual(released, [attempts[0].connection]);
+        assert.deepEqual(providerDeletions, ["acquisition-assistant"]);
+        return;
+      }
+      const first = service.runQuery(input);
+      pending.push(first);
+      await attempts[0].requested.promise;
+      if (scenario === "early-stop") {
+        assert.equal((await service.cancelQuery(input)).cancelled, false);
+        attempts[0].acquire.resolve(attempts[0].connection);
+        await attempts[0].started.promise;
+        const stopped = await service.cancelQuery(input);
+        assert.equal(stopped.cancelled, true);
+        assert.deepEqual(cancelled, [attempts[0].connection]);
+        assert.equal((await first).ok, false);
+        assert.deepEqual(released, [attempts[0].connection]);
+      } else if (scenario === "cancel-error") {
+        attempts[0].acquire.resolve(attempts[0].connection);
+        await attempts[0].started.promise;
+        const failed = await service.cancelQuery(input);
+        assert.equal(failed.ok, false);
+        assert.equal(failed.code, "fixture_cancel_failed");
+        assert.deepEqual(released, []);
+        assert.equal((await service.cancelQuery(input)).cancelled, true);
+        assert.deepEqual(cancelled, [attempts[0].connection, attempts[0].connection]);
+        assert.equal((await first).ok, false);
+        assert.deepEqual(released, [attempts[0].connection]);
+      } else if (scenario === "session-isolation") {
+        attempts[0].acquire.resolve(attempts[0].connection);
+        await attempts[0].started.promise;
+        attempts[1].acquire.resolve(attempts[1].connection);
+        const otherInput = { ...input, sessionId: "other-session" };
+        const second = service.runQuery(otherInput);
+        pending.push(second);
+        await attempts[1].started.promise;
+        assert.equal((await service.cancelQuery(input)).cancelled, true);
+        assert.deepEqual(cancelled, [attempts[0].connection]);
+        assert.equal((await first).ok, false);
+        assert.deepEqual(released, [attempts[0].connection]);
+        assert.equal((await service.cancelQuery(otherInput)).cancelled, true);
+        assert.deepEqual(cancelled, [attempts[0].connection, attempts[1].connection]);
+        assert.equal((await second).ok, false);
+        assert.deepEqual(released, [attempts[0].connection, attempts[1].connection]);
+      } else if (scenario === "pending-close") {
+        await service.close();
+        assert.deepEqual(cancelled, []);
+        assert.deepEqual(released, []);
+        attempts[0].acquire.resolve(attempts[0].connection);
+        attempts[0].execute.resolve(completed);
+        assert.equal((await first).ok, true);
+        assert.deepEqual(cancelled, []);
+        assert.deepEqual(released, [attempts[0].connection]);
+      } else if (scenario === "other-query") {
+        attempts[0].acquire.resolve(attempts[0].connection);
+        await attempts[0].started.promise;
+        const secondInput = { ...input, queryId: "query-b" };
+        const second = service.runQuery(secondInput);
+        pending.push(second);
+        await attempts[1].requested.promise;
+        attempts[0].execute.resolve(completed);
+        assert.equal((await first).ok, true);
+        attempts[1].acquire.resolve(attempts[1].connection);
+        await attempts[1].started.promise;
+        const stopped = await service.cancelQuery(secondInput);
+        assert.equal(stopped.cancelled, true);
+        assert.deepEqual(cancelled, [attempts[1].connection]);
+        assert.equal((await second).ok, false);
+        assert.deepEqual(released, [attempts[0].connection, attempts[1].connection]);
+      } else if (scenario === "duplicate") {
+        attempts[1].acquire.resolve(attempts[1].connection);
+        attempts[1].execute.resolve(completed);
+        const duplicate = service.runQuery(input);
+        pending.push(duplicate);
+        const rejected = await duplicate;
+        assert.equal(rejected.ok, false);
+        assert.equal(rejected.code, "vibe64_database_query_id_active");
+        assert.deepEqual(acquisitionRequests, [attempts[0].connection]);
+        attempts[0].acquire.resolve(attempts[0].connection);
+        await attempts[0].started.promise;
+        assert.equal((await service.cancelQuery(input)).cancelled, true);
+        assert.deepEqual(cancelled, [attempts[0].connection]);
+        assert.equal((await first).ok, false);
+        assert.deepEqual(released, [attempts[0].connection]);
+      } else {
+        const failure = new Error("Controlled connection acquisition failure.");
+        failure.code = "fixture_acquisition_failed";
+        attempts[0].acquire.reject(failure);
+        const failed = await first;
+        assert.equal(failed.ok, false);
+        assert.equal(failed.code, failure.code);
+        assert.deepEqual(attempts[0].statements, []);
+        assert.deepEqual(released, []);
+        attempts[1].acquire.resolve(attempts[1].connection);
+        const retry = service.runQuery(input);
+        pending.push(retry);
+        await attempts[1].started.promise;
+        assert.equal((await service.cancelQuery(input)).cancelled, true);
+        assert.deepEqual(cancelled, [attempts[1].connection]);
+        assert.equal((await retry).ok, false);
+        assert.deepEqual(released, [attempts[1].connection]);
+      }
+      const cancellationCount = cancelled.length;
+      assert.equal((await service.cancelQuery(input)).cancelled, false);
+      assert.equal(cancelled.length, cancellationCount);
+    } finally {
+      providerResponse.resolve(providerAnswer);
+      for (const attempt of attempts) {
+        attempt.acquire.resolve(attempt.connection);
+        attempt.execute.resolve(completed);
+      }
+      await Promise.allSettled(pending);
+      await service.close();
+    }
+  });
+}
+
 test("database assistant denial happens before schema inspection or its read-query loop", async () => {
   let artifactReads = 0;
   let databaseConnections = 0;

@@ -142,6 +142,26 @@ function createService({
     }
   }
 
+  function executeSessionQuery(context, { queryId, readOnly = true, schema, sql }) {
+    const endpoint = readOnly ? context.readEndpoint : context.writeEndpoint;
+    return withKnex(endpoint, async ({ connection, knex }) => {
+      const queries = sessionQueries(context.sessionId);
+      try {
+        return await executeDatabaseQuery({
+          activeQueries: queries,
+          connection,
+          knex,
+          queryId,
+          readOnly,
+          schema,
+          sql
+        });
+      } finally {
+        releaseSessionQueries(context.sessionId, queries);
+      }
+    });
+  }
+
   async function sessionContext(input = {}) {
     requireOwner(input.vibe64User);
     const sessionId = normalizeText(input.sessionId);
@@ -334,22 +354,13 @@ function createService({
           assertWriteQueryConfirmed(context, input);
         }
         const startedAt = Date.now();
-        const queries = sessionQueries(context.sessionId);
         try {
-          const queryEnvironment = readOnly
-            ? context.readEndpoint
-            : context.writeEndpoint;
-          const result = await withKnex(queryEnvironment, ({ connection, knex }) => (
-            executeDatabaseQuery({
-              activeQueries: queries,
-              connection,
-              knex,
-              queryId: input.queryId,
-              readOnly,
-              schema,
-              sql: input.sql
-            })
-          ));
+          const result = await executeSessionQuery(context, {
+            queryId: input.queryId,
+            readOnly,
+            schema,
+            sql: input.sql
+          });
           if (!automaticDefault) {
             await recordQueryHistory(
               context.store,
@@ -393,8 +404,6 @@ function createService({
             status: "failed"
           }, "warn");
           throw error;
-        } finally {
-          releaseSessionQueries(context.sessionId, queries);
         }
       });
     },
@@ -546,7 +555,6 @@ function createService({
         });
         const schema = await currentSchema(context);
         const startedAt = Date.now();
-        const queries = sessionQueries(context.sessionId);
         try {
           const result = await runDatabaseAssistant({
             agentContext: {
@@ -558,16 +566,7 @@ function createService({
               threadInput,
               options
             ),
-            executeReadQuery: (sql) => withKnex(context.readEndpoint, ({ connection, knex }) => (
-              executeDatabaseQuery({
-                activeQueries: queries,
-                connection,
-                knex,
-                readOnly: true,
-                schema,
-                sql
-              })
-            )),
+            executeReadQuery: (sql) => executeSessionQuery(context, { schema, sql }),
             messages: input.messages,
             runAgentTurn: (turnInput, options) => terminalService.runDetachedAgentChatTurn(
               context.sessionId,
@@ -593,15 +592,13 @@ function createService({
             status: "failed"
           }, "warn");
           throw error;
-        } finally {
-          releaseSessionQueries(context.sessionId, queries);
         }
       });
     },
 
     async close() {
       const queries = [...activeQueries.values()].flatMap((session) => [...session.values()]);
-      await Promise.allSettled(queries.map((query) => query.cancel()));
+      await Promise.allSettled(queries.filter((query) => query.cancel).map((query) => query.cancel()));
       activeQueries.clear();
     }
   });
