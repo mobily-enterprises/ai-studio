@@ -52,7 +52,10 @@ navigate subsystems and operations to their participating files, and open those
 files for editing or discussion. Task guidance names Genesis operations without
 assuming a machine-global executable. Automatic City reads follow the visible
 Cities pane; retaining another session keeps its view mounted without admitting
-those hidden reads. Managed agent command environments expose
+those hidden reads. A requested refresh may finish while hidden, but does not
+start subsequent status or City reads until normal activation. Hiding during a
+status read also prevents its result from starting hidden City reads.
+Managed agent command environments expose
 Vibe64's bundled, pinned Genesis command and Stack catalog; projects that pin
 their own Genesis compiler continue to invoke that local version explicitly. A
 person's first City visit in a browser gives

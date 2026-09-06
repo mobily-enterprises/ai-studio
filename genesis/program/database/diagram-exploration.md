@@ -24,6 +24,9 @@ Automatic database reads follow the visible Database pane. A retained hidden
 workspace defers automatic table opening until it is active again, including
 when schema data arrives after leaving. Returning to the same selected table
 keeps its mounted SQL draft and results rather than running that table again.
+When a command finishes after the workspace is hidden, its follow-up state
+reload also defers to normal activation. The command keeps its result without
+creating an unavailable-resource error behind the hidden pane.
 
 Given the selected session's schema snapshot and the current user's saved
 diagram, the ERD starts in Keys only mode unless another mode was saved. All

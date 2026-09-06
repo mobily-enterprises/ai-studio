@@ -86,12 +86,13 @@ function useVibe64SystemGraph({
   ));
 
   async function reload() {
+    if (!enabled.value) return;
     await statusResource.reload();
     const cityLoads = [];
-    if (cityAvailable(systemStatus.value, "machine")) {
+    if (machineEnabled.value) {
       cityLoads.push(machineResource.reload());
     }
-    if (cityAvailable(systemStatus.value, "program")) {
+    if (programEnabled.value) {
       cityLoads.push(programResource.reload());
     }
     await Promise.all(cityLoads);

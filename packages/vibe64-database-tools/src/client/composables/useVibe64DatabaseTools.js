@@ -131,11 +131,15 @@ function useVibe64DatabaseTools({
     suppressSuccessMessage: true
   });
 
+  async function reload() {
+    if (enabled.value) return stateResource.reload();
+  }
+
   async function refreshSchema() {
     const result = await refreshCommand.run({
       path: `${sessionPath.value}/schema/refresh`
     });
-    await stateResource.reload();
+    await reload();
     return result;
   }
 
@@ -227,7 +231,7 @@ function useVibe64DatabaseTools({
     lookupBusy: computed(() => lookupCommand.isRunning === true),
     refreshSchema,
     refreshing: computed(() => refreshCommand.isRunning === true),
-    reload: stateResource.reload,
+    reload,
     runQuery,
     running: computed(() => (
       queryCommand.isRunning === true || defaultQueryCommand.isRunning === true
