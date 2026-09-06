@@ -767,6 +767,8 @@ test("GitHub auth terminal uses a gateway real-user PTY request", async () => {
   await withTempDir(async (root) => {
     const systemRoot = path.join(root, "system");
     const githubHome = path.join(root, "homes", "ada");
+    const actorUid = process.getuid() === 1001 ? 1002 : 1001;
+    const actorGid = process.getgid() === 1001 ? 1002 : 1001;
     await Promise.all([
       mkdir(systemRoot, {
         recursive: true
@@ -796,7 +798,8 @@ test("GitHub auth terminal uses a gateway real-user PTY request", async () => {
           commandPreview: "node auth terminal",
           env: {}
         });
-      }
+      },
+      runHostToolCommand: async () => ({ ok: false, output: "Fixture GitHub account is not connected.", stdout: "" })
     });
 
     try {
@@ -807,8 +810,8 @@ test("GitHub auth terminal uses a gateway real-user PTY request", async () => {
         mode: "browser",
         vibe64User: {
           home: githubHome,
-          gid: 1001,
-          uid: 1001,
+          gid: actorGid,
+          uid: actorUid,
           username: "ada"
         }
       });
@@ -818,8 +821,8 @@ test("GitHub auth terminal uses a gateway real-user PTY request", async () => {
       assert.equal(terminalRequests[0].actor, "owner-user");
       assert.equal(terminalRequests[0].command, "bash");
       assert.equal(terminalRequests[0].credentialHome.home, githubHome);
-      assert.equal(terminalRequests[0].credentialHome.uid, 1001);
-      assert.equal(terminalRequests[0].credentialHome.gid, 1001);
+      assert.equal(terminalRequests[0].credentialHome.uid, actorUid);
+      assert.equal(terminalRequests[0].credentialHome.gid, actorGid);
       assert.equal(terminalRequests[0].credentialHome.username, "ada");
       assert.equal(terminalRequests[0].cwd, githubHome);
       assert.equal(terminalRequests[0].envPolicy, "auth");

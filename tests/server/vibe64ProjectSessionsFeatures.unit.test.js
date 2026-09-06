@@ -61,7 +61,23 @@ test("project and sessions register routes and captured actions during setup", a
   assert.equal(typeof projectOutputs.project.createRuntime, "function");
   assert.equal(projectActions.length, 1);
   assert.equal(projectActions[0].contributorId, "vibe64.project");
-  assert.equal(projectActions[0].actions.length, 13);
+  assert.deepEqual(projectActions[0].actions.map(({ id }) => id).sort(), [
+    "vibe64.project.collaboration.save",
+    "vibe64.project.development-database.scope.save",
+    "vibe64.project.engineering.profile.save",
+    "vibe64.project.engineering.read",
+    "vibe64.project.env.read",
+    "vibe64.project.env.user-values.save",
+    "vibe64.project.onboarding.read",
+    "vibe64.project.preview-identities.read",
+    "vibe64.project.preview-identities.save",
+    "vibe64.project.projects.create",
+    "vibe64.project.projects.list",
+    "vibe64.project.projects.select",
+    "vibe64.project.prompt-hints.save",
+    "vibe64.project.settings.read",
+    "vibe64.project.templates.apply"
+  ]);
   assert.equal(projectRoutes.length, projectActions[0].actions.length + 1);
   assert.equal(
     projectRoutes.some(([method, path]) => method === "POST" && path.endsWith("/env/reveal")),
@@ -101,7 +117,44 @@ test("project and sessions register routes and captured actions during setup", a
   );
   assert.equal(sessionActions.length, 1);
   assert.equal(sessionActions[0].contributorId, "vibe64.sessions");
-  assert.equal(sessionActions[0].actions.length, 35);
+  assert.deepEqual(sessionActions[0].actions.map(({ id }) => id).sort(), [
+    "vibe64.assistants.capabilities.list",
+    "vibe64.assistants.model-access.update",
+    "vibe64.repository.history.diff.inspect",
+    "vibe64.repository.history.files.inspect",
+    "vibe64.repository.history.inspect",
+    "vibe64.sessions.agent-message.send",
+    "vibe64.sessions.agent-turn.interrupt",
+    "vibe64.sessions.archive",
+    "vibe64.sessions.archived.list",
+    "vibe64.sessions.assistant-access.inspect",
+    "vibe64.sessions.assistant-selection.update",
+    "vibe64.sessions.changes.diff.inspect",
+    "vibe64.sessions.changes.inspect",
+    "vibe64.sessions.conversation-log.read",
+    "vibe64.sessions.create",
+    "vibe64.sessions.current.update",
+    "vibe64.sessions.inspect",
+    "vibe64.sessions.list",
+    "vibe64.sessions.message-suggestions.approve",
+    "vibe64.sessions.message-suggestions.create",
+    "vibe64.sessions.message-suggestions.discard",
+    "vibe64.sessions.message-suggestions.list",
+    "vibe64.sessions.message-suggestions.withdraw",
+    "vibe64.sessions.presence.update",
+    "vibe64.sessions.preview-state.broadcast",
+    "vibe64.sessions.renewal.cancel",
+    "vibe64.sessions.renewal.confirm",
+    "vibe64.sessions.renewal.draft.request",
+    "vibe64.sessions.renewal.draft.update",
+    "vibe64.sessions.renewal.inspect",
+    "vibe64.sessions.renewal.retry",
+    "vibe64.sessions.updates.apply",
+    "vibe64.sessions.updates.check",
+    "vibe64.sessions.work.inspect",
+    "vibe64.sessions.work.save",
+    "vibe64.sessions.workspace-setup.retry"
+  ]);
   assert.equal(sessionRoutes.length, sessionActions[0].actions.length);
   assert.equal(sessionActions[0].actions.some((action) => Object.hasOwn(action, "dependencies")), false);
 });

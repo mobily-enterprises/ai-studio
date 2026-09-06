@@ -826,7 +826,16 @@ for (const startFails of [false, true]) {
 }
 
 test("terminal renewal callbacks run inside the agent-write lock and hidden seeding uses only its renewal reader", async () => {
-  await withConversationController(async ({ projectRuntimeRoot, projectService, session }) => {
+  await withConversationController(async ({ projectRuntimeRoot, projectService, session, temporaryRoot }) => {
+    const codexToolHomeSource = path.join(temporaryRoot, "codex-tool-home");
+    await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+    await writeFile(
+      path.join(codexToolHomeSource, ".codex", "auth.json"),
+      JSON.stringify({
+        OPENAI_API_KEY: "test-renewal-callback-api-key",
+        auth_mode: "api_key"
+      })
+    );
     let lockDepth = 0;
     let normalReads = 0;
     let renewalReads = 0;
@@ -899,7 +908,11 @@ test("terminal renewal callbacks run inside the agent-write lock and hidden seed
     };
     const terminalService = createTerminalService({
       codexTerminalController: {
-        codexToolHomeRequired: false
+        codexAppServerProviderFactory() {
+          assert.fail("Renewal callback controls must not start an assistant provider.");
+        },
+        codexToolHomeRequired: false,
+        codexToolHomeSource
       },
       env: {
         VIBE64_RUNTIME_NAMESPACE: "test",

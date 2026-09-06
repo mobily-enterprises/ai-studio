@@ -1934,40 +1934,60 @@ test("execution gateway rejects function env outside pty mode", async () => {
   assert.equal(result.code, "vibe64_command_env_function_requires_pty");
 });
 
-test("execution gateway pty mode spools real-user helper payloads centrally", async () => {
+test("execution gateway pty mode spools real-user helper payloads centrally", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-exec-pty-helper-"));
   const namespace = `v64-exec-pty-helper-${Date.now()}`;
-  const result = await runPtyCommand({
-    args: ["auth", "status"],
-    command: "gh",
-    cwd: "/home/ada",
-    envPolicy: "auth",
-    mode: "pty",
-    purpose: "github",
-    terminal: {
-      helperPayloadRoot: root,
-      namespace
-    }
-  }, {
-    actor: {
-      requiresRealUser: true,
-      user: {
-        gid: 1001,
-        home: "/home/ada",
-        uid: 1001,
-        username: "ada"
-      }
-    },
-    cwd: "/home/ada",
-    env: {
-      GH_PROMPT_DISABLED: "1",
-      HOME: "/home/ada",
-      LOGNAME: "ada",
-      USER: "ada"
+  const actorUid = process.getuid() === 1001 ? 1002 : 1001;
+  const actorGid = process.getgid() === 1001 ? 1002 : 1001;
+  let result;
+  t.after(async () => {
+    try {
+      if (result?.id) await closeTerminalSession(result.id, { namespace });
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
+  await writeExecutable(path.join(root, "sudo"), `#!${process.execPath}\nprocess.stdout.write("fixture-sudo-only\\n");\n`);
+  const previousPath = process.env.PATH;
+  process.env.PATH = root;
+  try {
+    result = await runPtyCommand({
+      args: ["auth", "status"],
+      command: "gh",
+      cwd: "/home/ada",
+      envPolicy: "auth",
+      mode: "pty",
+      purpose: "github",
+      terminal: {
+        helperPayloadRoot: root,
+        namespace
+      }
+    }, {
+      actor: {
+        requiresRealUser: true,
+        user: {
+          gid: actorGid,
+          home: "/home/ada",
+          uid: actorUid,
+          username: "ada"
+        }
+      },
+      cwd: "/home/ada",
+      env: {
+        GH_PROMPT_DISABLED: "1",
+        HOME: "/home/ada",
+        LOGNAME: "ada",
+        USER: "ada"
+      }
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
 
   assert.equal(result.ok, true, result.error);
+  const terminal = await waitForTerminalOutput(result.id, namespace, "fixture-sudo-only");
+  assert.match(terminal.output, /fixture-sudo-only/u);
   const payloadRoot = path.join(root, "exec-helper-payloads");
   const payloadFiles = await readdir(payloadRoot);
   assert.equal(payloadFiles.length, 1);
@@ -1976,52 +1996,69 @@ test("execution gateway pty mode spools real-user helper payloads centrally", as
   assert.deepEqual(payload.args, ["auth", "status"]);
   assert.equal(payload.cwd, "/home/ada");
   assert.equal(payload.env.HOME, "/home/ada");
-  assert.equal(payload.gid, 1001);
+  assert.equal(payload.gid, actorGid);
   assert.equal(payload.home, "/home/ada");
   assert.equal(payload.operation, "account-auth-terminal");
-  assert.equal(payload.uid, 1001);
+  assert.equal(payload.uid, actorUid);
   assert.equal(payload.username, "ada");
-  await closeTerminalSession(result.id, {
-    namespace
-  });
 });
 
-test("execution gateway helper-backed pty evaluates terminal args and env factories", async () => {
+test("execution gateway helper-backed pty evaluates terminal args and env factories", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-exec-pty-helper-dynamic-"));
   const namespace = `v64-exec-pty-helper-dynamic-${Date.now()}`;
-  const result = await runPtyCommand({
-    args: (input = {}) => ["auth", input.id || ""],
-    command: "gh",
-    cwd: "/home/ada",
-    envFactory: (input = {}) => ({
-      TERMINAL_ID: input.id || ""
-    }),
-    envPolicy: "auth",
-    mode: "pty",
-    purpose: "github",
-    terminal: {
-      helperPayloadRoot: root,
-      namespace
-    }
-  }, {
-    actor: {
-      requiresRealUser: true,
-      user: {
-        gid: 1001,
-        home: "/home/ada",
-        uid: 1001,
-        username: "ada"
-      }
-    },
-    cwd: "/home/ada",
-    env: {
-      HOME: "/home/ada",
-      LOGNAME: "ada",
-      USER: "ada"
+  const actorUid = process.getuid() === 1001 ? 1002 : 1001;
+  const actorGid = process.getgid() === 1001 ? 1002 : 1001;
+  let result;
+  t.after(async () => {
+    try {
+      if (result?.id) await closeTerminalSession(result.id, { namespace });
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
+  await writeExecutable(path.join(root, "sudo"), `#!${process.execPath}\nprocess.stdout.write("fixture-sudo-only\\n");\n`);
+  const previousPath = process.env.PATH;
+  process.env.PATH = root;
+  try {
+    result = await runPtyCommand({
+      args: (input = {}) => ["auth", input.id || ""],
+      command: "gh",
+      cwd: "/home/ada",
+      envFactory: (input = {}) => ({
+        TERMINAL_ID: input.id || ""
+      }),
+      envPolicy: "auth",
+      mode: "pty",
+      purpose: "github",
+      terminal: {
+        helperPayloadRoot: root,
+        namespace
+      }
+    }, {
+      actor: {
+        requiresRealUser: true,
+        user: {
+          gid: actorGid,
+          home: "/home/ada",
+          uid: actorUid,
+          username: "ada"
+        }
+      },
+      cwd: "/home/ada",
+      env: {
+        HOME: "/home/ada",
+        LOGNAME: "ada",
+        USER: "ada"
+      }
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
 
   assert.equal(result.ok, true, result.error);
+  const terminal = await waitForTerminalOutput(result.id, namespace, "fixture-sudo-only");
+  assert.match(terminal.output, /fixture-sudo-only/u);
   const payloadRoot = path.join(root, "exec-helper-payloads");
   const payloadFiles = await readdir(payloadRoot);
   assert.equal(payloadFiles.length, 1);
@@ -2029,7 +2066,6 @@ test("execution gateway helper-backed pty evaluates terminal args and env factor
   assert.deepEqual(payload.args, ["auth", result.id]);
   assert.equal(payload.env.TERMINAL_ID, result.id);
   assert.equal(payload.env.HOME, "/home/ada");
-  await closeTerminalSession(result.id, {
-    namespace
-  });
+  assert.equal(payload.uid, actorUid);
+  assert.equal(payload.gid, actorGid);
 });

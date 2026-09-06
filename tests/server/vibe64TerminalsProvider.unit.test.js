@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -114,9 +114,16 @@ test("terminals feature creates the direct API from runtime env", async () => {
     const runtimeRoot = path.join(root, "runtime");
     await mkdir(targetRoot, { recursive: true });
     await mkdir(runtimeRoot, { recursive: true });
+    const codexToolHomeSource = path.join(root, "codex-tool-home");
+    await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+    await writeFile(path.join(codexToolHomeSource, ".codex", "auth.json"), JSON.stringify({
+      auth_mode: "api_key",
+      OPENAI_API_KEY: "fixture-terminals-provider-key"
+    }));
     const feature = createVibe64TerminalsFeature({
       codexTerminalController: {
-        codexAuthPreflight: failingCodexAuthPreflight
+        codexAuthPreflight: failingCodexAuthPreflight,
+        codexToolHomeSource
       }
     });
     const outputs = await feature.setup(featureDependencies({
@@ -160,27 +167,37 @@ test("terminals feature creates the direct API from runtime env", async () => {
       }
     }), { profile: "test" });
 
-    assert.equal(typeof outputs.terminals.setProductionEnvironmentProvider, "function");
-    const result = await outputs.terminals.startGlobalCodexTerminal();
-    assert.equal(result.ok, false);
-    assert.match(result.error, /test Codex authentication unavailable/u);
-    assert.doesNotMatch(result.error, /toolchain|image/u);
-    await feature.shutdown(featureDependencies({ project: {} }), {
-      outputs,
-      profile: "test"
-    });
+    try {
+      assert.equal(typeof outputs.terminals.setProductionEnvironmentProvider, "function");
+      const result = await outputs.terminals.startGlobalCodexTerminal();
+      assert.equal(result.ok, false);
+      assert.match(result.error, /test Codex authentication unavailable/u);
+      assert.doesNotMatch(result.error, /toolchain|image/u);
+    } finally {
+      await feature.shutdown(featureDependencies({ project: {} }), {
+        outputs,
+        profile: "test"
+      });
+    }
   });
 });
 
 test("personal Codex access blocks a member before authentication starts", async () => {
   await withTemporaryRoot(async (root) => {
     let authenticationStarts = 0;
+    const codexToolHomeSource = path.join(root, "codex-tool-home");
+    await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+    await writeFile(path.join(codexToolHomeSource, ".codex", "auth.json"), JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: { account_id: "fixture-owner", access_token: "fixture-owner-access-token" }
+    }));
     const feature = createVibe64TerminalsFeature({
       codexTerminalController: {
         async codexAuthPreflight() {
           authenticationStarts += 1;
-          return { ok: true };
-        }
+          throw new Error("A member must not reach Codex authentication.");
+        },
+        codexToolHomeSource
       }
     });
     const runtimeRoot = path.join(root, "runtime");
@@ -220,23 +237,20 @@ test("personal Codex access blocks a member before authentication starts", async
         }
       }
     }), { profile: "test" });
-    outputs.terminals.configureAssistantRuntime({
-      async readAssistantAccess() {
-        return { ownerOnly: true };
-      }
-    });
-
-    await assert.rejects(
-      outputs.terminals.startGlobalCodexTerminal({
-        vibe64User: { role: "user", username: "member" }
-      }),
-      (error) => error.code === "vibe64_assistant_owner_required"
-    );
-    assert.equal(authenticationStarts, 0);
-    await feature.shutdown(featureDependencies({ project: {} }), {
-      outputs,
-      profile: "test"
-    });
+    try {
+      await assert.rejects(
+        outputs.terminals.startGlobalCodexTerminal({
+          vibe64User: { role: "user", username: "member" }
+        }),
+        (error) => error.code === "vibe64_assistant_owner_required"
+      );
+      assert.equal(authenticationStarts, 0);
+    } finally {
+      await feature.shutdown(featureDependencies({ project: {} }), {
+        outputs,
+        profile: "test"
+      });
+    }
   });
 });
 
