@@ -316,6 +316,7 @@ function closingMarkdownDestinationIndex(text = "", start = 0) {
 
 function normalizeMarkdownLinkHref(value = "") {
   const href = String(value || "").trim().replace(/^<|>$/gu, "");
+  // eslint-disable-next-line no-control-regex -- Strip intentional ASCII controls before checking unsafe URL schemes.
   const protocolText = href.replace(/[\u0000-\u0020\u007f]/gu, "");
   return /^(?:javascript|vbscript|data):/iu.test(protocolText) ? "" : href;
 }

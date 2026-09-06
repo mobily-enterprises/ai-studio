@@ -44,6 +44,12 @@ test("chat links retain ordinary destinations but never activate script or data 
     assert.equal(parts.some(part => part.type === "link"), false, href);
     assert.equal(parts.map(part => part.text).join(""), text);
   }
+  for (const codePoint of [...Array(33).keys(), 127]) {
+    const text = `[Unsafe](java${String.fromCodePoint(codePoint)}script:alert)`;
+    const parts = parseLongTextInlineParts(text);
+    assert.equal(parts.some(part => part.type === "link"), false, `ASCII ${codePoint}`);
+    assert.equal(parts.map(part => part.text).join(""), text);
+  }
   assert.deepEqual(parseLongTextInlineParts('<img src=x onerror="alert(1)">'), [
     { type: "text", text: '<img src=x onerror="alert(1)">' }
   ]);
