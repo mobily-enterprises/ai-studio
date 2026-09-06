@@ -2782,50 +2782,66 @@ test("repeated invalid successors leave no process runtime tombstones across res
       successorProcessExitProofReleaseErrors: [releaseInterrupted],
       successorRuntimeRoot
     });
-    const reviewed = await reviewedRenewal(context, "renewal:repeated-invalid-successors");
+    let controller = context.controller;
+    try {
+      const reviewed = await reviewedRenewal(context, "renewal:repeated-invalid-successors");
 
-    await context.controller.confirmSessionRenewal(OLD_SESSION_ID, {
-      expectedHash: reviewed.draft.hash,
-      expectedRevision: reviewed.draft.revision,
-      operationKey: reviewed.operationKey
-    });
-    const stoppedBeforeRelease = await eventually(
-      () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
-      (state) => state?.status === SESSION_RENEWAL_STATUS.FAILED
-    );
-    const firstSuccessorId = stoppedBeforeRelease.successor.sessionId;
-    assert.equal(stoppedBeforeRelease.stage, SESSION_RENEWAL_STAGE.SUCCESSOR_DISCARDING);
-    assert.deepEqual(await readdir(successorRuntimeRoot), [firstSuccessorId]);
+      await controller.confirmSessionRenewal(OLD_SESSION_ID, {
+        expectedHash: reviewed.draft.hash,
+        expectedRevision: reviewed.draft.revision,
+        operationKey: reviewed.operationKey
+      });
+      // Real filesystem cleanup needs elapsed polling, not only event-loop turns.
+      const stoppedBeforeRelease = await eventually(
+        () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
+        (state) => state?.status === SESSION_RENEWAL_STATUS.FAILED,
+        100,
+        10
+      );
+      const firstSuccessorId = stoppedBeforeRelease.successor.sessionId;
+      assert.equal(stoppedBeforeRelease.stage, SESSION_RENEWAL_STAGE.SUCCESSOR_DISCARDING);
+      assert.deepEqual(await readdir(successorRuntimeRoot), [firstSuccessorId]);
 
-    context.setReleaseFailure(false);
-    await context.newController().retrySessionRenewal(OLD_SESSION_ID, {
-      operationKey: reviewed.operationKey
-    });
-    const releasedBeforeDiscard = await eventually(
-      () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
-      (state) => state?.status === SESSION_RENEWAL_STATUS.FAILED
-    );
-    assert.equal(releasedBeforeDiscard.successor.sessionId, firstSuccessorId);
-    assert.equal(releasedBeforeDiscard.stage, SESSION_RENEWAL_STAGE.SUCCESSOR_DISCARDING);
-    assert.deepEqual(await readdir(successorRuntimeRoot), []);
+      context.setReleaseFailure(false);
+      await controller.closeSessionRenewalWork();
+      controller = context.newController();
+      await controller.retrySessionRenewal(OLD_SESSION_ID, {
+        operationKey: reviewed.operationKey
+      });
+      const releasedBeforeDiscard = await eventually(
+        () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
+        (state) => state?.status === SESSION_RENEWAL_STATUS.FAILED,
+        100,
+        10
+      );
+      assert.equal(releasedBeforeDiscard.successor.sessionId, firstSuccessorId);
+      assert.equal(releasedBeforeDiscard.stage, SESSION_RENEWAL_STAGE.SUCCESSOR_DISCARDING);
+      assert.deepEqual(await readdir(successorRuntimeRoot), []);
 
-    await context.newController().retrySessionRenewal(OLD_SESSION_ID, {
-      operationKey: reviewed.operationKey
-    });
-    const completed = await eventually(
-      () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
-      (state) => state?.status === SESSION_RENEWAL_STATUS.COMPLETED
-    );
+      await controller.closeSessionRenewalWork();
+      controller = context.newController();
+      await controller.retrySessionRenewal(OLD_SESSION_ID, {
+        operationKey: reviewed.operationKey
+      });
+      const completed = await eventually(
+        () => readSessionRenewalState(context.runtime, OLD_SESSION_ID),
+        (state) => state?.status === SESSION_RENEWAL_STATUS.COMPLETED,
+        100,
+        10
+      );
 
-    assert.equal(completed.successor.attempt, 3);
-    assert.match(completed.successor.sessionId, /-3$/u);
-    assert.equal(context.calls.discard, 2);
-    assert.equal(context.calls.successorProcessExitProofRelease, 3);
-    assert.equal(context.sessions.has(firstSuccessorId), false);
-    assert.deepEqual(
-      (await readdir(successorRuntimeRoot)).sort(),
-      [completed.successor.sessionId]
-    );
+      assert.equal(completed.successor.attempt, 3);
+      assert.match(completed.successor.sessionId, /-3$/u);
+      assert.equal(context.calls.discard, 2);
+      assert.equal(context.calls.successorProcessExitProofRelease, 3);
+      assert.equal(context.sessions.has(firstSuccessorId), false);
+      assert.deepEqual(
+        (await readdir(successorRuntimeRoot)).sort(),
+        [completed.successor.sessionId]
+      );
+    } finally {
+      await controller.closeSessionRenewalWork();
+    }
   });
 });
 
