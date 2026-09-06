@@ -1,4 +1,4 @@
-import { nextTick, reactive } from "vue";
+import { createApp, effectScope, nextTick, reactive, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const route = reactive({
@@ -8,6 +8,8 @@ const router = {
   push: vi.fn(),
   replace: vi.fn()
 };
+const viewScopes = new Set();
+const accountMocks = vi.hoisted(() => ({ useVibe64Accounts: vi.fn() }));
 
 vi.mock("vue-router", () => ({
   useRoute: () => route,
@@ -37,13 +39,7 @@ vi.mock("@/lib/vibe64AsyncComponent.js", () => ({
     name: label.replaceAll(" ", "")
   })
 }));
-vi.mock("@local/vibe64-accounts/client", () => ({
-  useVibe64Accounts: () => ({
-    status: {
-      value: null
-    }
-  })
-}));
+vi.mock("@local/vibe64-accounts/client", () => accountMocks);
 
 function viewProps(overrides = {}) {
   return reactive({
@@ -98,10 +94,13 @@ async function createViewWithProps(overrides = {}, options = {}) {
   const emit = options.emit || vi.fn();
   const viewOptions = { ...options };
   delete viewOptions.emit;
+  const scope = effectScope();
+  viewScopes.add(scope);
+  const app = createApp({});
   return {
     emit,
     props,
-    view: useVibe64AutopilotView(props, emit, viewOptions)
+    view: app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, emit, viewOptions)))
   };
 }
 
@@ -125,6 +124,8 @@ function memoryStorage() {
 
 describe("useVibe64AutopilotView direct chat", () => {
   afterEach(() => {
+    viewScopes.forEach((scope) => scope.stop());
+    viewScopes.clear();
     vi.unstubAllGlobals();
   });
 
@@ -132,6 +133,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     route.path = "/app/project/chat-test/dashboard/env";
     router.push.mockReset();
     router.replace.mockReset();
+    accountMocks.useVibe64Accounts.mockReset().mockReturnValue({ status: ref(null) });
   });
 
   it("uses the new-build welcome for a blank, workspace-unconfigured project", async () => {
@@ -229,6 +231,19 @@ describe("useVibe64AutopilotView direct chat", () => {
     })).toBe(
       "Hi Ada! 👋 This is an existing project. Tell me what you’d like to change, check, or improve, and we’ll work through it together."
     );
+  });
+
+  it("reads the standalone profile reactively when no host supplies a welcome name", async () => {
+    const status = ref({ personalProfile: { preferredName: "Ada" } });
+    accountMocks.useVibe64Accounts.mockReturnValue({ status });
+    const view = await createView();
+
+    expect(view.emptyConversationWelcome.value).toMatch(/^Hi Ada! 👋/u);
+    status.value = { personalProfile: { preferredName: "Grace" } };
+    expect(view.emptyConversationWelcome.value).toMatch(/^Hi Grace! 👋/u);
+    status.value = { personalProfile: { preferredName: "" } };
+    expect(view.emptyConversationWelcome.value).toMatch(/^Hi! 👋/u);
+    expect(accountMocks.useVibe64Accounts).toHaveBeenCalledTimes(1);
   });
 
   it("keeps chat available for steering while Codex is working", async () => {
@@ -1324,7 +1339,7 @@ describe("useVibe64AutopilotView direct chat", () => {
   });
 
   it("lets the user leave structured questions and answer normally", async () => {
-    const props = viewProps({
+    const { props, view } = await createViewWithProps({
       conversationLog: {
         turns: [{
           assistant: {
@@ -1333,10 +1348,6 @@ describe("useVibe64AutopilotView direct chat", () => {
         }]
       }
     });
-    const { useVibe64AutopilotView } = await import(
-      "../../src/composables/useVibe64AutopilotView.js"
-    );
-    const view = useVibe64AutopilotView(props, vi.fn());
 
     view.composerDraft.value = "Let me explain this in my own words.";
     expect(view.dismissNumberedQuestions()).toBe(true);

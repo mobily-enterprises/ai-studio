@@ -49,6 +49,7 @@ including follow-up guidance while a turn is active.
 - `src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue`
 - `src/lib/vibe64ChatMessage.js`
+- `src/lib/vibe64WelcomeName.js`
 - `vite.config.mjs`
 
 ## Public contract
@@ -59,6 +60,11 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+An empty conversation's welcome can use a host-provided reactive name for the
+current person. Without that presentation provider it uses the standalone
+personal profile. An explicitly empty host name stays generic instead of falling
+back to an unrelated profile. This name changes only the welcome, not authored
+messages or saved conversation history.
 An explicit Possible answers block remains one selectable answer group when
 explanatory prose or a numbered recommendation list appears before it. Only
 actual numbered questions become separate required fields, so ordinary

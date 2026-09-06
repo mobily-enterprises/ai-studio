@@ -1,5 +1,5 @@
-import { nextTick, reactive, ref } from "vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createApp, effectScope, nextTick, reactive, ref } from "vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const route = reactive({
   path: "/app/project/chat-test/dashboard/files"
@@ -78,18 +78,23 @@ function viewProps() {
 }
 
 describe("useVibe64AutopilotView route hydration", () => {
+  let app;
+  let scope;
   beforeEach(() => {
+    app = createApp({});
+    scope = effectScope();
     route.path = "/app/project/chat-test/dashboard/files";
     router.push.mockReset();
     router.replace.mockReset();
   });
+  afterEach(() => scope.stop());
 
   it("opens a directly routed source tool when the selected source arrives", async () => {
     const props = viewProps();
     const { useVibe64AutopilotView } = await import(
       "../../src/composables/useVibe64AutopilotView.js"
     );
-    const view = useVibe64AutopilotView(props, vi.fn());
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
 
     expect(view.sessionSourceRoot.value).toBe("");
     expect(view.rightPaneTab.value).not.toBe("editor");
@@ -133,7 +138,7 @@ describe("useVibe64AutopilotView route hydration", () => {
     const { useVibe64AutopilotView } = await import(
       "../../src/composables/useVibe64AutopilotView.js"
     );
-    const view = useVibe64AutopilotView(props, vi.fn());
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn())));
 
     expect(view.rightPaneTab.value).toBe("database");
 
@@ -155,10 +160,10 @@ describe("useVibe64AutopilotView route hydration", () => {
     const { useVibe64AutopilotView } = await import(
       "../../src/composables/useVibe64AutopilotView.js"
     );
-    const view = useVibe64AutopilotView(props, vi.fn(), {
+    const view = app.runWithContext(() => scope.run(() => useVibe64AutopilotView(props, vi.fn(), {
       assistantAccessLoading: accessLoading,
       assistantCanUseAi: canUseAi
-    });
+    })));
 
     expect(view.rightPaneTab.value).toBe("ai-terminal");
     expect(router.replace).not.toHaveBeenCalled();

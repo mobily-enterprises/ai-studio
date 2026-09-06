@@ -1,4 +1,4 @@
-import { computed, ref, unref, watch } from "vue";
+import { computed, inject, ref, unref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   VIBE64_DEFAULT_AGENT_PROVIDER_ID
@@ -53,6 +53,9 @@ import {
 import {
   useVibe64Accounts
 } from "@local/vibe64-accounts/client";
+import {
+  VIBE64_WELCOME_NAME_KEY
+} from "@/lib/vibe64WelcomeName.js";
 
 const DIRECT_SESSION_TOOL_IDS = new Set([
   "info",
@@ -340,10 +343,12 @@ function useVibe64AutopilotView(props, emit, {
     minHeight: "10rem"
   });
   const agentSettings = useVibe64AgentSettings();
-  const accounts = useVibe64Accounts();
-  const preferredName = computed(() => normalizedAgentTurnText(
-    accounts.status.value?.personalProfile?.preferredName
-  ));
+  const preferredName = inject(VIBE64_WELCOME_NAME_KEY, () => {
+    const accounts = useVibe64Accounts();
+    return computed(() => normalizedAgentTurnText(
+      accounts.status.value?.personalProfile?.preferredName
+    ));
+  }, true);
   const currentAgentSettings = computed(() => agentSettings.settings.value);
   const requestAgentSettings = computed(() => {
     const settings = currentAgentSettings.value || {};
