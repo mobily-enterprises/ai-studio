@@ -355,7 +355,8 @@ const engineeringResource = useEndpointResource({
     routeSessionId.value ? { sessionId: routeSessionId.value } : {}
   )),
   realtime: {
-    event: VIBE64_PROJECT_CHANGED_EVENT
+    event: VIBE64_PROJECT_CHANGED_EVENT,
+    matches: () => !engineeringSaveCommand.isRunning
   },
   refreshOnPull: true,
   requestRecoveryLabel: "Engineering approach"
@@ -673,9 +674,12 @@ async function saveEngineeringProfile() {
       profile: engineeringProfileDraft.value,
       sessionId: routeSessionId.value || String(engineering.value.source?.sessionId || "").trim()
     });
-    await engineeringResource.reload();
   } finally {
-    engineeringSaving.value = false;
+    try {
+      await engineeringResource.reload();
+    } finally {
+      engineeringSaving.value = false;
+    }
   }
 }
 

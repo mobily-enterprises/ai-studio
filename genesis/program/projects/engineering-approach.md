@@ -25,7 +25,10 @@ that document.
 Refreshing the same source preserves an unsaved profile choice. Selecting a
 different project or source loads that source's choice instead. Save remains
 pending until its canonical refresh finishes, so a newly enabled choice cannot
-be overwritten by the previous save's refresh.
+be overwritten by the previous save's refresh. Project-change events received
+while the save request is pending defer to that refresh, including after a
+failed save. Events received during or after the refresh remain eligible to
+reload the current source.
 
 When a hosted project has no available source, the setting stays visibly
 unavailable instead of treating the project metadata namespace as source. An

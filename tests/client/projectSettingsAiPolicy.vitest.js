@@ -17,6 +17,7 @@ import {
   ref,
   ssrContextKey
 } from "vue";
+import { routeLocationKey } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ENGINEERING_ENDPOINT,
@@ -33,6 +34,7 @@ const projectSettingsMocks = vi.hoisted(() => ({
   dialog: vi.fn(),
   endpointOptions: [],
   engineeringResource: null,
+  liveCommands: false,
   liveQueries: false,
   projectSlug: null,
   realtimeOptions: [],
@@ -57,23 +59,32 @@ vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", async (impo
   };
 });
 
-vi.mock("vue-router", () => ({
-  useRoute() {
-    return projectSettingsMocks.route;
-  },
-  useRouter() {
-    return projectSettingsMocks.router;
-  }
-}));
+vi.mock("vue-router", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useRoute() {
+      return projectSettingsMocks.route;
+    },
+    useRouter() {
+      return projectSettingsMocks.router;
+    }
+  };
+});
 
-vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
-  useCommand(options) {
-    if (projectSettingsMocks.liveQueries) return createCommand();
-    const index = projectSettingsMocks.commandOptions.length;
-    projectSettingsMocks.commandOptions.push(options);
-    return projectSettingsMocks.commands[index];
-  }
-}));
+vi.mock("@jskit-ai/http-web/client/composables/useCommand", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useCommand(options) {
+      if (projectSettingsMocks.liveCommands) return actual.useCommand(options);
+      if (projectSettingsMocks.liveQueries) return createCommand();
+      const index = projectSettingsMocks.commandOptions.length;
+      projectSettingsMocks.commandOptions.push(options);
+      return projectSettingsMocks.commands[index];
+    }
+  };
+});
 
 vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", async (importOriginal) => {
   const actual = await importOriginal();
@@ -373,19 +384,31 @@ function testRenderer() {
   });
 }
 
-function mountPanel({ liveQueries = false } = {}) {
+function mountPanel({ liveQueries = false, liveCommands = false } = {}) {
   const container = { children: [], parent: null, props: {}, type: "root" };
   const requests = [];
+  const writes = [];
+  const feedback = { dismiss: vi.fn(), report: vi.fn(() => ({ skipped: true })) };
   const listeners = new Map();
   const showSettings = ref(true);
   const queryClient = liveQueries
     ? new QueryClient({ defaultOptions: { queries: { retry: false } } })
     : null;
   let sessionPanel;
+  let closed = false;
+  projectSettingsMocks.liveCommands = liveCommands;
   projectSettingsMocks.liveQueries = liveQueries;
   if (liveQueries) {
     configureHttpWebClient({
       request(url, options) {
+        if (options.method === "PUT") {
+          expect(liveCommands).toBe(true);
+          expect(url).toBe(ENGINEERING_ENDPOINT);
+          const response = Promise.withResolvers();
+          writes.push({ body: options.body, projectSlug: projectSettingsMocks.projectSlug.value, url, ...response });
+          if (closed) response.resolve({ ok: true });
+          return response.promise;
+        }
         expect(options.method).toBe("GET");
         expect([PROJECT_SETTINGS_ENDPOINT, ENGINEERING_ENDPOINT]).toContain(url);
         const projectSlug = projectSettingsMocks.projectSlug.value;
@@ -400,6 +423,7 @@ function mountPanel({ liveQueries = false } = {}) {
         );
         const response = Promise.withResolvers();
         requests.push({ data, key, projectSlug, sessionId, url, ...response });
+        if (closed) response.resolve(data);
         return response.promise;
       }
     });
@@ -426,6 +450,8 @@ function mountPanel({ liveQueries = false } = {}) {
   app.component("VTextarea", passthroughComponent("textarea"));
   if (queryClient) {
     app.use(VueQueryPlugin, { queryClient });
+    app.provide(routeLocationKey, projectSettingsMocks.route);
+    app.provide("jskit.shell-web.runtime.web-error.client", feedback);
     app.provide("jskit.realtime.runtime.client.socket", {
       on(event, handler) {
         if (!listeners.has(event)) listeners.set(event, new Set());
@@ -441,8 +467,10 @@ function mountPanel({ liveQueries = false } = {}) {
   return {
     app,
     container,
+    feedback,
     queryClient,
     requests,
+    writes,
     get sessionPanel() { return sessionPanel; },
     showSettings,
     async projectChanged() {
@@ -461,9 +489,11 @@ function mountPanel({ liveQueries = false } = {}) {
       await nextTick();
     },
     close() {
+      closed = true;
       app.unmount();
       queryClient?.clear();
       for (const request of requests) request.resolve({});
+      for (const request of writes) request.resolve({ ok: true });
     }
   };
 }
@@ -515,6 +545,7 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     projectSettingsMocks.dialog.mockReset();
     projectSettingsMocks.endpointOptions.length = 0;
     projectSettingsMocks.engineeringResource = createEngineeringResource();
+    projectSettingsMocks.liveCommands = false;
     projectSettingsMocks.liveQueries = false;
     projectSettingsMocks.projectSlug = ref("project-a");
     projectSettingsMocks.realtimeOptions.length = 0;
@@ -709,6 +740,283 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     expect(fixture.listenerCount()).toBe(0);
     await fixture.projectChanged();
     expect(fixture.requests).toHaveLength(completedRequests);
+  });
+
+  it.each(["held", "settled"])("uses one canonical engineering read when the save event arrives before PUT acknowledgement (%s event read)", async (eventRead) => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      const from = fixture.requests.length;
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].body).toEqual({ profile: "durable.v1", sessionId: "session-a" });
+      expect(fixture.queryClient.isMutating()).toBe(1);
+
+      await fixture.projectChanged();
+      for (const request of fixture.requests.slice(from)) {
+        if (request.url === ENGINEERING_ENDPOINT) {
+          request.data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+        }
+      }
+      if (eventRead === "settled") await fixture.resolveReads(from);
+      expect(findButton(fixture.container, "Saving…").props.disabled).toBe(true);
+
+      const afterAcknowledgement = fixture.requests.length;
+      fixture.writes[0].resolve({
+        ...createEngineeringResource({ profile: "durable.v1" }).data.value,
+        ok: true,
+        projectSlug: "project-a"
+      });
+      await vi.waitFor(() => expect(
+        fixture.requests.slice(afterAcknowledgement).filter(({ url }) => url === ENGINEERING_ENDPOINT)
+      ).toHaveLength(1));
+      expect(fixture.queryClient.isMutating()).toBe(0);
+      expect(findField(fixture.container, "Engineering profile").props.disabled).toBe(true);
+      for (const request of fixture.requests.slice(afterAcknowledgement)) {
+        request.data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+      }
+      await fixture.resolveReads(from);
+      await saving;
+      await nextTick();
+
+      expect(fixture.requests.slice(from).filter(({ url }) => url === ENGINEERING_ENDPOINT)).toHaveLength(1);
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findButton(fixture.container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      fixture.close();
+      await saving.catch(() => {});
+    }
+  });
+
+  it("does not reuse a held pre-mutation engineering read when the PUT is acknowledged without an event", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    let earlierRefresh = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      const key = engineeringSettingsQueryKey("app", "public", "project-a", "session-a");
+      const from = fixture.requests.length;
+      earlierRefresh = fixture.queryClient.refetchQueries({ queryKey: key, exact: true });
+      await nextTick();
+      const earlierRead = fixture.requests.at(-1);
+      expect(earlierRead.url).toBe(ENGINEERING_ENDPOINT);
+      findField(fixture.container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      const afterAcknowledgement = fixture.requests.length;
+      fixture.writes[0].resolve({
+        ...createEngineeringResource({ profile: "durable.v1" }).data.value,
+        ok: true,
+        projectSlug: "project-a"
+      });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      fixture.requests.at(-1).data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+      await fixture.resolveReads(afterAcknowledgement);
+      await saving;
+      earlierRead.resolve(earlierRead.data);
+      await earlierRefresh;
+      await nextTick();
+
+      expect(fixture.requests.slice(from).filter(({ url }) => url === ENGINEERING_ENDPOINT)).toHaveLength(2);
+      expect(fixture.queryClient.getQueryData(key).engineering.profile.id).toBe("durable.v1");
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findButton(fixture.container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      fixture.close();
+      await Promise.all([saving.catch(() => {}), earlierRefresh]);
+    }
+  });
+
+  it.each(["during", "after"])("keeps a newer engineering event authoritative %s the canonical save reload", async (eventTiming) => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      const afterAcknowledgement = fixture.requests.length;
+      fixture.writes[0].resolve({
+        ...createEngineeringResource({ profile: "durable.v1" }).data.value,
+        ok: true,
+        projectSlug: "project-a"
+      });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      const canonicalRead = fixture.requests.at(-1);
+      canonicalRead.data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+      expect(fixture.queryClient.isMutating()).toBe(0);
+      if (eventTiming === "after") {
+        await fixture.resolveReads(afterAcknowledgement);
+        await saving;
+      }
+      const afterEvent = fixture.requests.length;
+      await fixture.projectChanged();
+      expect(fixture.requests.slice(afterEvent).filter(({ url }) => url === ENGINEERING_ENDPOINT)).toHaveLength(1);
+      for (const request of fixture.requests.slice(afterEvent)) {
+        if (request.url === ENGINEERING_ENDPOINT) {
+          request.data = createEngineeringResource({ profile: "high-assurance.v1" }).data.value;
+        }
+      }
+      await fixture.resolveReads(afterEvent);
+      canonicalRead.resolve(canonicalRead.data);
+      await saving;
+      await nextTick();
+
+      const key = engineeringSettingsQueryKey("app", "public", "project-a", "session-a");
+      expect(fixture.queryClient.getQueryData(key).engineering.profile.id).toBe("high-assurance.v1");
+      expect(fixture.requests.slice(afterAcknowledgement).filter(({ url }) => url === ENGINEERING_ENDPOINT)).toHaveLength(2);
+      expect(findField(fixture.container, "Engineering profile").props.disabled).toBe(false);
+      expect(findField(fixture.container, "Engineering profile").props.modelValue)
+        .toBe(eventTiming === "during" ? "durable.v1" : "high-assurance.v1");
+    } finally {
+      fixture.close();
+      await saving.catch(() => {});
+    }
+  });
+
+  it("refreshes canonical engineering after a real PUT failure and keeps the draft retryable", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      const outcome = saving.then(() => null, (error) => error);
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      const afterFailure = fixture.requests.length;
+      const failure = new Error("Controlled engineering PUT failure.");
+      fixture.writes[0].reject(failure);
+      await vi.waitFor(() => expect(fixture.requests.slice(afterFailure)).toHaveLength(1));
+      expect(fixture.requests.at(-1).url).toBe(ENGINEERING_ENDPOINT);
+      await fixture.resolveReads(afterFailure);
+      expect(await outcome).toBe(failure);
+      await nextTick();
+      expect(fixture.feedback.report).toHaveBeenCalledWith(expect.objectContaining({
+        cause: failure,
+        intent: "action-feedback",
+        severity: "error"
+      }));
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findButton(fixture.container, "Save engineering approach").props.disabled).toBe(false);
+
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(2));
+      const afterRetry = fixture.requests.length;
+      fixture.writes[1].resolve({
+        ...createEngineeringResource({ profile: "durable.v1" }).data.value,
+        ok: true,
+        projectSlug: "project-a"
+      });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterRetry)).toHaveLength(1));
+      fixture.requests.at(-1).data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+      await fixture.resolveReads(afterRetry);
+      await saving;
+      await nextTick();
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findButton(fixture.container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      fixture.close();
+      await saving.catch(() => {});
+    }
+  });
+
+  it("shows an actual canonical engineering query error and retries without another PUT", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    let retrying = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      const afterAcknowledgement = fixture.requests.length;
+      fixture.writes[0].resolve({
+        ...createEngineeringResource({ profile: "durable.v1" }).data.value,
+        ok: true,
+        projectSlug: "project-a"
+      });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      fixture.requests.at(-1).reject(new Error("Engineering canonical read failed."));
+      await saving;
+      await nextTick();
+      const notice = findField(fixture.container, "Project settings");
+      expect(notice.props.message).toBe("Engineering canonical read failed.");
+      expect(fixture.queryClient.isMutating()).toBe(0);
+      const beforeRetry = fixture.requests.length;
+      retrying = notice.props.onRetry();
+      await nextTick();
+      expect(fixture.requests.slice(beforeRetry).map(({ url }) => url))
+        .toEqual([PROJECT_SETTINGS_ENDPOINT, ENGINEERING_ENDPOINT]);
+      fixture.requests.at(-1).data = createEngineeringResource({ profile: "durable.v1" }).data.value;
+      await fixture.resolveReads(beforeRetry);
+      await retrying;
+      await nextTick();
+      expect(fixture.writes).toHaveLength(1);
+      expect(findField(fixture.container, "Project settings")).toBeNull();
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("durable.v1");
+      expect(findField(fixture.container, "Engineering profile").props.disabled).toBe(false);
+      expect(findButton(fixture.container, "Save engineering approach").props.disabled).toBe(true);
+    } finally {
+      fixture.close();
+      await Promise.all([saving.catch(() => {}), retrying]);
+    }
+  });
+
+  it("keeps a new source profile isolated when an earlier engineering save is acknowledged", async () => {
+    const fixture = mountPanel({ liveQueries: true, liveCommands: true });
+    let saving = Promise.resolve();
+    try {
+      await fixture.resolveReads();
+      findField(fixture.container, "Engineering profile").props["onUpdate:modelValue"]("durable.v1");
+      await nextTick();
+      saving = findButton(fixture.container, "Save engineering approach").props.onClick();
+      void saving.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].body.sessionId).toBe("session-a");
+      const beforeSourceSwitch = fixture.requests.length;
+      projectSettingsMocks.route.query.sessionId = "session-b";
+      await nextTick();
+      for (const request of fixture.requests.slice(beforeSourceSwitch)) {
+        if (request.url === ENGINEERING_ENDPOINT) {
+          request.data = createEngineeringResource({ profile: "high-assurance.v1", sessionId: "session-b" }).data.value;
+        }
+      }
+      await fixture.resolveReads(beforeSourceSwitch);
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("high-assurance.v1");
+      const afterAcknowledgement = fixture.requests.length;
+      fixture.writes[0].resolve({
+        ...createEngineeringResource({ profile: "durable.v1" }).data.value,
+        ok: true,
+        projectSlug: "project-a"
+      });
+      await vi.waitFor(() => expect(fixture.requests.slice(afterAcknowledgement)).toHaveLength(1));
+      const refresh = fixture.requests.at(-1);
+      expect(refresh.sessionId).toBe("session-b");
+      refresh.data = createEngineeringResource({ profile: "high-assurance.v1", sessionId: "session-b" }).data.value;
+      await fixture.resolveReads(afterAcknowledgement);
+      await saving;
+      await nextTick();
+      const key = engineeringSettingsQueryKey("app", "public", "project-a", "session-b");
+      expect(fixture.queryClient.getQueryData(key).engineering.profile.id).toBe("high-assurance.v1");
+      expect(findField(fixture.container, "Engineering profile").props.modelValue).toBe("high-assurance.v1");
+      expect(findField(fixture.container, "Engineering profile").props.disabled).toBe(false);
+      expect(fixture.writes).toHaveLength(1);
+    } finally {
+      fixture.close();
+      await saving.catch(() => {});
+    }
   });
 
   it("hydrates every writable field synchronously from warm cached project data", () => {
@@ -1428,7 +1736,8 @@ describe("ProjectSettingsPanel AI behaviour", () => {
     const { app, container } = mountPanel();
 
     expect(projectSettingsMocks.endpointOptions[1].realtime).toEqual({
-      event: "vibe64.project.changed"
+      event: "vibe64.project.changed",
+      matches: expect.any(Function)
     });
     const sessionRealtime = projectSettingsMocks.realtimeOptions[0];
     expect(sessionRealtime.event).toBe("vibe64.session.changed");
