@@ -27,6 +27,8 @@ states that there is no application output and presents no empty launch
 controls. A blocked Outputs declaration with no targets reports its actionable
 inspection diagnostic instead of claiming that the project has no output.
 Declared targets blocked by missing resources remain visible but disabled.
+Working directories resolve relative to the session source. An ordinary name
+such as `..build` is valid; a path resolving outside that source is rejected.
 
 Starting a target waits for the separately owned workspace-setup recipe, then
 runs every step through the managed execution gateway. Web targets use the

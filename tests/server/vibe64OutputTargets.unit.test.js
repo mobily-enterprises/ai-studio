@@ -516,6 +516,69 @@ test("terminal outputs use a generic PTY spec and exact declared runtimes", asyn
   assert.match(spec.args[1], /exec \.\/build\/example/u);
 });
 
+for (const kind of ["terminal", "web"]) {
+  test(`${kind} output specs accept '..build' and reject outside workdirs`, async (t) => {
+    const context = await outputContext(t);
+    const sourceRoot = context.session.metadata.source_path;
+    const buildDirectory = path.join(sourceRoot, "..build");
+    const outsideDirectory = path.resolve(sourceRoot, "../outside");
+    await mkdir(buildDirectory);
+    await mkdir(outsideDirectory);
+    const outputs = vibe64OutputsInspection({
+      environment: { diagnostics: [], stackHash: "sha256:unit" },
+      section: {
+        diagnostics: [],
+        lines: [
+          "### Target `app`: Run app",
+          "- Mode: `interactive`",
+          "- Workdir: `..build`",
+          "- Runtimes: `nodejs`",
+          "- Run `Start app`: `npm` `run` `dev`",
+          "#### Presentation",
+          `- Kind: \`${kind}\``,
+          ...(kind === "web" ? ["- Ready when: `GET` `/api/health` returns `200`"] : [])
+        ],
+        source: "project",
+        stackHash: "sha256:unit",
+        status: "ready"
+      }
+    });
+    assert.equal(outputs.status, "ready");
+    assert.equal(outputs.targets[0].workdir, "..build");
+
+    await t.test("accepts a declared ..build directory", async (t) => {
+      const spec = await createVibe64OutputTargetTerminalSpec({
+        context,
+        outputTargetId: "app"
+      }, { inspect: () => outputs });
+      t.after(() => spec.releasePortReservation?.());
+
+      assert.equal(spec.ok, true, spec.message);
+      assert.equal(spec.cwd, buildDirectory);
+    });
+
+    // Bypass the parser's rejection to exercise each terminal-spec containment guard.
+    for (const [label, workdir] of [
+      ["parent directory", ".."],
+      ["relative outside directory", "../outside"],
+      ["absolute outside directory", outsideDirectory]
+    ]) {
+      await t.test(`rejects ${label}`, async (t) => {
+        const spec = await createVibe64OutputTargetTerminalSpec({
+          context,
+          outputTargetId: "app"
+        }, {
+          inspect: () => outputsInspection([{ ...outputs.targets[0], workdir }])
+        });
+        t.after(() => spec.releasePortReservation?.());
+
+        assert.equal(spec.ok, false);
+        assert.match(spec.message, /workdir is outside the session source\./u);
+      });
+    }
+  });
+}
+
 test("finite outputs build once and declare immutable result inputs", async (t) => {
   const context = await outputContext(t);
   const target = webOutputTarget({

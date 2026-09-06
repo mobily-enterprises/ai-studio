@@ -465,7 +465,11 @@ function pathInsideOrEqual(rootPath = "", candidatePath = "") {
     return false;
   }
   const relativePath = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+  return relativePath === "" || (
+    relativePath !== ".."
+    && !relativePath.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relativePath)
+  );
 }
 
 function launchTargetTerminalArgs({
