@@ -1780,14 +1780,8 @@ function useVibe64SourceEditor({
     await revalidateSelectedFile();
   }
 
-  function handleWindowFocus() {
-    if (currentActive.value && selectedPath.value) {
-      void revalidateSelectedFile();
-    }
-  }
-
   if (typeof window !== "undefined") {
-    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("focus", revalidateSelectedFile);
   }
 
   watch([currentSessionsApiPath, currentSessionId, currentActive], async (current, previous = []) => {
@@ -1835,7 +1829,7 @@ function useVibe64SourceEditor({
     clearFileMatchesTimer();
     clearSearchTimer();
     if (typeof window !== "undefined") {
-      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("focus", revalidateSelectedFile);
     }
     if (!closePending) {
       void disposeActiveExplanation();
