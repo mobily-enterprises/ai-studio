@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 
 const mocks = vi.hoisted(() => ({
   beforeUnmount: [],
+  feedbackErrors: [],
   fileSyncOptions: [],
   realtimeOptions: [],
   requestCalls: [],
@@ -27,6 +28,16 @@ vi.mock("@jskit-ai/realtime/client/composables/useRealtimeEvent", () => ({
   }
 }));
 
+vi.mock("@jskit-ai/http-web/client/composables/useUiFeedback", () => ({
+  useUiFeedback() {
+    return {
+      error(...args) {
+        mocks.feedbackErrors.push(args);
+      }
+    };
+  }
+}));
+
 vi.mock("@/composables/useVibe64SourceEditorFileSync.js", () => ({
   useVibe64SourceEditorFileSync(options) {
     mocks.fileSyncOptions.push(options);
@@ -42,7 +53,8 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
       },
       async requestStream(...args) {
         mocks.streamCalls.push(args.slice(0, 2));
-        for (const event of mocks.streamEvents.shift() || []) {
+        const events = await (mocks.streamEvents.shift() || []);
+        for (const event of events) {
           args[2]?.onEvent?.(event);
         }
       }
@@ -147,6 +159,7 @@ async function createLoadedEditor({
 describe("useVibe64SourceEditor", () => {
   beforeEach(() => {
     mocks.beforeUnmount.length = 0;
+    mocks.feedbackErrors.length = 0;
     mocks.fileSyncOptions.length = 0;
     mocks.realtimeOptions.length = 0;
     mocks.requestCalls.length = 0;
@@ -652,6 +665,372 @@ describe("useVibe64SourceEditor", () => {
       status: "failed",
       text: editor.explanationError.value
     }));
+  });
+
+  it("blocks same-ID follow-ups during close while retaining failed cleanup for retry", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    const explanation = {
+      agentThreadId: "",
+      body: "This handles startup.",
+      engine: "agent-cache",
+      id: "exp-cache",
+      sourceRange: { path: "src/app.js", scope: "file" },
+      status: "ready"
+    };
+    editor.activeExplanation.value = explanation;
+    let finishFirstDelete;
+    let rejectFirstDelete;
+    let finishRetryDelete;
+    let retryClosing;
+    mocks.requestResults.push(new Promise((resolve, reject) => {
+      finishFirstDelete = resolve;
+      rejectFirstDelete = reject;
+    }));
+    const deletePath = "/api/app/vibe64/sessions/session-1/source-editor/explanations/exp-cache";
+
+    try {
+      const firstClosing = editor.closeExplanation();
+      expect(editor.explanationClosing.value).toBe(true);
+      expect(mocks.requestCalls.at(-1)).toEqual([deletePath, { method: "DELETE" }]);
+      rejectFirstDelete(new Error("Temporary explanation cleanup is unavailable."));
+      expect(await firstClosing).toBe(false);
+      expect(editor.activeExplanation.value).toEqual(explanation);
+      expect(mocks.feedbackErrors).toEqual([[
+        expect.objectContaining({ message: "Temporary explanation cleanup is unavailable." }),
+        "Source explanation cleanup failed. Close it again to retry."
+      ]]);
+      expect(editor.explanationError.value).toBe("");
+      expect(editor.explanationBusy.value).toBe(false);
+      expect(editor.explanationClosing.value).toBe(false);
+
+      mocks.requestResults.push(new Promise((resolve) => { finishRetryDelete = resolve; }));
+      retryClosing = editor.closeExplanation();
+      expect(editor.explanationClosing.value).toBe(true);
+      expect(mocks.requestCalls.filter(([url]) => url === deletePath)).toHaveLength(2);
+      expect(editor.explanationError.value).toBe("");
+      editor.updateExplanationFollowup("Can this deleted conversation continue?");
+      await editor.sendExplanationFollowup();
+      await editor.stopExplanation();
+      await editor.closeExplanation();
+      await editor.explainSelection({ scope: "file" });
+
+      expect(mocks.streamCalls).toHaveLength(0);
+      expect(mocks.requestCalls.filter(([url]) => url === deletePath)).toHaveLength(2);
+      expect(mocks.requestCalls.some(([url]) => url.endsWith("/stop"))).toBe(false);
+      expect(editor.explanationFollowup.value).toBe("Can this deleted conversation continue?");
+      finishRetryDelete({ ok: true });
+      expect(await retryClosing).toBe(true);
+      expect(editor.activeExplanation.value).toBeNull();
+      expect(editor.explanationBusy.value).toBe(false);
+      expect(editor.explanationClosing.value).toBe(false);
+      expect(editor.explanationError.value).toBe("");
+
+      mocks.streamEvents.push([{
+        explanation: { ...explanation, id: "exp-next" },
+        type: "source-explanation.finished"
+      }]);
+      await editor.explainSelection({ scope: "file" });
+      expect(mocks.streamCalls).toHaveLength(1);
+      expect(editor.activeExplanation.value.id).toBe("exp-next");
+    } finally {
+      finishFirstDelete({ ok: true });
+      finishRetryDelete?.({ ok: true });
+      await retryClosing;
+      await flushPromises();
+    }
+  });
+
+  it.each([
+    { outcome: "success", reset: "session reset" },
+    { outcome: "error", reset: "session reset" },
+    { outcome: "success", reset: "unmount" },
+    { outcome: "error", reset: "unmount" }
+  ])("ignores obsolete Close $outcome after $reset without duplicate cleanup", async ({ outcome, reset }) => {
+    const currentText = ref("");
+    const sessionId = ref("session-1");
+    const editor = await createLoadedEditor({ currentText, sessionId });
+    editor.activeExplanation.value = {
+      agentThreadId: "",
+      body: "Old session answer.",
+      engine: "agent-cache",
+      id: "exp-cache",
+      status: "ready"
+    };
+    let finishOldDelete;
+    let rejectOldDelete;
+    let finishCurrentDelete;
+    let currentClosing;
+    mocks.requestResults.push(new Promise((resolve, reject) => {
+      finishOldDelete = resolve;
+      rejectOldDelete = reject;
+    }));
+    const oldClosing = editor.closeExplanation();
+    const oldDeletePath = "/api/app/vibe64/sessions/session-1/source-editor/explanations/exp-cache";
+
+    try {
+      expect(editor.explanationClosing.value).toBe(true);
+      expect(mocks.requestCalls.at(-1)).toEqual([oldDeletePath, { method: "DELETE" }]);
+      if (reset === "session reset") {
+        mocks.requestResults.push(treeResponse());
+        sessionId.value = "session-2";
+        await nextTick();
+        await flushPromises();
+        expect(editor.activeExplanation.value).toBeNull();
+        expect(editor.explanationClosing.value).toBe(false);
+        editor.activeExplanation.value = {
+          agentThreadId: "",
+          body: "New session answer with the same explanation ID.",
+          engine: "agent-cache",
+          id: "exp-cache",
+          status: "ready"
+        };
+        mocks.requestResults.push(new Promise((resolve) => { finishCurrentDelete = resolve; }));
+        currentClosing = editor.closeExplanation();
+        expect(editor.explanationClosing.value).toBe(true);
+      } else {
+        mocks.beforeUnmount[0]();
+        await flushPromises();
+        expect(editor.explanationClosing.value).toBe(false);
+      }
+      const selectedExplanation = editor.activeExplanation.value;
+      expect(mocks.requestCalls.filter(([url]) => url === oldDeletePath)).toHaveLength(1);
+
+      if (outcome === "success") {
+        finishOldDelete({ ok: true });
+      } else {
+        rejectOldDelete(new Error("Obsolete cleanup failed."));
+      }
+      expect(await oldClosing).toBe(false);
+      expect(editor.activeExplanation.value).toBe(selectedExplanation);
+      expect(editor.explanationClosing.value).toBe(reset === "session reset");
+      expect(editor.explanationError.value).toBe("");
+      expect(mocks.feedbackErrors).toHaveLength(0);
+      expect(mocks.requestCalls.filter(([url]) => url === oldDeletePath)).toHaveLength(1);
+
+      if (reset === "session reset") {
+        expect(mocks.requestCalls.filter(([url]) => (
+          url === "/api/app/vibe64/sessions/session-2/source-editor/explanations/exp-cache"
+        ))).toHaveLength(1);
+        finishCurrentDelete({ ok: true });
+        expect(await currentClosing).toBe(true);
+        expect(editor.activeExplanation.value).toBeNull();
+        expect(editor.explanationClosing.value).toBe(false);
+      }
+    } finally {
+      finishOldDelete({ ok: true });
+      finishCurrentDelete?.({ ok: true });
+      await Promise.all([oldClosing, currentClosing]);
+    }
+  });
+
+  it.each([
+    { outcome: "success", replacement: "close" },
+    { outcome: "error", replacement: "close" },
+    { outcome: "success", replacement: "explanation B" },
+    { outcome: "error", replacement: "explanation B" },
+    { outcome: "success", replacement: "new follow-up on the same explanation" },
+    { outcome: "error", replacement: "new follow-up on the same explanation" }
+  ])("ignores delayed Stop $outcome after $replacement", async ({ outcome, replacement }) => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    let finishInitial;
+    let finishReplacement;
+    let finishStop;
+    let rejectStop;
+    let replacing;
+    mocks.streamEvents.push(new Promise((resolve) => { finishInitial = resolve; }));
+    let generating;
+    if (replacement === "new follow-up on the same explanation") {
+      editor.activeExplanation.value = {
+        agentThreadId: "",
+        body: "This handles startup.",
+        engine: "agent-cache",
+        id: "exp-cache",
+        status: "ready"
+      };
+      editor.updateExplanationFollowup("Why?");
+      generating = editor.sendExplanationFollowup();
+    } else {
+      generating = editor.explainSelection({ scope: "file" });
+    }
+    const explanationA = editor.activeExplanation.value;
+    const initialSignal = mocks.streamCalls.at(-1)[1].signal;
+    mocks.requestResults.push(new Promise((resolve, reject) => {
+      finishStop = resolve;
+      rejectStop = reject;
+    }));
+    const stopping = editor.stopExplanation();
+
+    try {
+      expect(initialSignal.aborted).toBe(true);
+      expect(editor.explanationBusy.value).toBe(false);
+      expect(mocks.requestCalls.at(-1)).toEqual([
+        `/api/app/vibe64/sessions/session-1/source-editor/explanations/${explanationA.id}/stop`,
+        { method: "POST" }
+      ]);
+      if (replacement === "close") {
+        editor.closeExplanation();
+        await flushPromises();
+        expect(editor.activeExplanation.value).toBeNull();
+        expect(mocks.requestCalls.at(-1)).toEqual([
+          `/api/app/vibe64/sessions/session-1/source-editor/explanations/${explanationA.id}`,
+          { method: "DELETE" }
+        ]);
+      } else {
+        mocks.streamEvents.push(new Promise((resolve) => { finishReplacement = resolve; }));
+        if (replacement === "new follow-up on the same explanation") {
+          editor.updateExplanationFollowup("What happens next?");
+          replacing = editor.sendExplanationFollowup();
+          expect(editor.activeExplanation.value.id).toBe(explanationA.id);
+        } else {
+          replacing = editor.explainSelection({ scope: "file" });
+          expect(editor.activeExplanation.value.id).not.toBe(explanationA.id);
+        }
+        expect(editor.explanationBusy.value).toBe(true);
+      }
+      const selectedExplanation = editor.activeExplanation.value;
+
+      if (outcome === "success") {
+        finishStop({ explanation: { ...explanationA, status: "stopped" }, ok: true });
+      } else {
+        rejectStop(new Error("Stop A failed after its view changed."));
+      }
+      await stopping;
+
+      expect(editor.activeExplanation.value).toBe(selectedExplanation);
+      expect(editor.explanationError.value).toBe("");
+      expect(mocks.feedbackErrors).toHaveLength(0);
+      expect(editor.explanationBusy.value).toBe(replacement !== "close");
+    } finally {
+      finishInitial([]);
+      finishReplacement?.([]);
+      finishStop({ ok: true });
+      await Promise.all([generating, stopping, replacing]);
+    }
+  });
+
+  it.each(["success", "error"])("applies the current Stop %s to its explanation", async (outcome) => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    let finishInitial;
+    let finishStop;
+    let rejectStop;
+    mocks.streamEvents.push(new Promise((resolve) => { finishInitial = resolve; }));
+    const generating = editor.explainSelection({ scope: "file" });
+    const explanation = editor.activeExplanation.value;
+    mocks.requestResults.push(new Promise((resolve, reject) => {
+      finishStop = resolve;
+      rejectStop = reject;
+    }));
+    const stopping = editor.stopExplanation();
+
+    try {
+      if (outcome === "success") {
+        finishStop({ explanation: { ...explanation, status: "stopped" }, ok: true });
+      } else {
+        rejectStop(new Error("The assistant could not stop this explanation."));
+      }
+      await stopping;
+
+      expect(editor.activeExplanation.value.id).toBe(explanation.id);
+      expect(editor.explanationBusy.value).toBe(false);
+      if (outcome === "success") {
+        expect(editor.activeExplanation.value.status).toBe("stopped");
+        expect(editor.explanationError.value).toBe("");
+        expect(mocks.feedbackErrors).toHaveLength(0);
+      } else {
+        expect(editor.explanationError.value).toBe("");
+        expect(mocks.feedbackErrors).toEqual([[
+          expect.objectContaining({ message: "The assistant could not stop this explanation." }),
+          "Source explanation could not be stopped."
+        ]]);
+      }
+    } finally {
+      finishInitial([]);
+      finishStop({ ok: true });
+      await Promise.all([generating, stopping]);
+    }
+  });
+
+  it.each([
+    { operation: "initial explanation", reset: "close" },
+    { operation: "cached follow-up", reset: "close" },
+    { operation: "initial explanation", reset: "session reset" },
+    { operation: "cached follow-up", reset: "session reset" }
+  ])("clears pending $operation busy state on $reset without clearing a newer request", async ({ operation, reset }) => {
+    const currentText = ref("");
+    const sessionId = ref("session-1");
+    const editor = await createLoadedEditor({ currentText, sessionId });
+    let finishObsolete;
+    let finishCurrent;
+    let currentRequest;
+    mocks.streamEvents.push(new Promise((resolve) => { finishObsolete = resolve; }));
+    let obsoleteRequest;
+    if (operation === "initial explanation") {
+      obsoleteRequest = editor.explainSelection({ scope: "file" });
+    } else {
+      editor.activeExplanation.value = {
+        agentThreadId: "",
+        body: "This handles startup.",
+        engine: "agent-cache",
+        id: "exp-cache",
+        status: "ready"
+      };
+      editor.updateExplanationFollowup("Why?");
+      obsoleteRequest = editor.sendExplanationFollowup();
+    }
+    const obsoleteExplanation = editor.activeExplanation.value;
+    const obsoleteSignal = mocks.streamCalls.at(-1)[1].signal;
+
+    try {
+      expect(editor.explanationBusy.value).toBe(true);
+      if (reset === "close") {
+        editor.closeExplanation();
+      } else {
+        mocks.requestResults.push({}, treeResponse());
+        sessionId.value = "session-2";
+        await nextTick();
+      }
+      await flushPromises();
+      expect(obsoleteSignal.aborted).toBe(true);
+      expect(editor.activeExplanation.value).toBeNull();
+      expect(editor.explanationBusy.value).toBe(false);
+
+      if (reset === "session reset") {
+        mocks.requestResults.push(fileResponse());
+        await editor.openFile("src/app.js");
+        currentText.value = editor.text.value;
+      }
+      mocks.streamEvents.push(new Promise((resolve) => { finishCurrent = resolve; }));
+      currentRequest = editor.explainSelection({ scope: "file" });
+      const currentExplanation = editor.activeExplanation.value;
+      const currentSignal = mocks.streamCalls.at(-1)[1].signal;
+      expect(currentExplanation.id).not.toBe(obsoleteExplanation.id);
+      expect(editor.explanationBusy.value).toBe(true);
+      expect(currentSignal.aborted).toBe(false);
+
+      finishObsolete([{
+        explanation: { ...obsoleteExplanation, body: "Late obsolete answer.", status: "ready" },
+        type: "source-explanation.finished"
+      }]);
+      await obsoleteRequest;
+      expect(editor.activeExplanation.value).toBe(currentExplanation);
+      expect(editor.explanationError.value).toBe("");
+      expect(editor.explanationBusy.value).toBe(true);
+
+      editor.closeExplanation();
+      expect(currentSignal.aborted).toBe(true);
+      expect(editor.explanationBusy.value).toBe(false);
+      finishCurrent([]);
+      await currentRequest;
+      await flushPromises();
+      expect(editor.activeExplanation.value).toBeNull();
+    } finally {
+      finishObsolete([]);
+      finishCurrent?.([]);
+      await Promise.all([obsoleteRequest, currentRequest]);
+    }
   });
 
   it("reloads a clean open file after a matching remote save", async () => {

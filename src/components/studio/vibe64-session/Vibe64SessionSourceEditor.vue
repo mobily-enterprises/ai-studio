@@ -55,19 +55,20 @@
         />
         <v-btn
           class="vibe64-source-editor__explain-button"
-          :aria-busy="editor.explanationBusy.value ? 'true' : 'false'"
+          :aria-busy="editor.explanationBusy.value || editor.explanationClosing.value ? 'true' : 'false'"
           color="primary"
-          :disabled="!assistantAvailable || !editor.selectedPath.value || editor.explanationBusy.value"
+          :disabled="!assistantAvailable || !editor.selectedPath.value || editor.explanationBusy.value || editor.explanationClosing.value"
           :prepend-icon="mdiRobotOutline"
           size="small"
           :title="!assistantAvailable
             ? assistantUnavailableMessage
-            : editor.explanationBusy.value ? 'Explanation in progress' : 'Explain file or selection'"
+            : editor.explanationClosing.value ? 'Closing explanation'
+              : editor.explanationBusy.value ? 'Explanation in progress' : 'Explain file or selection'"
           type="button"
           variant="tonal"
           @click="explainCurrentSelection"
         >
-          {{ editor.explanationBusy.value ? "Working…" : "Explain" }}
+          {{ editor.explanationClosing.value ? "Closing…" : editor.explanationBusy.value ? "Working…" : "Explain" }}
         </v-btn>
         <v-btn
           :disabled="editor.loadingTree.value"
@@ -361,6 +362,7 @@
               :assistant-available="assistantAvailable"
               :assistant-unavailable-message="assistantUnavailableMessage"
               :busy="editor.explanationBusy.value"
+              :closing="editor.explanationClosing.value"
               :explanation="editor.activeExplanation.value"
               :followup="editor.explanationFollowup.value"
               :selected-path="editor.selectedPath.value"
@@ -722,10 +724,11 @@ function expandExplanation(event = {}) {
   void focusAfterLayout(rootElement, ".vibe64-source-explanation__range");
 }
 
-function closeExplanationPanel(event = {}) {
+async function closeExplanationPanel(event = {}) {
   const rootElement = event?.currentTarget?.closest?.(".vibe64-source-editor") || sourceEditorElement.value;
-  editor.closeExplanation();
-  void focusAfterLayout(rootElement, ".vibe64-source-editor__explain-button");
+  if (await editor.closeExplanation()) {
+    void focusAfterLayout(rootElement, ".vibe64-source-editor__explain-button");
+  }
 }
 
 function collapseFileList() {

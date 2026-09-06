@@ -134,6 +134,56 @@ describe("source explanation Material interaction", () => {
     expect(html).not.toContain("No explanation was produced");
   });
 
+  it.each([
+    { state: "answered", explanation: cachedExplanation },
+    { state: "incomplete", explanation: { ...cachedExplanation, body: "", status: "running" } }
+  ])("shows a non-cancellable Closing state for $state explanations", async ({ explanation, state }) => {
+    const html = await renderExplanationPanel({
+      busy: true,
+      closing: true,
+      explanation,
+      followup: "Why?"
+    });
+    const closeButton = html.match(/<button[^>]*aria-label="Close explanation"[^>]*>[\s\S]*?<\/button>/u)?.[0];
+
+    expect(closeButton).toBeDefined();
+    expect(closeButton).toContain("Closing…");
+    expect(closeButton).toContain('aria-busy="true"');
+    expect(closeButton).toContain("disabled");
+    expect(html).not.toContain('aria-label="Stop explanation"');
+    expect(html).not.toContain("progressbar");
+    if (state === "answered") {
+      expect(html).toContain(cachedExplanation.body);
+      expect(html).toMatch(/<textarea[^>]*disabled/u);
+      expect(html).toMatch(/<button[^>]*aria-label="Send follow-up"[^>]*disabled/u);
+    } else {
+      expect(html).not.toContain("<form");
+      expect(html).toMatch(/<button[^>]*disabled[^>]*>\s*Retry explanation\s*<\/button>/u);
+    }
+  });
+
+  it.each([true, false])("restores Close retry after cleanup failure with assistant availability %s", async (assistantAvailable) => {
+    const html = await renderExplanationPanel({
+      assistantAvailable,
+      closing: false,
+      explanation: cachedExplanation,
+      followup: "Why?"
+    });
+    const closeButton = html.match(/<button[^>]*aria-label="Close explanation"[^>]*>[\s\S]*?<\/button>/u)?.[0];
+
+    expect(closeButton).toBeDefined();
+    expect(closeButton).toContain("Close");
+    expect(closeButton).not.toContain("disabled");
+    expect(closeButton).not.toContain('aria-busy="true"');
+    expect(html).not.toContain("Closing…");
+    expect(html).toContain(cachedExplanation.body);
+    if (assistantAvailable) {
+      expect(html).not.toContain(" disabled");
+    } else {
+      expect(html).toMatch(/<textarea[^>]*disabled/u);
+    }
+  });
+
   it("keeps incomplete cached answers in recovery with cancellation while busy", async () => {
     const explanation = {
       ...cachedExplanation,
@@ -215,7 +265,7 @@ describe("source explanation Material interaction", () => {
       /<div class="vibe64-source-explanation__followup-footer">[\s\S]*?<\/div>/u
     )?.[0] || "";
 
-    expect(followupFooter).toContain('v-if="busy"');
+    expect(followupFooter).toContain('v-if="busy && !closing"');
     expect(followupFooter).toContain('aria-label="Stop explanation"');
     expect(followupFooter).toContain("!assistantAvailable");
     expect(followupFooter).not.toContain('v-if="thinking"');
@@ -233,8 +283,8 @@ describe("source explanation Material interaction", () => {
 
     expect(editor).toContain(':assistant-available="assistantAvailable"');
     expect(editor).toContain("if (!props.assistantAvailable)");
-    expect(panel).toContain(':disabled="busy || !assistantAvailable"');
-    expect(panel).toContain(':disabled="!followup.trim() || busy || !assistantAvailable"');
+    expect(panel).toContain(':disabled="busy || closing || !assistantAvailable"');
+    expect(panel).toContain(':disabled="!followup.trim() || busy || closing || !assistantAvailable"');
     expect(panel).not.toContain('v-if="assistantAvailable" class="vibe64-source-explanation__thread"');
   });
 

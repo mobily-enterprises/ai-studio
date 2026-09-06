@@ -9,6 +9,7 @@ from saved project work, and inspect one exact file change at a time.
 - `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `src/composables/useVibe64SourceEditor.js`
+- `src/components/studio/vibe64-session/Vibe64SessionSourceEditor.vue`
 - `src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue`
 - `src/composables/useVibe64RepositoryWorkspace.js`
 - `src/composables/useVibe64SessionRuntimeHost.js`
@@ -34,6 +35,12 @@ and conversation authorization. The browser submits the explanation identity
 and question, not a provider thread or model configuration. Failed conversations
 offer regeneration instead of another follow-up; unavailable assistants leave
 the existing answer readable with generation and follow-up actions disabled.
+Stop targets the selected explanation. Closing keeps its answer visible and
+disables conflicting actions until cleanup is acknowledged. Failed cleanup
+retains the answer and reports action feedback so Close can be retried. Changing
+session or unmounting releases the old stream's pending browser state; a late
+Stop response, cleanup result or streamed event cannot reopen that explanation
+or overwrite a newer request, including a follow-up in the same conversation.
 
 The Repository presents the session's complete current changes against saved project
 work, even when those changes are already committed inside the session. It can
@@ -52,9 +59,10 @@ immutable worktree snapshot as the file list.
 
 - The source-editor service owns explanation cache lookup, temporary conversation
   creation and cleanup. `useVibe64SourceEditor()` owns the selected explanation,
-  request generation and streamed messages; `Vibe64SourceExplanationPanel` presents
-  the answer, follow-up, cancellation and recovery controls. An answered cache
-  record does not need a thread id to enable its first follow-up.
+  request generation, streamed messages and acknowledged Close state;
+  `Vibe64SourceExplanationPanel` presents the answer, follow-up, cancellation
+  and recovery controls. An answered cache record does not need a thread id to
+  enable its first follow-up.
 - `runSessionWorkOperation()` admits each Current Changes, file-diff, work-state,
   or update-check request as one managed job. Canonical Save uses one managed
   checkpoint-and-summary job before commit naming and one managed

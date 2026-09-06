@@ -1,6 +1,6 @@
 <template>
   <aside
-    :aria-busy="busy ? 'true' : 'false'"
+    :aria-busy="busy || closing ? 'true' : 'false'"
     class="vibe64-source-explanation"
     aria-label="Source explanation"
   >
@@ -42,15 +42,19 @@
         @click="emit('collapse', $event)"
       />
       <v-btn
-        class="vibe64-source-explanation__action-target"
+        class="vibe64-source-explanation__action-target vibe64-source-explanation__close-button"
+        :aria-busy="closing ? 'true' : undefined"
         aria-label="Close explanation"
-        :icon="mdiClose"
+        :disabled="closing"
+        :prepend-icon="mdiClose"
         size="x-small"
-        title="Close explanation"
+        :title="closing ? 'Closing explanation' : 'Close explanation'"
         type="button"
         variant="text"
         @click="emit('close', $event)"
-      />
+      >
+        {{ closing ? "Closing…" : "Close" }}
+      </v-btn>
     </header>
 
     <v-alert
@@ -135,11 +139,11 @@
       aria-label="Explanation controls"
     >
       <p>
-        {{ busy ? "Waiting for the explanation…" : "No explanation was produced. Check the assistant provider, then retry." }}
+        {{ closing ? "Closing…" : busy ? "Waiting for the explanation…" : "No explanation was produced. Check the assistant provider, then retry." }}
       </p>
       <div class="vibe64-source-explanation__recovery-actions">
         <v-btn
-          v-if="busy"
+          v-if="busy && !closing"
           class="vibe64-source-explanation__action-target"
           aria-label="Stop explanation"
           color="error"
@@ -154,7 +158,7 @@
           v-else
           class="vibe64-source-explanation__action-target"
           color="primary"
-          :disabled="!assistantAvailable"
+          :disabled="closing || !assistantAvailable"
           :prepend-icon="mdiRefresh"
           size="small"
           :title="assistantAvailable ? 'Retry explanation' : assistantUnavailableMessage"
@@ -175,7 +179,7 @@
       <Vibe64AutopilotPromptTextarea
         :attachments-enabled="false"
         :auto-grow="true"
-        :disabled="busy || !assistantAvailable"
+        :disabled="busy || closing || !assistantAvailable"
         label="Ask about this explanation"
         :model-value="followup"
         placeholder="Ask a follow-up"
@@ -186,7 +190,7 @@
         <template #footer>
           <div class="vibe64-source-explanation__followup-footer">
             <v-btn
-              v-if="busy"
+              v-if="busy && !closing"
               class="vibe64-source-explanation__action-target"
               aria-label="Stop explanation"
               color="error"
@@ -201,7 +205,7 @@
               class="vibe64-source-explanation__action-target"
               aria-label="Send follow-up"
               color="primary"
-              :disabled="!followup.trim() || busy || !assistantAvailable"
+              :disabled="!followup.trim() || busy || closing || !assistantAvailable"
               :icon="mdiSend"
               size="small"
               :title="assistantAvailable ? 'Send follow-up' : assistantUnavailableMessage"
@@ -242,6 +246,10 @@ const props = defineProps({
     type: String
   },
   busy: {
+    default: false,
+    type: Boolean
+  },
+  closing: {
     default: false,
     type: Boolean
   },
@@ -385,6 +393,7 @@ function submitFollowup() {
     !props.assistantAvailable ||
     !props.followup.trim() ||
     props.busy ||
+    props.closing ||
     !followupAvailable.value
   ) {
     return;
@@ -712,6 +721,10 @@ watch(threadScrollKey, (value, previous) => {
 .vibe64-source-explanation__action-target {
   min-block-size: 3rem;
   min-inline-size: 3rem;
+}
+
+.vibe64-source-explanation__close-button {
+  min-inline-size: 6.25rem;
 }
 
 .vibe64-source-explanation__thread-bottom {

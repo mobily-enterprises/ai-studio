@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
 import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
+import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
@@ -567,6 +568,7 @@ function useVibe64SourceEditor({
   sessionId
 } = {}) {
   const originId = vibe64BrowserTabOriginId();
+  const explanationFeedback = useUiFeedback({ source: "vibe64.source-editor.explanation.feedback" });
   const tree = ref(null);
   const policy = ref({});
   const selectedPath = ref("");
@@ -588,6 +590,7 @@ function useVibe64SourceEditor({
   const activeExplanation = ref(null);
   const explanationError = ref("");
   const explanationBusy = ref(false);
+  const explanationClosing = ref(false);
   const explanationFollowup = ref("");
   const loadError = ref("");
   const saveError = ref("");
@@ -610,7 +613,6 @@ function useVibe64SourceEditor({
   let fileMatchesRequestId = 0;
   let searchRequestId = 0;
   let explanationRequestId = 0;
-  let explanationDeleteRequestId = 0;
   let explanationAbortController = null;
   let autosaveTimer = null;
   let fileMatchesTimer = null;
@@ -1299,6 +1301,7 @@ function useVibe64SourceEditor({
     explanationRequestId += 1;
     explanationAbortController?.abort?.();
     explanationAbortController = null;
+    explanationBusy.value = false;
   }
 
   function markActiveExplanationMessage(status = "", text = "") {
@@ -1393,7 +1396,7 @@ function useVibe64SourceEditor({
   }
 
   async function explainSelection(range = {}) {
-    if (!selectedPath.value || !canLoad.value || explanationBusy.value) {
+    if (!selectedPath.value || !canLoad.value || explanationBusy.value || explanationClosing.value) {
       return;
     }
     const requestId = explanationRequestId + 1;
@@ -1455,7 +1458,7 @@ function useVibe64SourceEditor({
     const explanation = activeExplanation.value;
     const range = explanation?.sourceRange || {};
     const explanationPath = normalizeEditorPath(range.path);
-    if (!explanationPath || explanationBusy.value) {
+    if (!explanationPath || explanationBusy.value || explanationClosing.value) {
       return;
     }
     if (selectedPath.value !== explanationPath) {
@@ -1472,10 +1475,11 @@ function useVibe64SourceEditor({
 
   async function stopExplanation() {
     const explanation = activeExplanation.value;
-    if (!explanation?.id) {
+    if (!explanation?.id || explanationClosing.value) {
       return;
     }
-    explanationRequestId += 1;
+    const requestId = explanationRequestId + 1;
+    explanationRequestId = requestId;
     const controller = explanationAbortController;
     explanationAbortController = null;
     explanationBusy.value = false;
@@ -1493,16 +1497,22 @@ function useVibe64SourceEditor({
       ), {
         method: "POST"
       });
-      const explanation = normalizeExplanation(response.explanation);
-      if (explanation) {
-        activeExplanation.value = explanation;
+      if (requestId !== explanationRequestId || activeExplanation.value?.id !== explanation.id) {
+        return;
+      }
+      const stoppedExplanation = normalizeExplanation(response.explanation);
+      if (stoppedExplanation) {
+        activeExplanation.value = stoppedExplanation;
       }
     } catch (error) {
-      explanationError.value = String(error?.message || error || "Source explanation could not be stopped.");
+      if (requestId === explanationRequestId && activeExplanation.value?.id === explanation.id) {
+        explanationFeedback.error(error, "Source explanation could not be stopped.");
+      }
     }
   }
 
   async function disposeExplanation(explanation = null, {
+    onError = null,
     sessionsApiPath: apiPath = currentSessionsApiPath.value,
     sessionId: targetSessionId = currentSessionId.value
   } = {}) {
@@ -1510,8 +1520,6 @@ function useVibe64SourceEditor({
     if (!id || !apiPath || !targetSessionId) {
       return true;
     }
-    const requestId = explanationDeleteRequestId + 1;
-    explanationDeleteRequestId = requestId;
     try {
       await sourceEditorRequest(vibe64SourceEditorExplanationPath(
         apiPath,
@@ -1522,9 +1530,11 @@ function useVibe64SourceEditor({
       });
       return true;
     } catch (error) {
-      if (requestId === explanationDeleteRequestId) {
-        explanationError.value = String(error?.message || error || "Source explanation cleanup failed.");
-      }
+      vibe64SessionDebugLog("client.sourceEditor.explanations.cleanup.error", {
+        error: vibe64SessionDebugError(error),
+        sessionId: targetSessionId
+      });
+      onError?.(error);
       return false;
     }
   }
@@ -1534,18 +1544,38 @@ function useVibe64SourceEditor({
     if (!explanation) {
       return true;
     }
+    const requestId = explanationRequestId;
     const disposed = await disposeExplanation(explanation, options);
-    if (disposed && activeExplanation.value?.id === explanation.id) {
+    if (disposed && requestId === explanationRequestId && activeExplanation.value?.id === explanation.id) {
       activeExplanation.value = null;
       explanationFollowup.value = "";
     }
     return disposed;
   }
 
-  function closeExplanation() {
+  async function closeExplanation() {
+    const explanation = activeExplanation.value;
+    if (!explanation?.id || explanationClosing.value) {
+      return false;
+    }
     clearExplanationStream();
+    const requestId = explanationRequestId;
+    explanationClosing.value = true;
     explanationError.value = "";
-    void disposeActiveExplanation();
+    try {
+      const disposed = await disposeActiveExplanation({
+        onError(error) {
+          if (requestId === explanationRequestId && activeExplanation.value?.id === explanation.id) {
+            explanationFeedback.error(error, "Source explanation cleanup failed. Close it again to retry.");
+          }
+        }
+      });
+      return disposed && requestId === explanationRequestId;
+    } finally {
+      if (requestId === explanationRequestId) {
+        explanationClosing.value = false;
+      }
+    }
   }
 
   function updateExplanationFollowup(value = "") {
@@ -1560,7 +1590,8 @@ function useVibe64SourceEditor({
       !message ||
       !explanationId ||
       !canLoad.value ||
-      explanationBusy.value
+      explanationBusy.value ||
+      explanationClosing.value
     ) {
       return;
     }
@@ -1746,8 +1777,10 @@ function useVibe64SourceEditor({
   }
 
   watch([currentSessionsApiPath, currentSessionId], async (_current, previous = []) => {
+    const closePending = explanationClosing.value;
     clearExplanationStream();
-    if (activeExplanation.value) {
+    explanationClosing.value = false;
+    if (activeExplanation.value && !closePending) {
       void disposeActiveExplanation({
         sessionsApiPath: previous[0] || currentSessionsApiPath.value,
         sessionId: previous[1] || currentSessionId.value
@@ -1773,14 +1806,18 @@ function useVibe64SourceEditor({
 
   onBeforeUnmount(() => {
     textAtUnmount = currentText();
+    const closePending = explanationClosing.value;
     clearExplanationStream();
+    explanationClosing.value = false;
     clearAutosave();
     clearFileMatchesTimer();
     clearSearchTimer();
     if (typeof window !== "undefined") {
       window.removeEventListener("focus", handleWindowFocus);
     }
-    void disposeActiveExplanation();
+    if (!closePending) {
+      void disposeActiveExplanation();
+    }
     void saveNow();
   });
 
@@ -1793,6 +1830,7 @@ function useVibe64SourceEditor({
     cursorRequest,
     dirty,
     explanationBusy,
+    explanationClosing,
     explanationError,
     explanationFollowup,
     explainSelection,
