@@ -521,6 +521,139 @@ describe("useVibe64SourceEditor", () => {
     expect(editor.activeExplanation.value.executionProfile).toEqual(expect.objectContaining(executionProfile));
   });
 
+  it("sends follow-ups for a cached explanation without an agent thread", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    const cachedExplanation = {
+      agentThreadId: "",
+      body: "This handles startup.",
+      engine: "agent-cache",
+      id: "exp-cache",
+      sourceRange: {
+        endColumn: 12,
+        endLine: 1,
+        path: "src/app.js",
+        scope: "selection",
+        startColumn: 1,
+        startLine: 1
+      },
+      status: "ready"
+    };
+    mocks.streamEvents.push([{
+      cacheHit: true,
+      explanation: cachedExplanation,
+      type: "source-explanation.finished"
+    }]);
+    await editor.explainSelection(cachedExplanation.sourceRange);
+    expect(editor.activeExplanation.value.agentThreadId).toBe("");
+
+    editor.updateExplanationFollowup("   ");
+    await editor.sendExplanationFollowup();
+    expect(mocks.streamCalls).toHaveLength(1);
+
+    editor.updateExplanationFollowup("  Why does startup need this?  ");
+    editor.explanationBusy.value = true;
+    await editor.sendExplanationFollowup();
+    expect(mocks.streamCalls).toHaveLength(1);
+    editor.explanationBusy.value = false;
+
+    const continuedExplanation = {
+      ...cachedExplanation,
+      agentThreadId: "thread-cache-followup",
+      messages: [{
+        id: "assistant-followup",
+        role: "assistant",
+        status: "complete",
+        text: "It prepares the application before startup."
+      }]
+    };
+    mocks.streamEvents.push([{
+      threadId: continuedExplanation.agentThreadId,
+      type: "source-explanation.thread"
+    }, {
+      explanation: continuedExplanation,
+      type: "source-explanation.finished"
+    }]);
+    await editor.sendExplanationFollowup();
+
+    expect(mocks.streamCalls).toHaveLength(2);
+    const followupPath = "/api/app/vibe64/sessions/session-1/source-editor/explanations/exp-cache/followups/stream";
+    const [url, options] = mocks.streamCalls[1];
+    expect(url).toBe(followupPath);
+    expect(options.method).toBe("POST");
+    expect(options.body).toEqual({
+      assistantMessageId: expect.stringMatching(/^msg/u),
+      message: "Why does startup need this?",
+      userMessageId: expect.stringMatching(/^msg/u)
+    });
+    expect(editor.activeExplanation.value).toEqual(expect.objectContaining({
+      agentThreadId: continuedExplanation.agentThreadId,
+      id: cachedExplanation.id,
+      messages: [expect.objectContaining(continuedExplanation.messages[0])]
+    }));
+    expect(editor.explanationBusy.value).toBe(false);
+    expect(editor.explanationFollowup.value).toBe("");
+
+    editor.updateExplanationFollowup("What happens next?");
+    mocks.streamEvents.push([{
+      explanation: continuedExplanation,
+      type: "source-explanation.finished"
+    }]);
+    await editor.sendExplanationFollowup();
+    expect(mocks.streamCalls).toHaveLength(3);
+    expect(mocks.streamCalls[2][0]).toBe(followupPath);
+    expect(mocks.streamCalls[2][1].body).toEqual({
+      assistantMessageId: expect.stringMatching(/^msg/u),
+      message: "What happens next?",
+      userMessageId: expect.stringMatching(/^msg/u)
+    });
+
+    editor.closeExplanation();
+    await flushPromises();
+    expect(mocks.requestCalls.at(-1)).toEqual([
+      "/api/app/vibe64/sessions/session-1/source-editor/explanations/exp-cache",
+      { method: "DELETE" }
+    ]);
+    expect(editor.activeExplanation.value).toBeNull();
+  });
+
+  it("retains the cached answer and reports a rejected follow-up", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    editor.activeExplanation.value = {
+      agentThreadId: "",
+      body: "This handles startup.",
+      engine: "agent-cache",
+      id: "exp-cache",
+      messages: [{
+        id: "assistant-cache",
+        role: "assistant",
+        status: "complete",
+        text: "This handles startup."
+      }],
+      status: "ready"
+    };
+    mocks.streamEvents.push([{
+      error: "The selected AI connection is unavailable for this account.",
+      ok: false,
+      type: "source-explanation.error"
+    }]);
+    editor.updateExplanationFollowup("Why?");
+
+    await editor.sendExplanationFollowup();
+
+    expect(mocks.streamCalls).toHaveLength(1);
+    expect(editor.explanationBusy.value).toBe(false);
+    expect(editor.explanationError.value).toBe("The selected AI connection is unavailable for this account.");
+    expect(editor.activeExplanation.value.body).toBe("This handles startup.");
+    expect(editor.activeExplanation.value.status).toBe("failed");
+    expect(editor.activeExplanation.value.messages.at(-1)).toEqual(expect.objectContaining({
+      role: "assistant",
+      status: "failed",
+      text: editor.explanationError.value
+    }));
+  });
+
   it("reloads a clean open file after a matching remote save", async () => {
     const currentText = ref("");
     const editor = await createLoadedEditor({

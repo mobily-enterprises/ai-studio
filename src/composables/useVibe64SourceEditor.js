@@ -1559,7 +1559,6 @@ function useVibe64SourceEditor({
     if (
       !message ||
       !explanationId ||
-      !explanation?.agentThreadId ||
       !canLoad.value ||
       explanationBusy.value
     ) {

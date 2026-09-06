@@ -300,7 +300,8 @@ const chatMessages = computed(() => (
   })
 })));
 const followupAvailable = computed(() => Boolean(
-  props.explanation?.agentThreadId && (
+  props.explanation?.status !== "failed" &&
+  (props.explanation?.agentThreadId || props.explanation?.engine === "agent-cache") && (
     String(props.explanation?.body || "").trim() ||
     chatMessages.value.some((message) => (
       message.role === "assistant" && message.status === "complete" && message.text

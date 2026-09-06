@@ -9,6 +9,7 @@ from saved project work, and inspect one exact file change at a time.
 - `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `src/composables/useVibe64SourceEditor.js`
+- `src/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue`
 - `src/composables/useVibe64RepositoryWorkspace.js`
 - `src/composables/useVibe64SessionRuntimeHost.js`
 - `src/components/studio/repository/Vibe64RepositoryWorkspace.vue`
@@ -23,8 +24,18 @@ and reports concurrent changes rather than silently overwriting them. The
 source editor publishes successful creates and saves with project, session,
 path, hash, and originating-tab identity. A foreign create refreshes the file
 tree, while a foreign save refreshes a clean matching file or warns without
-overwriting a dirty draft. The
-Repository presents the session's complete current changes against saved project
+overwriting a dirty draft.
+
+A source explanation is temporary assistance for a selected code range or file.
+A matching cached answer can appear without starting a provider conversation;
+its first follow-up starts an independently owned conversation through the same
+verified low-cost execution profile. The server retains source, account, profile,
+and conversation authorization. The browser submits the explanation identity
+and question, not a provider thread or model configuration. Failed conversations
+offer regeneration instead of another follow-up; unavailable assistants leave
+the existing answer readable with generation and follow-up actions disabled.
+
+The Repository presents the session's complete current changes against saved project
 work, even when those changes are already committed inside the session. It can
 open an exact changed file without exposing staging mechanics to the user.
 Current changes refreshes when an assistant turn becomes idle and when Vibe64
@@ -39,6 +50,11 @@ immutable worktree snapshot as the file list.
 
 ## Implementation map
 
+- The source-editor service owns explanation cache lookup, temporary conversation
+  creation and cleanup. `useVibe64SourceEditor()` owns the selected explanation,
+  request generation and streamed messages; `Vibe64SourceExplanationPanel` presents
+  the answer, follow-up, cancellation and recovery controls. An answered cache
+  record does not need a thread id to enable its first follow-up.
 - `runSessionWorkOperation()` admits each Current Changes, file-diff, work-state,
   or update-check request as one managed job. Canonical Save uses one managed
   checkpoint-and-summary job before commit naming and one managed
