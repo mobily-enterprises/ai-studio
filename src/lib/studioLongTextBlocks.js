@@ -315,7 +315,9 @@ function closingMarkdownDestinationIndex(text = "", start = 0) {
 }
 
 function normalizeMarkdownLinkHref(value = "") {
-  return String(value || "").trim().replace(/^<|>$/gu, "");
+  const href = String(value || "").trim().replace(/^<|>$/gu, "");
+  const protocolText = href.replace(/[\u0000-\u0020\u007f]/gu, "");
+  return /^(?:javascript|vbscript|data):/iu.test(protocolText) ? "" : href;
 }
 
 function markdownLinkAt(text = "", start = 0) {

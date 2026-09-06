@@ -39,6 +39,9 @@ removes its browser-local state. Tasks are not restored after reload and never
 appear in session History.
 Sent task attachments remain separate from the message as compact, read-only
 file details showing the safe file name and size.
+Assistant replies use the same formatted text presentation as normal chat,
+including lists, bold text, code, and links. User-authored text stays literal.
+Raw HTML remains text, and executable or data-URL links are not made clickable.
 
 Every product-owned repair entry uses the shared Fix it with AI control. It
 opens, selects, and focuses a separate Temporary AI task immediately. That task

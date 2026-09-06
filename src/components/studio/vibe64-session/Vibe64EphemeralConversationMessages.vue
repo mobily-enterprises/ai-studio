@@ -25,7 +25,11 @@
         {{ update.text }}
       </span>
     </div>
-    <p v-if="message.text">{{ message.text }}</p>
+    <LongTextPreviewBlocks
+      v-if="message.text && message.role === 'assistant'"
+      :blocks="parseLongTextReviewBlocks(message.text)"
+    />
+    <p v-else-if="message.text">{{ message.text }}</p>
     <span v-else-if="['starting', 'inProgress'].includes(message.status)">Working…</span>
     <span v-else-if="message.status === 'interrupted'">Stopped.</span>
     <span v-else-if="message.status === 'failed'">{{ assistantLabel }} stopped with an error.</span>
@@ -37,7 +41,9 @@
 </template>
 
 <script setup>
+import LongTextPreviewBlocks from "@/components/studio/LongTextPreviewBlocks.vue";
 import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
+import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
 
 defineProps({
   assistantLabel: {
@@ -72,6 +78,7 @@ defineProps({
   display: grid;
   gap: 0.2rem;
   max-width: 92%;
+  min-width: 0;
   padding: 0.55rem 0.65rem;
 }
 
