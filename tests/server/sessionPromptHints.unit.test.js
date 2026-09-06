@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   createSessionPromptHintsService,
+  parsePromptHintSuggestions,
   readPromptHintBlueprint,
   visibleConversation
 } from "../../packages/vibe64-terminals/src/server/sessionPromptHints.js";
@@ -666,6 +667,29 @@ test("prompt hints use only the selected account's prompt_hint economy profile a
   assert.equal(fixture.calls.delete[0].options.session.sessionId, "session-1");
 });
 
+test("prompt hint parsing preserves normalized Unicode pairs and rejects noncanonical envelopes", () => {
+  const expected = [
+    promptHint(`${"😀".repeat(22)} a`, "😀".repeat(108)),
+    promptHint("Check next step", "Check the safest useful next step"),
+    promptHint("Explain recent work", "Explain the most recent project work")
+  ];
+  const suggestions = [
+    promptHint(`  ${"😀".repeat(22)}   a  `, `  ${"😀".repeat(108)}  `),
+    promptHint("  Check   next step  ", "  Check  the safest useful next step  "),
+    expected[2]
+  ];
+  assert.deepEqual(parsePromptHintSuggestions(JSON.stringify({ suggestions })), expected);
+  for (const value of [
+    "not JSON",
+    "null",
+    "{}",
+    JSON.stringify(suggestions),
+    JSON.stringify({ suggestions, explanation: "Not allowed" })
+  ]) {
+    assert.equal(parsePromptHintSuggestions(value), null);
+  }
+});
+
 test("prompt hints reject malformed, duplicate, multiline, and overlong model suggestions without caching partial output", async (t) => {
   const validSuggestions = [
     promptHint("Review current plan", "Review the current plan with me"),
@@ -689,10 +713,34 @@ test("prompt hints reject malformed, duplicate, multiline, and overlong model su
       suggestions: validSuggestions.slice(0, 2)
     },
     {
+      name: "three valid hints plus null",
+      suggestions: [...validSuggestions, null]
+    },
+    {
+      name: "three valid hints plus malformed object",
+      suggestions: [...validSuggestions, { label: "Incomplete suggestion" }]
+    },
+    {
       name: "duplicate labels",
       suggestions: [
         validSuggestions[0],
-        promptHint(validSuggestions[0].label, "Use a different full prompt"),
+        promptHint(validSuggestions[0].label.toUpperCase(), "Use a different full prompt"),
+        validSuggestions[2]
+      ]
+    },
+    {
+      name: "duplicate prompts",
+      suggestions: [
+        validSuggestions[0],
+        promptHint(validSuggestions[1].label, validSuggestions[0].prompt.toUpperCase()),
+        validSuggestions[2]
+      ]
+    },
+    {
+      name: "non-string label",
+      suggestions: [
+        validSuggestions[0],
+        { ...validSuggestions[1], label: 42 },
         validSuggestions[2]
       ]
     },

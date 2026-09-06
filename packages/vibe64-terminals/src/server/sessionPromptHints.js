@@ -17,6 +17,7 @@ import {
   VIBE64_PROMPT_HINT_OUTPUT_SCHEMA,
   VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS,
   VIBE64_PROMPT_HINT_STATIC_STARTERS,
+  normalizedPromptHintSuggestions,
   vibe64AgentExecutionProfileAuditSnapshot
 } from "@local/vibe64-runtime/shared";
 import {
@@ -248,37 +249,6 @@ function promptHintPrompt({
   ].join("\n");
 }
 
-function suggestionText(value = "", maximum = VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS) {
-  if (
-    typeof value !== "string" ||
-    Array.from(value).some((character) => {
-      const codePoint = character.codePointAt(0);
-      return codePoint <= 0x1f || codePoint === 0x7f;
-    })
-  ) {
-    return "";
-  }
-  const text = value.replace(/[\t ]+/gu, " ").trim();
-  return text && Array.from(text).length <= maximum ? text : "";
-}
-
-function promptHintSuggestion(value = null) {
-  if (
-    !isRecord(value) ||
-    Object.keys(value).length !== 2 ||
-    !Object.hasOwn(value, "label") ||
-    !Object.hasOwn(value, "prompt")
-  ) {
-    return null;
-  }
-  const label = suggestionText(value.label, VIBE64_PROMPT_HINT_LABEL_MAX_CHARACTERS);
-  const prompt = suggestionText(value.prompt, VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS);
-  const labelWordCount = label ? label.split(/\s+/u).length : 0;
-  return label && prompt && labelWordCount >= 2 && labelWordCount <= 4
-    ? { label, prompt }
-    : null;
-}
-
 function parsePromptHintSuggestions(value = "") {
   let parsed = null;
   try {
@@ -286,18 +256,11 @@ function parsePromptHintSuggestions(value = "") {
   } catch {
     return null;
   }
-  if (!isRecord(parsed) || Object.keys(parsed).length !== 1 || !Array.isArray(parsed.suggestions)) {
+  if (!isRecord(parsed) || Object.keys(parsed).length !== 1) {
     return null;
   }
-  const suggestions = parsed.suggestions.map(promptHintSuggestion);
-  if (suggestions.length !== 3 || suggestions.some((suggestion) => !suggestion)) {
-    return null;
-  }
-  const uniqueLabels = new Set(suggestions.map(({ label }) => label.toLocaleLowerCase()));
-  const uniquePrompts = new Set(suggestions.map(({ prompt }) => prompt.toLocaleLowerCase()));
-  return uniqueLabels.size === suggestions.length && uniquePrompts.size === suggestions.length
-    ? suggestions
-    : null;
+  const suggestions = normalizedPromptHintSuggestions(parsed.suggestions);
+  return suggestions.length ? suggestions : null;
 }
 
 function promptHintActorId(vibe64User = null) {

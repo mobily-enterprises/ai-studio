@@ -226,9 +226,15 @@ describe("useVibe64PromptHints", () => {
     });
 
     const selected = hints.suggestions.value[1];
-    expect(hints.previewPromptHint(selected)).toBe(true);
+    const malformed = { ...selected, icon: "not allowed" };
+    expect(hints.previewPromptHint(malformed)).toBe(false);
+    expect(hints.selectPromptHint(malformed)).toBe(false);
+    expect(hints.selectPromptHint(promptHint("Review another plan", "Review a different plan"))).toBe(false);
+    expect(onSelect).not.toHaveBeenCalled();
+    const padded = promptHint(`  ${selected.label}  `, `  ${selected.prompt}  `);
+    expect(hints.previewPromptHint(padded)).toBe(true);
     expect(hints.preview.value).toBe(selected.prompt);
-    expect(hints.selectPromptHint(selected)).toBe(true);
+    expect(hints.selectPromptHint(padded)).toBe(true);
     expect(onSelect).toHaveBeenCalledWith(selected.prompt);
     expect(draft.value).toBe(selected.prompt);
     expect(hints.preview.value).toBe("");
@@ -257,9 +263,69 @@ describe("useVibe64PromptHints", () => {
     ])).toEqual([]);
     expect(normalizedPromptHintSuggestions([
       valid[0],
-      promptHint(valid[0].label, "Use a different full prompt"),
+      promptHint(valid[0].label.toUpperCase(), "Use a different full prompt"),
       valid[2]
     ])).toEqual([]);
+    expect(normalizedPromptHintSuggestions([
+      valid[0],
+      promptHint(valid[1].label, valid[0].prompt.toUpperCase()),
+      valid[2]
+    ])).toEqual([]);
+    for (const invalid of [
+      null,
+      { ...valid[1], label: 42 },
+      { ...valid[1], icon: "not allowed" },
+      promptHint("Check next step", "Check the next\tstep"),
+      promptHint("Check next step", "Check the next\u007fstep"),
+      promptHint(`${"😀".repeat(23)} a`, "Check the next step"),
+      promptHint("Check next step", "😀".repeat(109))
+    ]) {
+      expect(normalizedPromptHintSuggestions([valid[0], invalid, valid[2]])).toEqual([]);
+    }
+    const sparse = [...valid];
+    delete sparse[1];
+    expect(normalizedPromptHintSuggestions(sparse)).toEqual([]);
+  });
+
+  it("normalizes whitespace without counting Unicode surrogate pairs twice", () => {
+    const expected = [
+      promptHint(`${"😀".repeat(22)} a`, "😀".repeat(108)),
+      promptHint("Check next step", "Check the safest useful next step"),
+      promptHint("Explain recent work", "Explain the most recent project work")
+    ];
+    expect(normalizedPromptHintSuggestions([
+      promptHint(`  ${"😀".repeat(22)}   a  `, `  ${"😀".repeat(108)}  `),
+      promptHint("  Check   next step  ", "  Check  the safest useful next step  "),
+      expected[2]
+    ])).toEqual(expected);
+  });
+
+  it.each([
+    ["null", null],
+    ["malformed object", { label: "Incomplete suggestion" }]
+  ])("rejects a ready response with three valid hints and an extra %s", async (_name, extra) => {
+    const request = vi.fn(async () => ({
+      ok: true,
+      status: "ready",
+      suggestions: [
+        promptHint("Review current plan", "Review the current plan with me"),
+        promptHint("Check next step", "Check the safest useful next step"),
+        promptHint("Explain recent work", "Explain the most recent project work"),
+        extra
+      ]
+    }));
+    const { hints, scope } = createHints({}, { request });
+    try {
+      await vi.advanceTimersByTimeAsync(PROMPT_HINT_DEBOUNCE_MS);
+
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(hints.loading.value).toBe(false);
+      expect(hints.suggestions.value).toEqual([]);
+      expect(hints.status.value).toBe("idle");
+      expect(hints.visible.value).toBe(false);
+    } finally {
+      scope.stop();
+    }
   });
 
   it("dismisses on Escape until a new focus cycle or completed turn", () => {

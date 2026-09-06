@@ -13,6 +13,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-runtime/src/server/sessionStore.js`
 - `packages/vibe64-runtime/src/shared/conversationAttachments.js`
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
+- `packages/vibe64-runtime/src/shared/promptHints.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
 - `packages/vibe64-genesis/src/server/index.js`
@@ -233,6 +234,9 @@ Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
 the composer's geometry, while text the person actually enters still grows the
 composer normally. Selecting a suggestion inserts ordinary editable text.
+Suggestions must form a complete set of three valid, distinct label/prompt
+pairs. Malformed or overfull responses are ignored, not displayed as a filtered
+subset. The browser and server share the same normalization contract.
 
 If an OpenCode provider later rejects a previously saved key, the failed turn
 records a durable recovery notice that links the owner to AI Accounts without

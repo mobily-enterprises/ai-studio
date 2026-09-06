@@ -1,9 +1,9 @@
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import {
-  VIBE64_PROMPT_HINT_LABEL_MAX_CHARACTERS,
-  VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS,
-  VIBE64_PROMPT_HINT_STATIC_STARTERS
+  VIBE64_PROMPT_HINT_STATIC_STARTERS,
+  normalizedPromptHintSuggestion,
+  normalizedPromptHintSuggestions
 } from "@local/vibe64-runtime/shared";
 import {
   vibe64SessionPromptHintsCancelPath,
@@ -37,53 +37,6 @@ function promptHintConversationFingerprint(turns = []) {
     turnId: normalizedPromptHintText(turn?.turnId),
     user: normalizedPromptHintText(turn?.user?.text)
   })));
-}
-
-function normalizedPromptHintSuggestion(suggestion = {}) {
-  if (
-    !suggestion ||
-    typeof suggestion !== "object" ||
-    Array.isArray(suggestion) ||
-    Object.keys(suggestion).length !== 2 ||
-    !Object.hasOwn(suggestion, "label") ||
-    !Object.hasOwn(suggestion, "prompt") ||
-    typeof suggestion.label !== "string" ||
-    typeof suggestion.prompt !== "string" ||
-    [suggestion.label, suggestion.prompt].some((text) => (
-      Array.from(text).some((character) => {
-        const codePoint = character.codePointAt(0);
-        return codePoint <= 0x1f || codePoint === 0x7f;
-      })
-    ))
-  ) {
-    return null;
-  }
-  const label = normalizedPromptHintText(suggestion.label).replace(/[\t ]+/gu, " ");
-  const prompt = normalizedPromptHintText(suggestion.prompt).replace(/[\t ]+/gu, " ");
-  const labelWordCount = label ? label.split(/\s+/u).length : 0;
-  return (
-    label &&
-    prompt &&
-    Array.from(label).length <= VIBE64_PROMPT_HINT_LABEL_MAX_CHARACTERS &&
-    Array.from(prompt).length <= VIBE64_PROMPT_HINT_PROMPT_MAX_CHARACTERS &&
-    labelWordCount >= 2 &&
-    labelWordCount <= 4
-  )
-    ? { label, prompt }
-    : null;
-}
-
-function normalizedPromptHintSuggestions(value = []) {
-  const suggestions = (Array.isArray(value) ? value : [])
-    .map(normalizedPromptHintSuggestion)
-    .filter(Boolean);
-  return (
-    suggestions.length === 3 &&
-    new Set(suggestions.map(({ label }) => label.toLocaleLowerCase())).size === 3 &&
-    new Set(suggestions.map(({ prompt }) => prompt.toLocaleLowerCase())).size === 3
-  )
-    ? suggestions
-    : [];
 }
 
 function useVibe64PromptHints({
