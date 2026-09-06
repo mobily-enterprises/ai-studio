@@ -60,7 +60,7 @@ import {
 } from "../../packages/vibe64-core/src/server/serverResponses.js";
 import {
   createSessionChangedPublisher
-} from "../../packages/vibe64-sessions/src/server/events.js";
+} from "../../packages/vibe64-core/src/server/sessionRealtimeEvents.js";
 import {
   runVibe64AgentWriteExclusive
 } from "../../packages/vibe64-runtime/src/server/agentWriteLock.js";
@@ -378,6 +378,7 @@ test("deferred session changes publish modern top-level realtime events", async 
   assert.equal(events[0].realtime.event, "vibe64.session.changed");
   assert.equal(events[0].realtime.audience, "all_clients");
   assert.deepEqual(events[0].realtime.payload, {
+    projectSlug: "",
     clientRefresh: {
       includeOutputs: true
     },
@@ -388,6 +389,19 @@ test("deferred session changes publish modern top-level realtime events", async 
     status: "active"
   });
   assert.equal(Object.hasOwn(events[0], "meta"), false);
+});
+
+test("session publications use the trusted project context and actions do not republish service completions", async () => {
+  const published = [];
+  const publish = createSessionChangedPublisher({ async publish(event) { published.push(event); } });
+  await Promise.all(["project-a", "project-b"].map((slug) => runWithProjectRequestContext({ slug }, async () => {
+    await Promise.resolve();
+    await publish("same-session-id", { payload: { projectSlug: "untrusted", conversationLogPatch: { text: slug } } });
+  })));
+  assert.deepEqual(published.map((event) => event.realtime.payload.projectSlug).sort(), ["project-a", "project-b"]);
+  for (const action of createSessionActions({ sessions: {} })) {
+    assert.equal(action.events.length, 0);
+  }
 });
 
 test("session detail exposes renewal advice from the current thread and durable history", async () => {

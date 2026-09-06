@@ -136,6 +136,7 @@ function createVibe64AccountsChangedPublisher({ events = null } = {}) {
   }
 
   return async function publishVibe64AccountsChanged(accountId = "", {
+    actorId = null,
     account = null,
     authSessionId = "",
     operation = "updated",
@@ -166,6 +167,7 @@ function createVibe64AccountsChangedPublisher({ events = null } = {}) {
     };
 
     const accountEvent = await events.publish({
+      actorId,
       source: VIBE64_ACCOUNT_EVENT_SOURCE,
       entity: VIBE64_ACCOUNT_EVENT_ENTITY,
       operation: normalizeAccountValue(operation) || "updated",
@@ -183,6 +185,7 @@ function createVibe64AccountsChangedPublisher({ events = null } = {}) {
       type: "entity.changed"
     });
     await events.publish({
+      actorId,
       source: VIBE64_ACCOUNT_EVENT_SOURCE,
       entity: "connection",
       operation: normalizeAccountValue(operation) || "updated",

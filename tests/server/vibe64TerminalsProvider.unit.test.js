@@ -14,9 +14,9 @@ import {
   VIBE64_PUBLIC_USER_DOMAIN_ENV
 } from "@local/vibe64-core/server/launchPreviewProxyEnv";
 import {
-  createProjectRuntimeChangedPublisher,
-  createTerminalSessionChangedPublisher
+  createProjectRuntimeChangedPublisher
 } from "../../packages/vibe64-terminals/src/server/events.js";
+import { createSessionChangedPublisher } from "../../packages/vibe64-core/src/server/sessionRealtimeEvents.js";
 import {
   Vibe64TerminalsProvider,
   createVibe64TerminalsFeature,
@@ -337,7 +337,7 @@ test("terminal events publish direct session and project events without service 
       return event;
     }
   };
-  await createTerminalSessionChangedPublisher(events)("session-1", {
+  await createSessionChangedPublisher(events)("session-1", {
     reason: "output-target-started"
   });
   await createProjectRuntimeChangedPublisher(events)({
@@ -352,7 +352,8 @@ test("terminal events publish direct session and project events without service 
   assert.equal(published[0].realtime.event, "vibe64.session.changed");
   assert.equal(published[0].realtime.payload.reason, "output-target-started");
   assert.equal(published[1].realtime.event, "vibe64.project.changed");
-  assert.equal(published[1].action, "runtime-opened");
+  assert.equal(published[1].realtime.payload.reason, "runtime-opened");
+  assert.equal(published[1].realtime.payload.action, "runtime-opened");
   assert.equal(Object.hasOwn(published[0], "meta"), false);
   assert.equal(Object.hasOwn(published[1], "meta"), false);
 });

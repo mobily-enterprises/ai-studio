@@ -12,9 +12,9 @@ import {
 import { createTerminalActions } from "./actions.js";
 import { prepareCodexAttachmentStorage } from "./codexAttachments.js";
 import {
-  createProjectRuntimeChangedPublisher,
-  createTerminalSessionChangedPublisher
+  createProjectRuntimeChangedPublisher
 } from "./events.js";
+import { createSessionChangedPublisher } from "@local/vibe64-core/server/sessionRealtimeEvents";
 import { registerRoutes } from "./registerRoutes.js";
 import {
   createService,
@@ -66,7 +66,7 @@ function createVibe64TerminalsFeature({
       surfaces: ["app"]
     },
     setup({ env, events, fastify, http, logger, project, uploads }) {
-      const sessionChanged = createTerminalSessionChangedPublisher(events);
+      const sessionChanged = createSessionChangedPublisher(events);
       const terminals = createService({
         codexTerminalController,
         env: terminalsProviderEnv(env),

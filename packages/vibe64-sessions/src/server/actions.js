@@ -29,9 +29,6 @@ import {
   sessionSaveInputValidator,
   sessionUpdateInputValidator
 } from "./inputSchemas.js";
-import {
-  sessionChangedActionEvent
-} from "./events.js";
 
 const ACTION_LIST_SESSIONS = "vibe64.sessions.list";
 const ACTION_LIST_ARCHIVED_SESSIONS = "vibe64.sessions.archived.list";
@@ -180,7 +177,6 @@ function createSessionActions({ sessions } = {}) {
       id: ACTION_UPDATE_ASSISTANT_SELECTION,
       kind: "command",
       input: assistantSelectionUpdateActionInputValidator,
-      events: [sessionChangedActionEvent({ reason: "session-assistant-selection-updated" })],
       execute: (input) => sessions.updateAssistantSelection(
         input.sessionId,
         withoutSessionId(input)
@@ -285,7 +281,6 @@ function createSessionActions({ sessions } = {}) {
       id: ACTION_SAVE_SESSION_WORK,
       kind: "command",
       input: sessionSaveInputValidator,
-      events: [sessionChangedActionEvent({ reason: "session-work-saved" })],
       execute: (input) => sessions.saveSessionWork(input.sessionId, withoutSessionId(input))
     }),
     action({
@@ -298,7 +293,6 @@ function createSessionActions({ sessions } = {}) {
       id: ACTION_UPDATE_SESSION_WORK,
       kind: "command",
       input: sessionUpdateInputValidator,
-      events: [sessionChangedActionEvent({ reason: "session-work-updated" })],
       execute: (input) => sessions.updateSessionWork(input.sessionId, withoutSessionId(input))
     }),
     action({
@@ -374,7 +368,6 @@ function createSessionActions({ sessions } = {}) {
       id: ACTION_INTERRUPT_AGENT_TURN,
       kind: "command",
       input: agentTurnInterruptActionInputValidator,
-      events: [sessionChangedActionEvent({ reason: "session-agent-turn-interrupted" })],
       execute: (input) => sessions.interruptAgentTurn(input.sessionId, withoutSessionId(input))
     }),
     action({

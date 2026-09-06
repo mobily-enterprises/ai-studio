@@ -1471,9 +1471,18 @@ function createService({
     },
 
     async interruptAgentTurn(sessionId, input = {}) {
-      return sessionResult(async () => terminals.interruptAgentTurn(sessionId, input, {
-        runtime: await project.createRuntime()
-      }), "Vibe64 could not interrupt the assistant.");
+      return sessionResult(async () => {
+        const result = await terminals.interruptAgentTurn(sessionId, input, {
+          runtime: await project.createRuntime()
+        });
+        if (result?.ok !== false) {
+          await publishSessionChanged(sessionId, {
+            originId: text(input.originId),
+            reason: "session-agent-turn-interrupted"
+          });
+        }
+        return result;
+      }, "Vibe64 could not interrupt the assistant.");
     },
 
     async listSessions() {

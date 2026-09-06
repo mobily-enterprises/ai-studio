@@ -5,6 +5,7 @@ including follow-up guidance while a turn is active.
 
 ## Sources
 
+- `packages/vibe64-core/src/server/sessionRealtimeEvents.js`
 - `packages/vibe64-sessions/src/server/inputSchemas.js`
 - `packages/vibe64-sessions/src/server/registerRoutes.js`
 - `packages/vibe64-sessions/src/server/service.js`
@@ -65,6 +66,11 @@ When canonical session state reports a completed turn that was not observed
 through realtime conversation delivery, the mounted conversation rereads its
 durable history. A missed notification therefore cannot leave a completed
 answer absent until the person sends another message.
+Session and terminal services share one session-event publisher. Each event
+carries its trusted project identity, allowing the host to authorize delivery
+before conversation patches reach a socket. Mutation services own completion
+events; action declarations do not publish the same completion again. Lifecycle
+progress remains separate from completion.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
 Sent attachments remain distinct from the person's message as compact,

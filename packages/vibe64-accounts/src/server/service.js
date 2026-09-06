@@ -1029,6 +1029,7 @@ async function recordGithubAuthInvalidState({
     systemRoot
   });
   await publishAccountChanged("github", {
+    actorId: githubContext?.uid ? String(githubContext.uid) : null,
     account,
     reason,
     status: account?.status || ""
@@ -1931,6 +1932,7 @@ function createService({
         sessionId: id
       });
       const publishResult = await publishAccountChanged(accountId, {
+        actorId: githubContext?.uid ? String(githubContext.uid) : null,
         account,
         authSessionId: id,
         reason: reason || "terminal-close",

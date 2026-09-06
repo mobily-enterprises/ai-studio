@@ -30,3 +30,6 @@ project state so the deleted project cannot remain or block recreation.
 Durable project mutations publish one shared project refresh event. Consumers
 use it only to invalidate their project list, selection, settings, repository,
 or access reads; the HTTP resources remain authoritative.
+Runtime lifecycle publication uses that same project-event owner. Deletion
+publishes only a catalog refresh hint, so clients can remove a deleted project
+without exposing its former identity to a broader audience.

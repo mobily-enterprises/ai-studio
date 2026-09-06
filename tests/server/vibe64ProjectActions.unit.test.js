@@ -224,10 +224,9 @@ test("project change publisher emits the shared project refresh contract", async
 
   assert.equal(published.length, 1);
   assert.equal(published[0].actorId, "17");
-  assert.equal(published[0].entityId, "catalogue");
+  assert.equal(published[0].entityId, "projects");
   assert.equal(published[0].realtime.event, "vibe64.project.changed");
   assert.deepEqual(published[0].realtime.payload, {
-    projectSlug: "catalogue",
     reason: "project-archived"
   });
 });

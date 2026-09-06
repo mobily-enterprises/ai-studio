@@ -6,7 +6,7 @@ import {
 } from "@local/vibe64-runtime/server/sessionDebugLog";
 
 import { createSessionActions } from "./actions.js";
-import { createSessionChangedPublisher } from "./events.js";
+import { createSessionChangedPublisher } from "@local/vibe64-core/server/sessionRealtimeEvents";
 import { registerRoutes } from "./registerRoutes.js";
 import { createService } from "./service.js";
 import {

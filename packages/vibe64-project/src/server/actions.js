@@ -1,4 +1,5 @@
 import { createEntityChangedActionEvent } from "@jskit-ai/kernel/server/actions";
+import { currentProjectRequestContext } from "@local/vibe64-core/server/projectRequestContext";
 
 import {
   projectCollaborationInputValidator,
@@ -42,7 +43,7 @@ function projectChangedEvent({ operation = "updated" } = {}) {
     realtime: {
       audience: "all_clients",
       event: VIBE64_PROJECT_CHANGED_EVENT,
-      payload: ({ result }) => projectRealtimePayload(result)
+      payload: ({ input, result }) => projectRealtimePayload({ ...input, ...result })
     }
   });
 }
@@ -66,7 +67,7 @@ function projectSlug(value = {}) {
   const source = record(value);
   const project = projectRecord(source);
   return String(
-    source.projectSlug || source.slug || source.name || project.slug || project.name || ""
+    source.projectSlug || source.slug || source.name || project.slug || project.name || currentProjectRequestContext()?.slug || ""
   ).trim();
 }
 
@@ -75,6 +76,9 @@ function projectRealtimePayload(value = {}) {
   const slug = projectSlug(source);
   return {
     ...(slug ? { projectSlug: slug } : {}),
+    ...(source.runtime ? { runtime: source.runtime } : {}),
+    ...(source.runtime?.open === false ? { message: "Project is closed." } : {}),
+    ...(source.action ? { action: String(source.action).trim() } : {}),
     ...(typeof source.hasSelection === "boolean" ? { hasSelection: source.hasSelection } : {})
   };
 }
@@ -91,7 +95,8 @@ function createVibe64ProjectChangedPublisher({ events = null } = {}) {
     operation = "updated",
     reason = ""
   } = {}) {
-    const slug = projectSlug(value);
+    const catalogChange = operation === "deleted";
+    const slug = catalogChange ? "" : projectSlug(value);
     return events.publish({
       type: "entity.changed",
       source: "vibe64",
@@ -108,7 +113,7 @@ function createVibe64ProjectChangedPublisher({ events = null } = {}) {
         audience: "all_clients",
         event: VIBE64_PROJECT_CHANGED_EVENT,
         payload: {
-          ...projectRealtimePayload(value),
+          ...(catalogChange ? {} : projectRealtimePayload(value)),
           ...(reason ? { reason: String(reason).trim() } : {})
         }
       }
