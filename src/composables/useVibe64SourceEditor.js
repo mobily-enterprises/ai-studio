@@ -617,6 +617,7 @@ function useVibe64SourceEditor({
   let searchTimer = null;
   let pendingFileRevalidation = false;
   let savePromise = null;
+  let textAtUnmount = null;
   const currentSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
   const currentSessionId = computed(() => String(readRefOrGetterValue(sessionId) || "").trim());
   const currentProjectSlug = computed(() => String(readRefOrGetterValue(projectSlug) || "").trim());
@@ -1657,6 +1658,9 @@ function useVibe64SourceEditor({
   }
 
   function currentText() {
+    if (textAtUnmount !== null) {
+      return textAtUnmount;
+    }
     return typeof readCurrentText === "function"
       ? String(readCurrentText() ?? "")
       : text.value;
@@ -1769,6 +1773,7 @@ function useVibe64SourceEditor({
   });
 
   onBeforeUnmount(() => {
+    textAtUnmount = currentText();
     clearExplanationStream();
     clearAutosave();
     clearFileMatchesTimer();

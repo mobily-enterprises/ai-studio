@@ -231,6 +231,70 @@ describe("useVibe64SourceEditor", () => {
     expect(editor.dirty.value).toBe(false);
   });
 
+  it("preserves the last draft when unmount starts its save", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    let finishSave;
+    mocks.requestResults.push(new Promise((resolve) => {
+      finishSave = resolve;
+    }));
+    currentText.value = "console.log('leaving');\n";
+    editor.updateText();
+
+    for (const beforeUnmount of mocks.beforeUnmount) {
+      beforeUnmount();
+    }
+    const saving = editor.saveNow();
+    // The component destroys CodeMirror after the composable's cleanup hook.
+    currentText.value = "";
+    finishSave(fileResponse({ hash: "hash-leaving", text: "" }));
+    await saving;
+
+    const saveBodies = mocks.requestCalls
+      .filter(([, options]) => options?.method === "PUT")
+      .map(([, options]) => options.body);
+    expect(saveBodies.map((body) => body.text)).toEqual(["console.log('leaving');\n"]);
+    expect(editor.savedHash.value).toBe("hash-leaving");
+    expect(editor.dirty.value).toBe(false);
+  });
+
+  it.each([
+    { finalText: "console.log('last edit');\n", label: "a newer draft" },
+    { finalText: "", label: "an intentionally empty draft" }
+  ])("preserves $label on unmount while a save is in flight", async ({ finalText }) => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText });
+    let finishFirstSave;
+    mocks.requestResults.push(new Promise((resolve) => {
+      finishFirstSave = resolve;
+    }));
+    currentText.value = "console.log('saving');\n";
+    editor.updateText();
+    const saving = editor.saveNow();
+    await flushPromises();
+
+    currentText.value = finalText;
+    editor.updateText();
+    for (const beforeUnmount of mocks.beforeUnmount) {
+      beforeUnmount();
+    }
+    currentText.value = "";
+    mocks.requestResults.push(fileResponse({ hash: "hash-final", text: "" }));
+    finishFirstSave(fileResponse({ hash: "hash-first", text: "" }));
+    await saving;
+
+    const saveBodies = mocks.requestCalls
+      .filter(([, options]) => options?.method === "PUT")
+      .map(([, options]) => options.body);
+    expect(saveBodies.map((body) => body.text)).toEqual([
+      "console.log('saving');\n",
+      finalText
+    ]);
+    expect(saveBodies[1].baseHash).toBe("hash-first");
+    expect(editor.savedHash.value).toBe("hash-final");
+    expect(editor.dirty.value).toBe(false);
+  });
+
   it("allows an immersive surface to intercept a resolved source reference", async () => {
     const currentText = ref("");
     const navigateReferencedSource = vi.fn(async () => true);
