@@ -6,6 +6,7 @@ from saved project work, and inspect one exact file change at a time.
 ## Sources
 
 - `packages/vibe64-source-editor/src/server/service.js`
+- `packages/vibe64-terminals/src/server/repositoryHistory.js`
 - `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
 - `src/composables/useVibe64SourceEditor.js`
@@ -65,6 +66,8 @@ History file paging and differences belong to the selected commit. Selecting
 another version clears the previous version's loading and error state. Late
 results from that previous selection cannot change the new view or prevent it
 from loading more files.
+A selected history filename is literal, not a Git search pattern, even when it
+contains wildcard or colon characters.
 
 ## Implementation map
 

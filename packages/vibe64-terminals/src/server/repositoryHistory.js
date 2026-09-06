@@ -329,6 +329,7 @@ async function repositoryVersionFileDiff({
   const filePath = safeChangePath(requestedPath);
   const result = comparison.parent
     ? await git(context, [
+        "--literal-pathspecs",
         "diff",
         "--no-ext-diff",
         "--find-renames",
@@ -339,6 +340,7 @@ async function repositoryVersionFileDiff({
         filePath
       ], { runCommand })
     : await git(context, [
+        "--literal-pathspecs",
         "show",
         "--format=",
         "--no-ext-diff",

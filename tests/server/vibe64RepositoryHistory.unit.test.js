@@ -222,3 +222,57 @@ test("version history pins pagination and exposes bounded per-version files and 
     ]);
   }
 });
+
+for (const rootVersion of [true, false]) {
+  test(`${rootVersion ? "root" : "parented"} version diffs treat selected filenames literally`, async (t) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-history-literal-path-"));
+    const cases = [
+      { path: "[ab].txt", selected: "selected wildcard file", other: "unrelated wildcard file", otherPath: "a.txt" },
+      { path: ":literal.txt", selected: "selected colon file", other: "unrelated colon file", otherPath: "literal.txt" }
+    ];
+    try {
+      await git(root, ["init", "--initial-branch=main"]);
+      let parent = "";
+      if (!rootVersion) {
+        await writeFile(path.join(root, "baseline.txt"), "baseline\n", "utf8");
+        await git(root, ["add", "-A"]);
+        await git(root, ["commit", "-m", "baseline"]);
+        parent = await git(root, ["rev-parse", "HEAD"]);
+      }
+      for (const entry of cases) {
+        await writeFile(path.join(root, entry.path), `${entry.selected}\n`, "utf8");
+        await writeFile(path.join(root, entry.otherPath), `${entry.other}\n`, "utf8");
+      }
+      await git(root, ["add", "-A"]);
+      await git(root, ["commit", "-m", "literal filenames"]);
+      const commit = await git(root, ["rev-parse", "HEAD"]);
+      const files = await repositoryVersionFiles({
+        commit,
+        historySnapshotCommit: commit,
+        project: localProject(root),
+        runCommand: commandRunner
+      });
+      assert.equal(files.parent, parent);
+
+      for (const entry of cases) {
+        await t.test(entry.path, async () => {
+          const selected = files.files.find((file) => file.path === entry.path);
+          assert.ok(selected, "The file list must offer the exact committed filename.");
+          const diff = await repositoryVersionFileDiff({
+            commit,
+            historySnapshotCommit: commit,
+            path: selected.path,
+            project: localProject(root),
+            runCommand: commandRunner
+          });
+          assert.equal(diff.path, selected.path);
+          assert.equal(diff.parent, parent);
+          assert.ok(diff.diff.includes(`+${entry.selected}\n`), diff.diff);
+          assert.equal(diff.diff.includes(entry.other), false, diff.diff);
+        });
+      }
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
