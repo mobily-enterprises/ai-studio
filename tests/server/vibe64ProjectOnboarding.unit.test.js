@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { createService } from "../../packages/vibe64-project/src/server/service.js";
 import { createStudioProjectContext } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
-import { addGenesisStack, applyGenesisTemplate, initializeGenesisProject } from "../../packages/vibe64-genesis/src/server/index.js";
+import { addGenesisStack, applyGenesisTemplate, initializeGenesisProject, listGenesisTemplates, setGenesisCollaboration, setGenesisEngineeringProfile } from "../../packages/vibe64-genesis/src/server/index.js";
 import { sourceMetadata, sourcePath, withTemporaryRoot } from "./vibe64TestHelpers.js";
 
 const exec = promisify(execFile);
@@ -26,6 +26,7 @@ async function fixture(targetRoot) {
   await exec("git", ["add", "-A"], { cwd: templateRoot });
   await exec("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "Starter"], { cwd: templateRoot });
   const catalog = { schemaVersion: 1, templates: [{ id: "nodejs/public", technology: "nodejs", name: "Test", repository: templateRoot, branch: "public" }] };
+  const templateSources = [{ namespace: "test", catalog }];
   const service = createService({
     env: {},
     projectContext: createStudioProjectContext({
@@ -34,27 +35,98 @@ async function fixture(targetRoot) {
       explicitTargetRoot: targetRoot,
       home: path.dirname(targetRoot)
     }),
-    applyTemplate: (input) => applyGenesisTemplate({ ...input, templateSources: [{ namespace: "test", catalog }] })
+    applyTemplate: (input) => applyGenesisTemplate({ ...input, templateSources }),
+    listTemplates: (input) => listGenesisTemplates({ ...input, templateSources })
   });
   const store = await service.createSessionStore();
   await store.createSession({ sessionId, metadata: sourceMetadata(targetRoot, sessionId) });
-  return { root, service, store };
+  return { root, service, store, templateRoot };
 }
 
 test("an empty session offers starters and applies only the configured selection into that session", async () => {
   await withTemporaryRoot(async (targetRoot) => {
-    const { root, service } = await fixture(targetRoot);
+    const { root, service, templateRoot } = await fixture(targetRoot);
+    await setGenesisCollaboration({
+      experience: "expert",
+      explanationStyle: "conclusions",
+      projectRoot: root,
+      requirements: "- Preserve the project's existing terminology.",
+      responseLength: "very_short",
+      tone: "direct"
+    });
+    await setGenesisEngineeringProfile({ profile: "durable.v1", projectRoot: root });
+    const collaboration = await readFile(path.join(root, "genesis/collaboration.md"), "utf8");
+    const engineering = await readFile(path.join(root, "genesis/engineering.md"), "utf8");
+    await exec("git", ["add", "-A"], { cwd: root });
+    await exec("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "Initial context"], { cwd: root });
+    const originalCommit = (await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    const templateCommit = (await exec("git", ["rev-parse", "HEAD"], { cwd: templateRoot })).stdout.trim();
     const before = await service.readOnboarding({ sessionId });
     assert.equal(before.ok, true);
     assert.equal(before.inspection.state, "new");
-    assert.deepEqual(before.templates.map(({ id }) => id), ["official:jskit/public", "official:jskit/accounts"]);
-    const result = await service.applyTemplate({ sessionId, templateId: "test:nodejs/public", repository: "/untrusted-browser-input", branch: "wrong" });
+    const choice = before.templates.find(({ id }) => id === "test:nodejs/public");
+    assert.ok(choice, "the applied template must be offered by this installation's catalogue");
+    const result = await service.applyTemplate({ sessionId, templateId: choice.id, repository: "/untrusted-browser-input", branch: "wrong" });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.inspection.state, "ready");
+    assert.equal(result.application.template.id, choice.id);
+    assert.deepEqual(result.application.source, { repository: templateRoot, branch: "public", revision: templateCommit });
+    assert.equal(await readFile(path.join(root, "genesis/collaboration.md"), "utf8"), collaboration);
+    assert.equal(await readFile(path.join(root, "genesis/engineering.md"), "utf8"), engineering);
+    assert.equal((await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(), originalCommit);
     assert.equal(await readFile(path.join(root, "app.js"), "utf8"), "console.log('ready');\n");
     await assert.rejects(readFile(path.join(targetRoot, "app.js")), { code: "ENOENT" });
     assert.equal((await service.applyTemplate({ sessionId, templateId: "test:nodejs/public" })).ok, false);
   });
+});
+
+test("onboarding preserves described, incomplete and incompatible Genesis sources", async (t) => {
+  for (const scenario of [
+    { name: "described", state: "ready", format: "current", action: "work" },
+    { name: "missing intent", state: "adoption", format: "current", action: "adopt" },
+    { name: "unversioned", state: "attention", format: "unversioned", action: "migrate", diagnostic: "PROJECT_FORMAT_UNVERSIONED" },
+    { name: "outdated", state: "attention", format: "outdated", action: "migrate", diagnostic: "PROJECT_FORMAT_OUTDATED" },
+    { name: "newer", state: "attention", format: "newer", action: "update-genesis", diagnostic: "PROJECT_FORMAT_NEWER" },
+    { name: "invalid version", state: "attention", format: "invalid", action: "repair", diagnostic: "PROJECT_FORMAT_INVALID" },
+    { name: "invalid Stack", state: "attention", format: "current", action: "repair" }
+  ]) {
+    await t.test(scenario.name, async () => {
+      await withTemporaryRoot(async (targetRoot) => {
+        const { root, service } = await fixture(targetRoot);
+        await addGenesisStack({ projectRoot: root, pieces: ["nodejs"] });
+        await writeFile(path.join(root, "application.js"), "console.log('existing application');\n");
+        await writeFile(path.join(root, "genesis/blueprint.md"), scenario.name === "missing intent"
+          ? "# Blueprint\n"
+          : "# Blueprint\n\nA command-line application for inspecting invoices.\n");
+        const versionPath = path.join(root, "genesis/version");
+        const version = Number(await readFile(versionPath, "utf8"));
+        if (scenario.name === "unversioned") await unlink(versionPath);
+        if (scenario.name === "outdated") await writeFile(versionPath, `${version - 1}\n`);
+        if (scenario.name === "newer") await writeFile(versionPath, `${version + 1}\n`);
+        if (scenario.name === "invalid version") await writeFile(versionPath, "not a version\n");
+        if (scenario.name === "invalid Stack") await writeFile(path.join(root, "genesis/stack.md"), "# Stack\n\n## Components\n\n- `not-a-real-technology`\n");
+        await exec("git", ["add", "-A"], { cwd: root });
+        await exec("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--quiet", "-m", "Existing application"], { cwd: root });
+        const originalCommit = (await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+
+        const opening = await service.readOnboarding({ sessionId });
+        assert.equal(opening.ok, true, JSON.stringify(opening));
+        assert.equal(opening.inspection.state, scenario.state);
+        assert.equal(opening.inspection.projectFormat.status, scenario.format);
+        assert.equal(opening.inspection.nextAction, scenario.action);
+        assert.equal(opening.inspection.templateEligible, false);
+        assert.deepEqual(opening.templates, []);
+        if (scenario.diagnostic) assert.equal(opening.inspection.diagnostics[0].code, scenario.diagnostic);
+        if (scenario.state === "attention") assert.ok(opening.inspection.diagnostics.length > 0);
+        else assert.deepEqual(opening.inspection.diagnostics, []);
+        const rejected = await service.applyTemplate({ sessionId, templateId: "test:nodejs/public" });
+        assert.equal(rejected.ok, false);
+        assert.equal(rejected.code, "TEMPLATE_PROJECT_NOT_EMPTY");
+        assert.equal((await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(), originalCommit);
+        assert.equal((await exec("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: root })).stdout, "");
+      });
+    });
+  }
 });
 
 test("existing source is adoption and a stale template request preserves it", async () => {

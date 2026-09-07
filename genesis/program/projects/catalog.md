@@ -10,6 +10,7 @@ workspace.
 - `packages/vibe64-project/src/server/managedProject.js`
 - `packages/vibe64-genesis/src/server/index.js`
 - `src/components/studio/vibe64-session/Vibe64ProjectOnboarding.vue`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `packages/vibe64-core/src/server/studioProjectContext.js`
 - `src/composables/useVibe64ProjectsResource.js`
 - `src/composables/useProjectSelectionGate.js`
@@ -31,6 +32,11 @@ source without a completed Genesis description asks what the project does;
 current described projects show their outputs; outdated or incomplete Genesis
 configuration shows the specific repair needed. Missing Genesis files never
 authorize overwriting an existing application.
+Opening inspections and their refresh subscriptions run only for the visible
+Preview in an active session. Hiding Preview keeps already-rendered outputs
+mounted and running; returning refreshes inspection through the same resource.
+An admitted starter operation may finish while hidden, but it does not request
+another inspection until Preview is visible again.
 
 Starter catalogues are owned by Genesis and map a namespace-qualified choice to
 one technology repository and branch. Applying a choice uses the ordinary
@@ -38,6 +44,10 @@ session and project source-write locks, preserves Git history and existing
 bootstrap preferences, and leaves the added source for the normal Save flow.
 The browser sends only the selected catalogue ID. Neither session startup nor
 inspection runs application verification or workspace preparation.
+Starter command failures use the shared action feedback and leave the choice
+available for retry. Pending state includes the successful canonical inspection
+while Preview remains visible; unexpected inspection failures retain their
+normal error propagation.
 
 The hosted project namespace is the catalog authority. When that namespace has
 been removed outside Vibe64, the next catalog read removes its stale private

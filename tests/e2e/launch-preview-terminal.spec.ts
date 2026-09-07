@@ -1571,12 +1571,28 @@ test("@preview-lifecycle token bootstrap redirects once without reloading the cl
 test("@preview-lifecycle stays mounted without reloading while covered by dashboard", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page);
+  let onboardingReads = 0;
+  await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/onboarding?sessionId=${SESSION_ID}`, async (route) => {
+    onboardingReads += 1;
+    await fulfillJson(route, {
+      available: true,
+      inspection: { diagnostics: [], state: "ready", templateEligible: false },
+      ok: true,
+      source: { rootKind: "session-source", sessionId: SESSION_ID },
+      templates: []
+    });
+  });
 
-  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await page.goto(`${BASE_URL}${DASHBOARD_PATH}/env`);
+  await expect(page.getByRole("navigation", { name: "Dashboard sections" })).toBeVisible();
+  await expect(page.locator(`[data-vibe64-session-runtime-id='${SESSION_ID}']`)).toBeVisible();
+  expect(onboardingReads).toBe(0);
+  await page.getByRole("tab", { name: "Preview" }).click();
 
   const previewFrame = page.locator(".vibe64-launch-controls__preview-frame");
   await expect(previewFrame).toHaveCount(1);
   await expect(page.locator(".vibe64-launch-controls__preview-overlay")).toHaveCount(0);
+  expect(onboardingReads).toBe(1);
 
   const initialSrc = await previewFrame.getAttribute("src");
   const initialPreviewLoadCount = launchSession.getPreviewLoadCount();
@@ -1592,13 +1608,97 @@ test("@preview-lifecycle stays mounted without reloading while covered by dashbo
   await page.waitForTimeout(5500);
 
   await expect(previewFrame).toHaveCount(1);
+  expect(onboardingReads).toBe(1);
   expect(await previewFrame.getAttribute("src")).toBe(initialSrc);
   expect(launchSession.getPreviewLoadCount()).toBe(initialPreviewLoadCount);
 
   await page.getByRole("tab", { name: "Preview" }).click();
+  await expect.poll(() => onboardingReads).toBe(2);
   await expect(previewFrame).toHaveCount(1);
   expect(await previewFrame.getAttribute("src")).toBe(initialSrc);
+  expect(launchSession.getPreviewLoadCount()).toBe(initialPreviewLoadCount);
+  expect(await previewFrame.evaluate((frame) => (
+    frame === (window as unknown as { __vibe64PreviewFrame?: Element }).__vibe64PreviewFrame
+  ))).toBe(true);
 });
+
+for (const viewport of [{ width: 1280, height: 577 }, { width: 960, height: 700 }, { width: 390, height: 844 }]) {
+  test(`starter failures stay in action feedback and hidden completion waits for Preview at ${viewport.width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await mockLaunchTerminalSocket(page);
+    const launchSession = await mockLaunchSession(page);
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    let state = "new";
+    let onboardingReads = 0;
+    const writes: unknown[] = [];
+    const releaseStarter = Promise.withResolvers<void>();
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/onboarding?sessionId=${SESSION_ID}`, async (route) => {
+      onboardingReads += 1;
+      await fulfillJson(route, {
+        available: true,
+        inspection: { diagnostics: [], state, templateEligible: state === "new" },
+        ok: true,
+        source: { rootKind: "session-source", sessionId: SESSION_ID },
+        templates: state === "new" ? [{
+          id: "test:jskit/public", technology: "jskit", name: "Local test starter",
+          description: "A disposable starting application.", namespace: "test"
+        }] : []
+      });
+    });
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/templates/apply`, async (route) => {
+      writes.push(route.request().postDataJSON());
+      if (writes.length === 1) {
+        await fulfillJson(route, { ok: false, code: "starter_unavailable", error: "The starter could not be downloaded." }, { status: 400 });
+        return;
+      }
+      await releaseStarter.promise;
+      state = "ready";
+      await fulfillJson(route, { ok: true });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      if (viewport.width <= 960) await page.getByRole("button", { name: "Show project", exact: true }).click();
+      const starter = page.getByRole("button", { name: /Local test starter/u });
+      await expect(starter).toBeEnabled();
+      expect(onboardingReads).toBe(1);
+      await starter.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => writes.length).toBe(1);
+      await expect(page.locator(".v-snackbar")).toContainText("The starter could not be downloaded.");
+      await page.screenshot({ path: testInfo.outputPath("onboarding-starter-failure.png") });
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(starter).toBeEnabled();
+      expect(onboardingReads).toBe(1);
+
+      await starter.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => writes.length).toBe(2);
+      await expect(starter).toBeDisabled();
+      await expect(starter).toContainText("Preparing your starter");
+      await page.getByRole("tab", { name: "Dashboard", exact: true }).click();
+      await expect(page.getByRole("navigation", { name: "Dashboard sections" })).toBeVisible();
+      releaseStarter.resolve();
+      await expect(page.locator(".project-onboarding__choice")).toContainText("Use this starter");
+      expect(onboardingReads).toBe(1);
+      await page.getByRole("tab", { name: "Preview", exact: true }).click();
+      await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+      expect(onboardingReads).toBe(2);
+      expect(writes).toEqual([
+        { sessionId: SESSION_ID, templateId: "test:jskit/public" },
+        { sessionId: SESSION_ID, templateId: "test:jskit/public" }
+      ]);
+      expect(launchSession.getLaunchStartPayloads()).toHaveLength(0);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      expect(errors).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("onboarding-starter-ready.png") });
+    } finally {
+      releaseStarter.resolve();
+      await launchSession.close();
+    }
+  });
+}
 
 test("embedded preview stays mounted when switching selected sessions", async ({ page }) => {
   await mockLaunchTerminalSocket(page);

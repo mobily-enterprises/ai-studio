@@ -2,11 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { compile } from "@vue/compiler-dom";
 import { compileScript, parse } from "@vue/compiler-sfc";
+import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
+import {
+  configureHttpWebClient,
+  resetHttpWebClientForTests
+} from "@jskit-ai/http-web/client/lib/httpClient";
 import * as Vue from "vue";
 import { renderToString } from "@vue/server-renderer";
+import { routeLocationKey } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ resource: null, query: null }));
+const mocks = vi.hoisted(() => ({ live: false, resource: null, query: null }));
 vi.mock("vuetify/components/VBtn", () => ({ VBtn: passthroughComponent("button") }));
 vi.mock("vuetify/components/VTextarea", () => ({ VTextarea: passthroughComponent("textarea") }));
 vi.mock("vuetify/components/VSkeletonLoader", () => ({ VSkeletonLoader: passthroughComponent("div") }));
@@ -17,12 +23,23 @@ function passthroughComponent(element) {
     setup(_props, { attrs, slots }) { return () => Vue.h(element, attrs, slots.default?.()); }
   });
 }
-vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", () => ({
-  useEndpointResource(options) { mocks.query = options; return mocks.resource; }
-}));
-vi.mock("@jskit-ai/http-web/client/composables/useCommand", () => ({
-  useCommand: () => ({ run: vi.fn() })
-}));
+vi.mock("@jskit-ai/http-web/client/composables/useEndpointResource", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useEndpointResource(options) {
+      mocks.query = options;
+      return mocks.live ? actual.useEndpointResource(options) : mocks.resource;
+    }
+  };
+});
+vi.mock("@jskit-ai/http-web/client/composables/useCommand", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useCommand: (options) => mocks.live ? actual.useCommand(options) : { run: vi.fn(async () => ({ ok: true })) }
+  };
+});
 vi.mock("@/composables/useVibe64ProjectScope.js", () => ({
   useVibe64ProjectSlug: () => Vue.ref("project-a")
 }));
@@ -34,6 +51,146 @@ const script = compileScript(descriptor, { id: "onboarding-test" });
 Onboarding.render = new Function("Vue", compile(descriptor.template.content, {
   bindingMetadata: script.bindings, mode: "function", prefixIdentifiers: true
 }).code)(Vue);
+
+const autopilot = fs.readFileSync(path.resolve("src/components/studio/vibe64-session/Vibe64AutopilotView.vue"), "utf8");
+const onboardingTag = autopilot.match(/<Vibe64ProjectOnboarding\b[\s\S]*?>/u)?.[0];
+const activeBinding = onboardingTag?.match(/:active="([^"]+)"/u)?.[1];
+if (!activeBinding) throw new Error("The actual onboarding activity binding is required.");
+const onboardingActive = new Function("props", `return (${activeBinding});`);
+
+function opening(state = "ready", sessionId = "session-a") {
+  return {
+    available: true,
+    inspection: { state, diagnostics: [], nextAction: state === "ready" ? "work" : "create" },
+    ok: true,
+    source: { rootKind: "session-source", sessionId },
+    templates: state === "new"
+      ? [{ id: "official:jskit/public", technology: "jskit", name: "Public starter", description: "A public app." }]
+      : []
+  };
+}
+
+function findNode(node, predicate) {
+  if (predicate(node)) return node;
+  for (const child of node.children || []) {
+    const found = findNode(child, predicate);
+    if (found) return found;
+  }
+  return null;
+}
+
+function nodeText(node) {
+  return [node.text || "", ...(node.children || []).map(nodeText)].join("");
+}
+
+// Real Onboarding setup/template, QueryClient, command, feedback and realtime;
+// only Vuetify presentation and the ready OutputControls slot are stand-ins.
+function mountOnboarding({ active = true, projectPane = "preview", live = true } = {}) {
+  mocks.live = live;
+  const props = Vue.reactive({ active, archived: false, busy: false, projectPane, sessionId: "session-a" });
+  const reads = [];
+  const writes = [];
+  const listeners = new Set();
+  const feedback = { dismiss: vi.fn(), report: vi.fn(() => ({ skipped: true })) };
+  const outputs = { mounted: vi.fn(), unmounted: vi.fn() };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let closed = false;
+  configureHttpWebClient({
+    request(url, options) {
+      const response = Promise.withResolvers();
+      if (options.method === "GET") {
+        expect(url).toBe("/api/vibe64/onboarding");
+        reads.push({ options, ...response });
+      } else {
+        expect(options.method).toBe("POST");
+        expect(url).toBe("/api/vibe64/templates/apply");
+        writes.push({ options, ...response });
+      }
+      if (closed) response.resolve({ ok: true });
+      return response.promise;
+    }
+  });
+  const outputSlot = Vue.defineComponent({
+    setup() {
+      outputs.mounted();
+      Vue.onBeforeUnmount(outputs.unmounted);
+      return () => Vue.h("output", "Running output instance");
+    }
+  });
+  const renderer = Vue.createRenderer({
+    createElement: (type) => ({ type, children: [], props: {}, parent: null }),
+    createComment: (text) => ({ type: "comment", text, children: [], props: {} }),
+    createText: (text) => ({ type: "text", text, children: [], props: {} }),
+    insert(child, parent, anchor = null) {
+      const previous = child.parent?.children?.indexOf(child) ?? -1;
+      if (previous >= 0) child.parent.children.splice(previous, 1);
+      child.parent = parent;
+      const index = anchor ? parent.children.indexOf(anchor) : -1;
+      if (index < 0) parent.children.push(child);
+      else parent.children.splice(index, 0, child);
+    },
+    remove(child) {
+      const index = child.parent?.children?.indexOf(child) ?? -1;
+      if (index >= 0) child.parent.children.splice(index, 1);
+    },
+    parentNode: (node) => node.parent,
+    nextSibling: (node) => node.parent?.children[node.parent.children.indexOf(node) + 1] || null,
+    patchProp: (node, key, _previous, value) => { node.props[key] = value; },
+    setElementText(node, text) { node.children = []; node.text = text; },
+    setText: (node, text) => { node.text = text; }
+  });
+  const app = renderer.createApp({
+    setup: () => () => Vue.h(Onboarding, {
+      active: onboardingActive(props),
+      archived: props.archived,
+      busy: props.busy,
+      canAsk: true,
+      sendMessage: vi.fn(),
+      sessionId: props.sessionId
+    }, { default: () => Vue.h(outputSlot) })
+  });
+  app.use(VueQueryPlugin, { queryClient });
+  app.provide(Vue.ssrContextKey, { modules: new Set() });
+  app.provide(routeLocationKey, Vue.reactive({ path: "/app/project/project-a", params: {}, query: {}, matched: [] }));
+  app.provide("jskit.shell-web.runtime.web-error.client", feedback);
+  app.provide("jskit.realtime.runtime.client.socket", {
+    on(event, handler) { expect(event).toBe("vibe64.project.changed"); listeners.add(handler); },
+    off(event, handler) { expect(event).toBe("vibe64.project.changed"); listeners.delete(handler); }
+  });
+  for (const [name, element] of [["VBtn", "button"], ["VTextarea", "textarea"], ["VSkeletonLoader", "div"]]) {
+    app.component(name, passthroughComponent(element));
+  }
+  const container = { children: [], props: {}, type: "root" };
+  app.mount(container);
+  return {
+    container, feedback, listeners, outputs, props, reads, writes,
+    button: (label) => findNode(container, (node) => node.type === "button" && nodeText(node).includes(label)),
+    async projectChanged(projectSlug = "project-a") {
+      for (const handler of listeners) handler({ projectSlug });
+      await Vue.nextTick();
+    },
+    async settleRead(index, data = opening()) {
+      const request = reads[index];
+      const query = queryClient.getQueryCache().find({
+        exact: true,
+        queryKey: ["vibe64", "project-onboarding", "project-a", request.options.query.sessionId]
+      });
+      const pending = query?.promise;
+      request.resolve(data);
+      await pending;
+      await Vue.nextTick();
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      app.unmount();
+      queryClient.clear();
+      for (const request of reads) request.resolve(opening());
+      for (const request of writes) request.resolve({ ok: true });
+      resetHttpWebClientForTests();
+    }
+  };
+}
 
 async function render(state, props = {}) {
   mocks.resource.data.value = state === null ? null : {
@@ -55,6 +212,7 @@ async function render(state, props = {}) {
 
 describe("Preview project onboarding", () => {
   beforeEach(() => {
+    mocks.live = false;
     mocks.resource = { data: Vue.ref(null), loadError: Vue.ref(""), reload: vi.fn() };
   });
   it("offers a starter only for empty projects and disables choices during source work", async () => {
@@ -81,5 +239,215 @@ describe("Preview project onboarding", () => {
     expect(await render(null)).not.toContain("Public starter");
     expect(await render("new", { archived: true })).toContain("Normal outputs");
     expect(mocks.query.enabled.value).toBe(false);
+  });
+
+  it.each([
+    { hidden: "Dashboard", active: true, projectPane: "dashboard" },
+    { hidden: "an inactive host", active: false, projectPane: "preview" }
+  ])("does not inspect on a cold mount hidden by $hidden", async ({ active, projectPane }) => {
+    const fixture = mountOnboarding({ active, projectPane });
+    try {
+      await Vue.nextTick();
+      await fixture.projectChanged();
+      expect(fixture.reads).toHaveLength(0);
+      expect(fixture.listeners.size).toBe(0);
+      expect(fixture.outputs.mounted).not.toHaveBeenCalled();
+
+      fixture.props.active = true;
+      fixture.props.projectPane = "preview";
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(1);
+      expect(fixture.reads[0].options.query).toEqual({ sessionId: "session-a" });
+      await fixture.settleRead(0);
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it.each(["Dashboard", "inactive host"])("retains cached outputs without hidden reads through %s and refreshes once on return", async (hidden) => {
+    const fixture = mountOnboarding();
+    try {
+      await fixture.settleRead(0);
+      const output = findNode(fixture.container, (node) => node.type === "output");
+      expect(output).not.toBeNull();
+      expect(fixture.listeners.size).toBe(1);
+      await fixture.projectChanged("another-project");
+      expect(fixture.reads).toHaveLength(1);
+
+      if (hidden === "Dashboard") fixture.props.projectPane = "dashboard";
+      else fixture.props.active = false;
+      await Vue.nextTick();
+      await fixture.projectChanged();
+      fixture.props.busy = true;
+      await Vue.nextTick();
+      fixture.props.busy = false;
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(1);
+      expect(fixture.listeners.size).toBe(0);
+      expect(findNode(fixture.container, (node) => node.type === "output")).toBe(output);
+      expect(fixture.outputs.unmounted).not.toHaveBeenCalled();
+
+      fixture.props.active = true;
+      fixture.props.projectPane = "preview";
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(2);
+      expect(fixture.listeners.size).toBe(1);
+      expect(findNode(fixture.container, (node) => node.type === "output")).toBe(output);
+      await fixture.settleRead(1);
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+      expect(fixture.outputs.unmounted).not.toHaveBeenCalled();
+      await fixture.projectChanged();
+      expect(fixture.reads).toHaveLength(3);
+      await fixture.settleRead(2);
+    } finally {
+      fixture.close();
+    }
+    expect(fixture.listeners.size).toBe(0);
+    expect(fixture.outputs.unmounted).toHaveBeenCalledOnce();
+    await fixture.projectChanged();
+    expect(fixture.reads).toHaveLength(3);
+  });
+
+  it("lets an admitted inspection finish while hidden without starting another read", async () => {
+    const fixture = mountOnboarding();
+    try {
+      expect(fixture.reads).toHaveLength(1);
+      fixture.props.active = false;
+      await Vue.nextTick();
+      await fixture.settleRead(0);
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+      await fixture.projectChanged();
+      expect(fixture.reads).toHaveLength(1);
+      expect(fixture.listeners.size).toBe(0);
+      fixture.props.active = true;
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(2);
+      await fixture.settleRead(1);
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it.each(["Dashboard", "inactive host"])("defers a late starter acknowledgement's inspection while hidden by %s", async (hidden) => {
+    const fixture = mountOnboarding();
+    let applying = Promise.resolve();
+    try {
+      await fixture.settleRead(0, opening("new"));
+      applying = fixture.button("Public starter").props.onClick();
+      let settled = false;
+      void applying.then(() => { settled = true; }, () => { settled = true; });
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.writes[0].options.body).toEqual({ sessionId: "session-a", templateId: "official:jskit/public" });
+      if (hidden === "Dashboard") fixture.props.projectPane = "dashboard";
+      else fixture.props.active = false;
+      await Vue.nextTick();
+      fixture.writes[0].resolve({ ok: true });
+      // A regressed reload holds apply open; observe either outcome before asserting,
+      // so cleanup can release the extra HTTP request instead of hanging the test.
+      await vi.waitFor(() => expect(settled || fixture.reads.length > 1).toBe(true));
+      expect(fixture.reads).toHaveLength(1);
+      await applying;
+      await Vue.nextTick();
+      expect(nodeText(fixture.container)).not.toContain("Preparing your starter");
+      expect(fixture.button("Public starter").props.disabled).toBe(true);
+      await fixture.projectChanged();
+      expect(fixture.reads).toHaveLength(1);
+
+      fixture.props.active = true;
+      fixture.props.projectPane = "preview";
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(2);
+      await fixture.settleRead(1);
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+      expect(fixture.writes).toHaveLength(1);
+    } finally {
+      fixture.close();
+      await applying.catch(() => {});
+    }
+  });
+
+  it("does not reload a replacement session after the previous starter acknowledges", async () => {
+    const fixture = mountOnboarding();
+    let applying = Promise.resolve();
+    try {
+      await fixture.settleRead(0, opening("new"));
+      applying = fixture.button("Public starter").props.onClick();
+      void applying.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      fixture.props.sessionId = "session-b";
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(2);
+      expect(fixture.reads[1].options.query).toEqual({ sessionId: "session-b" });
+      fixture.writes[0].resolve({ ok: true });
+      await applying;
+      expect(fixture.reads).toHaveLength(2);
+      await fixture.settleRead(1, opening("adoption", "session-b"));
+      expect(nodeText(fixture.container)).toContain("Set up this existing project");
+      expect(nodeText(fixture.container)).not.toContain("Public starter");
+      expect(fixture.outputs.mounted).not.toHaveBeenCalled();
+    } finally {
+      fixture.close();
+      await applying.catch(() => {});
+    }
+  });
+
+  it("handles a real starter POST failure once and retains the choice for retry", async () => {
+    const fixture = mountOnboarding();
+    let applying = Promise.resolve();
+    try {
+      await fixture.settleRead(0, opening("new"));
+      applying = fixture.button("Public starter").props.onClick();
+      const outcome = applying.then(() => null, (error) => error);
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      expect(fixture.button("Public starter").props.disabled).toBe(true);
+      await fixture.button("Public starter").props.onClick();
+      expect(fixture.writes).toHaveLength(1);
+      const failure = new Error("The selected starter could not be downloaded.");
+      fixture.writes[0].reject(failure);
+      expect(await outcome).toBeNull();
+      await Vue.nextTick();
+      expect(fixture.feedback.report).toHaveBeenCalledOnce();
+      expect(fixture.feedback.report).toHaveBeenCalledWith(expect.objectContaining({
+        cause: failure, intent: "action-feedback", severity: "error"
+      }));
+      expect(fixture.button("Public starter").props.disabled).toBe(false);
+      expect(nodeText(fixture.container)).not.toContain("Preparing your starter");
+      expect(fixture.reads).toHaveLength(1);
+
+      applying = fixture.button("Public starter").props.onClick();
+      void applying.catch(() => {});
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(2));
+      expect(fixture.writes[1].options.body).toEqual(fixture.writes[0].options.body);
+      fixture.writes[1].resolve({ ok: true });
+      await vi.waitFor(() => expect(fixture.reads).toHaveLength(2));
+      expect(fixture.button("Public starter").props.disabled).toBe(true);
+      expect(nodeText(fixture.container)).toContain("Preparing your starter");
+      await fixture.settleRead(1);
+      await applying;
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+      expect(fixture.feedback.report).toHaveBeenCalledTimes(2);
+    } finally {
+      fixture.close();
+      await applying.catch(() => {});
+    }
+  });
+
+  it("propagates an unexpected starter reload failure and releases pending state", async () => {
+    mocks.resource.data.value = opening("new");
+    const failure = new Error("Unexpected onboarding refresh failure.");
+    mocks.resource.reload.mockRejectedValueOnce(failure);
+    const fixture = mountOnboarding({ live: false });
+    try {
+      await expect(fixture.button("Public starter").props.onClick()).rejects.toBe(failure);
+      await Vue.nextTick();
+      expect(fixture.button("Public starter").props.disabled).toBe(false);
+      expect(nodeText(fixture.container)).not.toContain("Preparing your starter");
+      await fixture.button("Public starter").props.onClick();
+      expect(mocks.resource.reload).toHaveBeenCalledTimes(2);
+    } finally {
+      fixture.close();
+    }
   });
 });

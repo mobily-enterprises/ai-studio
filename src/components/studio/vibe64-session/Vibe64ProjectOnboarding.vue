@@ -130,8 +130,13 @@ async function apply(template) {
   const sessionId = props.sessionId;
   applying.value = template.id;
   try {
-    await command.run({ sessionId, templateId: template.id });
-    if (props.sessionId !== sessionId) return;
+    try {
+      await command.run({ sessionId, templateId: template.id });
+    } catch {
+      // The command already reports this failure through shared action feedback.
+      return;
+    }
+    if (props.sessionId !== sessionId || !enabled.value) return;
     await resource.reload();
   } finally {
     applying.value = "";
