@@ -50,6 +50,9 @@ AI's declared response capacity rather than assuming every model can produce
 the same size answer.
 The chat's Codex models and thinking choices come from the connected Codex
 service, so newly available models appear without an editor update.
+Codex helper tasks accept the installed stable Codex version when it meets the
+minimum requirement, so upgrading Codex does not require an editor update merely
+to recognise a newer version. Helper isolation checks still apply.
 
 Renewing a session keeps its current AI by default, while letting the person
 choose any other connected assistant application, provider, model, and thinking

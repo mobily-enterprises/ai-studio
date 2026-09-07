@@ -1,0 +1,3 @@
+const MINIMUM_CODEX_VERSION = "0.151.0";
+
+export { MINIMUM_CODEX_VERSION };

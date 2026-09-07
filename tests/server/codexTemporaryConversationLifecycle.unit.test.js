@@ -30,6 +30,9 @@ import {
   stopCodexAppServerRuntime
 } from "../../packages/vibe64-runtime/src/server/codexAppServerProvider.js";
 import {
+  MINIMUM_CODEX_VERSION
+} from "../../packages/vibe64-runtime/src/server/minimumCodexVersion.js";
+import {
   VIBE64_AGENT_RUN_STATE,
   VIBE64_SESSION_STATUS,
   createVibe64SessionStore
@@ -1480,7 +1483,7 @@ async function withConversationController(operation, {
     projectEnvironmentWait: null,
     resumes: [],
     runtimeInfo: null,
-    serverUserAgent: "vibe64/0.153.4 (unit test)",
+    serverUserAgent: `vibe64/${MINIMUM_CODEX_VERSION} (unit test)`,
     threads: [],
     stopRuntimes: 0,
     stopRuntimeOptions: [],
@@ -4003,7 +4006,7 @@ test("temporary conversations receive task session context without turn enrichme
   }, { promptHints: false });
 });
 
-test("non-project ephemeral conversations disable Codex tools and network on an audited app-server", async () => {
+test("non-project ephemeral conversations disable Codex tools and network on a supported app-server", async () => {
   await withConversationController(async ({ captures, controller, temporaryRoot }) => {
     const workdir = path.join(temporaryRoot, "system-repair-workdir");
     const runtimeRoot = path.join(temporaryRoot, "system-repair-runtime");

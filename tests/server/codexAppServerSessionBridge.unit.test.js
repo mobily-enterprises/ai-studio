@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { MINIMUM_CODEX_VERSION } from "@local/vibe64-runtime/server/minimumCodexVersion";
 import {
+  assertCodexAppServerEconomyCompatibility,
   assertCodexAppServerEconomyOutputWithinLimit,
   codexAppServerEconomyThreadSettings,
   codexAppServerEconomyTurnSettings,
@@ -169,7 +171,7 @@ function economyInventoryProvider({
   hooks = [],
   mcpServers = {},
   records = null,
-  userAgent = "vibe64/0.153.4 (unit test)"
+  userAgent = `vibe64/${MINIMUM_CODEX_VERSION} (unit test)`
 } = {}) {
   const calls = [];
   return {
@@ -429,13 +431,56 @@ test("Codex economy settings are Luna-low, bounded, tool-free, and never fall ba
   ]]);
 });
 
-test("Codex economy retains compatibility with the previously audited managed version", async () => {
-  const prepared = await prepareCodexAppServerEconomyThreadStartSettings({
-    executionProfile: sourceExplanationEconomyProfile(),
-    provider: economyInventoryProvider({ userAgent: "vibe64/0.151.0 (unit test)" })
-  });
-  assert.equal(prepared.settings.sandbox, "read-only");
-  assert.deepEqual(prepared.settings.environments, []);
+test("Codex economy accepts the minimum and newer patch, minor and major versions with isolation", async () => {
+  const [major, minor, patch] = MINIMUM_CODEX_VERSION.split(".").map(Number);
+  for (const version of [
+    MINIMUM_CODEX_VERSION,
+    `${major}.${minor}.${patch + 1}`,
+    `${major}.${minor}.${patch + 10}`,
+    `${major}.${minor + 1}.0`,
+    `${major}.${minor + 10}.0`,
+    `${major + 1}.0.0`
+  ]) {
+    const provider = economyInventoryProvider({ userAgent: `vibe64/${version} (unit test)` });
+    assert.deepEqual(assertCodexAppServerEconomyCompatibility(provider), {
+      minimumVersion: MINIMUM_CODEX_VERSION,
+      version
+    });
+    const prepared = await prepareCodexAppServerEconomyThreadStartSettings({
+      executionProfile: sourceExplanationEconomyProfile(),
+      provider
+    });
+    assert.equal(prepared.settings.sandbox, "read-only", version);
+    assert.deepEqual(prepared.settings.environments, [], version);
+    assert.equal(prepared.settings.config.features.shell_tool, false, version);
+    assert.equal(prepared.settings.config.features.hooks, false, version);
+    assert.equal(provider.calls.length, 2, version);
+  }
+});
+
+test("Codex economy rejects versions below the minimum before inventory", async () => {
+  const minimumParts = MINIMUM_CODEX_VERSION.split(".").map(Number);
+  for (const [index, part] of minimumParts.entries()) {
+    if (part === 0) {
+      continue;
+    }
+    const olderParts = [...minimumParts];
+    olderParts[index] -= 1;
+    olderParts.fill(999, index + 1);
+    const version = olderParts.join(".");
+    const provider = economyInventoryProvider({ userAgent: `vibe64/${version} (unit test)` });
+    await assert.rejects(prepareCodexAppServerEconomyThreadStartSettings({
+      executionProfile: sourceExplanationEconomyProfile(),
+      provider
+    }), (error) => {
+      assert.equal(error.code, VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.POLICY_UNENFORCEABLE);
+      assert.equal(error.minimumVersion, MINIMUM_CODEX_VERSION);
+      assert.equal(error.actualVersion, version);
+      assert.equal(error.message, `Codex economy execution requires app-server ${MINIMUM_CODEX_VERSION} or newer; current version is ${version}. Update Codex and retry.`);
+      return true;
+    });
+    assert.deepEqual(provider.calls, [], version);
+  }
 });
 
 test("Codex economy fails closed before inventory when app-server cannot enforce the policy", async () => {
@@ -448,25 +493,22 @@ test("Codex economy fails closed before inventory when app-server cannot enforce
       userAgent: "vibe64/development"
     })],
     ["spoofed product", economyInventoryProvider({
-      userAgent: "attacker/999.0.0 vibe64/0.151.0"
+      userAgent: `attacker/999.0.0 vibe64/${MINIMUM_CODEX_VERSION}`
     })],
     ["leading zero", economyInventoryProvider({
-      userAgent: "vibe64/00.151.0"
+      userAgent: `vibe64/0${MINIMUM_CODEX_VERSION}`
     })],
     ["control character", economyInventoryProvider({
-      userAgent: "vibe64/0.151.0\nattacker/999.0.0"
+      userAgent: `vibe64/${MINIMUM_CODEX_VERSION}\nattacker/999.0.0`
     })],
     ["oversized user agent", economyInventoryProvider({
-      userAgent: `vibe64/0.151.0 ${"x".repeat(600)}`
+      userAgent: `vibe64/${MINIMUM_CODEX_VERSION} ${"x".repeat(600)}`
     })],
-    ["old version", economyInventoryProvider({
-      userAgent: "vibe64/0.147.0 (unit test)"
+    ["prerelease version", economyInventoryProvider({
+      userAgent: `vibe64/${MINIMUM_CODEX_VERSION}-beta.1 (unit test)`
     })],
-    ["unaudited patch version", economyInventoryProvider({
-      userAgent: "vibe64/0.151.1 (unit test)"
-    })],
-    ["unaudited future version", economyInventoryProvider({
-      userAgent: "vibe64/0.153.5 (unit test)"
+    ["unsafe version component", economyInventoryProvider({
+      userAgent: `vibe64/${Number.MAX_SAFE_INTEGER + 1}.0.0 (unit test)`
     })]
   ]) {
     await assert.rejects(prepareCodexAppServerEconomyThreadStartSettings({
@@ -478,7 +520,8 @@ test("Codex economy fails closed before inventory when app-server cannot enforce
         VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.POLICY_UNENFORCEABLE,
         label
       );
-      assert.match(error.message, /Update (?:managed Codex and retry|Vibe64 or use a supported managed Codex version)/u, label);
+      assert.equal(error.minimumVersion, MINIMUM_CODEX_VERSION, label);
+      assert.match(error.message, /Update Codex and retry/u, label);
       return true;
     });
     assert.deepEqual(provider.calls, [], label);
@@ -760,7 +803,7 @@ test("Codex economy deletes a new thread when execution surfaces change during s
       return 4;
     },
     currentServerInfo() {
-      return { userAgent: "vibe64/0.151.0 (unit test)" };
+      return { userAgent: `vibe64/${MINIMUM_CODEX_VERSION} (unit test)` };
     },
     async deleteThread(threadId) {
       calls.push(["deleteThread", threadId]);
@@ -927,7 +970,7 @@ test("Codex economy safely reapplies isolation when resuming a controller-owned 
       return 7;
     },
     currentServerInfo() {
-      return { userAgent: "vibe64/0.151.0 (unit test)" };
+      return { userAgent: `vibe64/${MINIMUM_CODEX_VERSION} (unit test)` };
     },
     async deleteThread(threadId) {
       calls.push(["deleteThread", threadId]);

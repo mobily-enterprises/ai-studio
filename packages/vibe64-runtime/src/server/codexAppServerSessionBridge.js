@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { MINIMUM_CODEX_VERSION } from "./minimumCodexVersion.js";
 import {
   CODEX_APP_SERVER_PROVIDER_ID,
   codexAppServerRequestIsInvalid,
@@ -53,8 +54,6 @@ const CODEX_SESSION_RENEWAL_THREAD_CLAIM_METADATA =
 const CODEX_SESSION_RENEWAL_THREAD_CLAIM_SCHEMA =
   "vibe64.codex-renewal-thread-claim.v1";
 const CODEX_APP_SERVER_ECONOMY_SANDBOX = "read-only";
-const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION = "0.153.4";
-const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSIONS = ["0.151.0", CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION];
 const CODEX_APP_SERVER_ECONOMY_USER_AGENT_MAX_LENGTH = 512;
 const CODEX_APP_SERVER_ECONOMY_MCP_SERVER_MAX_COUNT = 128;
 const CODEX_APP_SERVER_ECONOMY_MCP_SERVER_NAME_MAX_LENGTH = 256;
@@ -467,32 +466,34 @@ function codexAppServerUserAgentVersionParts(value = "") {
 function assertCodexAppServerEconomyCompatibility(provider) {
   if (typeof provider?.currentServerInfo !== "function") {
     throw codexAppServerEconomyPolicyError(
-      "Codex economy execution cannot verify the app-server version. Update managed Codex and retry.",
-      { auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION }
+      "Codex economy execution cannot verify the app-server version. Update Codex and retry.",
+      { minimumVersion: MINIMUM_CODEX_VERSION }
     );
   }
   const userAgent = normalizeAgentText(provider.currentServerInfo()?.userAgent);
   const actualParts = codexAppServerUserAgentVersionParts(userAgent);
   if (!actualParts) {
     throw codexAppServerEconomyPolicyError(
-      "Codex economy execution received an unrecognised app-server version. Update managed Codex and retry.",
+      "Codex economy execution received an unrecognised app-server version. Update Codex and retry.",
       {
-        auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION
+        minimumVersion: MINIMUM_CODEX_VERSION
       }
     );
   }
   const actualVersion = actualParts.join(".");
-  if (!CODEX_APP_SERVER_ECONOMY_AUDITED_VERSIONS.includes(actualVersion)) {
+  const minimumParts = codexAppServerSemanticVersionParts(MINIMUM_CODEX_VERSION);
+  const differingPart = actualParts.findIndex((part, index) => part !== minimumParts[index]);
+  if (differingPart !== -1 && actualParts[differingPart] < minimumParts[differingPart]) {
     throw codexAppServerEconomyPolicyError(
-      `Codex economy execution requires audited app-server ${CODEX_APP_SERVER_ECONOMY_AUDITED_VERSIONS.join(" or ")}; current version is ${actualVersion}. Update Vibe64 or use a supported managed Codex version.`,
+      `Codex economy execution requires app-server ${MINIMUM_CODEX_VERSION} or newer; current version is ${actualVersion}. Update Codex and retry.`,
       {
         actualVersion,
-        auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION
+        minimumVersion: MINIMUM_CODEX_VERSION
       }
     );
   }
   return Object.freeze({
-    auditedVersion: actualVersion,
+    minimumVersion: MINIMUM_CODEX_VERSION,
     version: actualVersion
   });
 }
@@ -2327,7 +2328,6 @@ async function sendCodexAppServerPromptForSession({
 }
 
 export {
-  CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION,
   CODEX_SESSION_AGENT_PROVIDER,
   CODEX_SESSION_APPROVAL_POLICY,
   CODEX_SESSION_MODEL,

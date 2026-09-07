@@ -17,6 +17,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-runtime/src/shared/promptHints.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
+- `packages/vibe64-runtime/src/server/minimumCodexVersion.js`
 - `packages/vibe64-genesis/src/server/index.js`
 - `packages/vibe64-genesis/src/server/promptContext.js`
 - `packages/vibe64-runtime/src/server/codexSessionCommandHook.js`
@@ -243,13 +244,16 @@ Tool-free economy turns run without the session source lock, while provider
 thread ownership and terminal admission still protect cleanup and renewal.
 Environment inspection retains the same provider identity as interactive chat
 without preparing the project again. Writable detached turns keep their source
-lock. The economy compatibility gate accepts audited Codex 0.151.0 and 0.153.4;
-unknown versions remain blocked. Its 0.153.4 audit uses the installed binary's
-generated protocol schema and isolated thread creation and deletion, with shell,
-hook, plugin, clock, sleep and context-budget features disabled. Model selection
-remains the provider-owned Luna-low profile. A turn sent to a local capture
-endpoint with the installed Luna catalog declared zero tools; no model inference
-was needed for that request-shape proof.
+lock. The economy compatibility gate accepts stable Codex versions at or above
+`MINIMUM_CODEX_VERSION`, defined once in
+`packages/vibe64-runtime/src/server/minimumCodexVersion.js`. Tests import
+that minimum and derive version boundaries from it. Versions compare numerically
+by major, minor and patch; newer releases need no allowlist update. Older or
+unrecognised versions fail before configuration and hook inventory. Accepted
+versions still pass the existing isolation checks, with shell, hook, plugin,
+clock, sleep and context-budget features disabled. Model selection remains the
+provider-owned Luna-low profile. Minimum-version acceptance does not prove that
+every future Codex release preserves the tool-free execution contract.
 
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
