@@ -268,6 +268,132 @@ test("@preview-lifecycle renders through the proxy and displays the target URL",
   ).toBeVisible();
 });
 
+test("@render-recovery keeps GitHub sessions and preview alive through navigation and resize", async ({ page }) => {
+  page.setDefaultTimeout(10_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (message.text().includes("JSKIT_ERROR_CAUSE")) {
+      errors.push(message.text());
+    }
+    if (message.type() === "warning" && message.text().includes("Teleport")) {
+      errors.push(message.text());
+    }
+  });
+  await mockLaunchTerminalSocket(page);
+  const sessions = ["Alpha", "Beta", "Gamma"].map((name, index) => {
+    const session = sessionPayload({ sessionId: index ? `session-${name}` : SESSION_ID, sessionName: name });
+    Object.assign(session.metadata, {
+      github_repository: "example/project",
+      session_git_command_actor_scope: "user",
+      session_git_command_actor_user_key: "test-user"
+    });
+    return session;
+  });
+  await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, session: sessions[0], sessionList: sessions });
+  await page.goto(`${BASE_URL}${DASHBOARD_PATH}/session`);
+  await expect(page.getByLabel("Message AI assistant")).toBeVisible();
+  for (let round = 0; round < 4; round += 1) {
+    await page.setViewportSize({ width: round % 2 ? 1100 : 1440, height: 900 });
+    await page.getByRole("tab", { name: "Preview", exact: true }).click();
+    await expect(page.locator(".vibe64-launch-controls__preview-frame:visible")).toBeVisible();
+    for (const session of sessions) {
+      await page.locator(`.studio-autopilot:visible [data-vibe64-session-id='${session.sessionId}']`).click();
+      await expect(page.locator(".studio-autopilot:visible").getByLabel("Message AI assistant")).toBeVisible();
+      await page.locator(".studio-autopilot:visible").getByRole("button", { name: "Reload chat", exact: true }).click();
+      expect(errors).toEqual([]);
+    }
+    await page.getByRole("tab", { name: "Dashboard", exact: true }).click();
+    await page.goBack();
+    await page.goForward();
+    expect(errors).toEqual([]);
+  }
+  await page.evaluate(async () => {
+    const root = document.querySelector("#app") as Element & { __vue_app__: { config: { globalProperties: { $router: { push: (path: string) => Promise<void> } } } } };
+    await root.__vue_app__.config.globalProperties.$router.push("/app");
+  });
+  await page.goBack();
+  await expect(page.locator(".studio-autopilot:visible").getByLabel("Message AI assistant")).toBeVisible();
+  await page.setViewportSize({ width: 1200, height: 900 });
+  expect(errors).toEqual([]);
+});
+
+test("@render-recovery creates three sessions while previews finish in the background", async ({ page }) => {
+  page.setDefaultTimeout(10_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (message.text().includes("JSKIT_ERROR_CAUSE")) {
+      errors.push(message.text());
+    }
+  });
+  await mockLaunchTerminalSocket(page);
+  await mockLaunchSession(page, {
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+    previewResponseDelayMs: 1000,
+    sessionList: []
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  for (let index = 1; index <= 3; index += 1) {
+    await page.locator("button.studio-ai-sessions__create-button:visible").click();
+    await submitAssistantSessionDialog(page);
+    await expect(page.locator(".studio-ai-sessions__tab:visible")).toHaveCount(index);
+  }
+  for (let round = 0; round < 3; round += 1) {
+    for (let index = 1; index <= 3; index += 1) {
+      await page.locator(`.studio-autopilot:visible [data-vibe64-session-id='session-created-${index}']`).click();
+      await page.setViewportSize({ width: index % 2 ? 1440 : 1100, height: 900 });
+      await page.locator(".studio-autopilot:visible").getByRole("button", { name: "Reload chat", exact: true }).click();
+      expect(errors).toEqual([]);
+    }
+  }
+  await expect(page.locator(".vibe64-launch-controls__preview-frame:visible")).toBeVisible();
+  await page.locator('.studio-home-shell-preview-toolbar-host button[title="Reload preview"]').click();
+  await expect(page.frameLocator(".vibe64-launch-controls__preview-frame:visible").getByText("Preview app")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("@render-recovery completes hidden preview loads across toolbar moves", async ({ page }) => {
+  page.setDefaultTimeout(10_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (message.text().includes("JSKIT_ERROR_CAUSE")) {
+      errors.push(message.text());
+    }
+  });
+  await mockLaunchTerminalSocket(page);
+  const sessions = ["Alpha", "Beta", "Gamma"].map((sessionName, index) => sessionPayload({
+    sessionId: index ? `session-${sessionName}` : SESSION_ID,
+    sessionName
+  }));
+  await mockLaunchSession(page, {
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+    previewResponseDelayMs: 2000,
+    previewIdentity: previewIdentityCapability(),
+    previewIdentityExchange: () => ({ ok: true, identity: { email: "admin@example.com" } }),
+    session: sessions[0], sessionList: sessions
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  for (const session of sessions) {
+    await page.locator(`.studio-autopilot:visible [data-vibe64-session-id='${session.sessionId}']`).click();
+    await expect(page.locator(`.studio-ai-session-runtime[data-vibe64-session-runtime-id='${session.sessionId}'] iframe`)).toBeAttached();
+  }
+  for (let round = 0; round < 3; round += 1) {
+    await page.getByRole("tab", { name: "Dashboard", exact: true }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Show project", exact: true }).click();
+    await page.getByRole("button", { name: "Go to preview", exact: true }).click();
+    if (round === 0) await page.getByRole("button", { name: "Show preview controls", exact: true }).click();
+    await page.locator('.studio-home-shell-preview-toolbar-host button[title="Reload preview"]').click();
+    await page.getByRole("button", { name: "Show chat", exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator(".studio-autopilot:visible").getByRole("button", { name: "Reload chat", exact: true }).click();
+    await expect(page.frameLocator(".vibe64-launch-controls__preview-frame:visible").getByText("Preview app")).toBeVisible();
+    expect(errors).toEqual([]);
+  }
+});
+
 for (const width of [1280, 390]) {
   test(`@preview-setup-warning keeps the app and browser usable through Genesis warnings at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
