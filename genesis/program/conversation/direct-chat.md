@@ -116,7 +116,7 @@ Vibe64 expands the session's opening project request with Genesis guidance once.
 Ordinary follow-ups and active-turn steering remain ordinary conversation
 instead of regenerating that complete prompt. An explicit Deslop request uses
 the same visible message-delivery path with a narrow task marker so Genesis can
-compose its committed-scope cleanup instructions for that turn.
+compose cleanup instructions for the selected task changes or explicit commits.
 
 If an inactive conversation still names a Codex thread that the provider
 reports as exactly missing, the next message enters the established thread
@@ -162,6 +162,10 @@ Unrelated messages do not acknowledge delivery. Codex records that authored
 message from its provider receipt before subsequent answer notifications;
 expanded Genesis instructions remain out of visible history. The normal HTTP
 completion shares the same write and cannot duplicate the user message.
+Codex finishes delivery and its admission bookkeeping from either the exact
+persisted receipt or the provider acknowledgement; it does not wait for both.
+Once the receipt confirms delivery, the message-delivery path does not repeat
+its bookkeeping or resend that message when a late acknowledgement fails.
 Stop settles when the matching turn becomes inactive or the interrupt request
 returns. Subsequent session reconciliation runs in the background. Recoverable
 Git checkpoints retain their lifecycle without holding the composer busy after

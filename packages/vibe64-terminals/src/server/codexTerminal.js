@@ -4982,6 +4982,9 @@ function createCodexTerminalController({
           owned: false
         }
       );
+      if (providerTurnId) {
+        pendingMessage?.receipt.resolve({ id: providerTurnId });
+      }
       return;
     }
     await markCodexAppServerProviderTurnActive(normalizedSessionId, {
@@ -8371,7 +8374,7 @@ function createCodexTerminalController({
         owned: true
       });
       try {
-        delivery = await sendCodexAppServerPromptForSession({
+        const response = sendCodexAppServerPromptForSession({
           agentSettings,
           clientUserMessageId,
           prompt: renderedPrompt,
@@ -8379,6 +8382,15 @@ function createCodexTerminalController({
           threadId: thread.threadId,
           workdir
         });
+        const receipt = codexAppServerPendingUserMessages.get(
+          `${promptDeliveryKey}\0${clientUserMessageId}`
+        )?.receipt;
+        // An exact, persisted user-message receipt confirms delivery too.
+        // Finish bookkeeping once; a late RPC reply must not hold admission
+        // or change a turn that has already continued or completed.
+        delivery = receipt
+          ? await Promise.race([response, receipt.promise.then((turn) => ({ turn }))])
+          : await response;
       } catch (error) {
         await writeCodexAppServerUserMessageOwnership(runtime.store, sessionId, clientUserMessageId, {
           eventKind: "codex-app-server-user-message-released",
@@ -12622,7 +12634,7 @@ function createCodexTerminalController({
     }
     let result;
     try {
-      result = await provider.steerTurn(
+      const response = provider.steerTurn(
         threadId,
         turnId,
         message,
@@ -12630,6 +12642,10 @@ function createCodexTerminalController({
           clientUserMessageId
         }
       );
+      const receipt = codexAppServerPendingUserMessages.get(
+        `${codexTerminalNamespace(sessionId)}\0${clientUserMessageId}`
+      )?.receipt;
+      result = receipt ? await Promise.race([response, receipt.promise]) : await response;
     } catch (error) {
       const recovered = await recoverAfterSteerFailure(error);
       if (recovered) {
@@ -13170,6 +13186,7 @@ function createCodexTerminalController({
       if (deliveryKey) {
         codexAppServerPendingUserMessages.set(deliveryKey, {
           attachments: input?.displayAttachments,
+          receipt: Promise.withResolvers(),
           text: codexAppServerMessageDisplayText(input, codexAppServerMessageText(input)),
           vibe64User: input?.vibe64User || null
         });

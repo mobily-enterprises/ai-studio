@@ -16,11 +16,13 @@ test.afterEach(async ({ page }, info) => {
   await info.attach("requests", { body: JSON.stringify({
     checks: server.state.checkCount, details: server.state.detailCount,
     checkTimes: server.state.checkTimes, requests: server.state.requests,
+    unexpectedRequests: server.state.unexpectedRequests,
     messages: server.state.messages, interrupts: server.state.interrupts,
     pageErrors
   }, null, 2), contentType: "application/json" });
   await server.close();
   expect(pageErrors).toEqual([]);
+  expect(server.state.unexpectedRequests).toEqual([]);
 });
 
 const warning = (page: Page) => page.getByText("Assistant status could not be verified.", { exact: true }).first();
@@ -36,6 +38,7 @@ async function openChat(page: Page) {
 test("healthy assistant can receive steering in the built client", async ({ page }) => {
   await page.goto(`${server.url}${DASHBOARD_PATH}/env`);
   await expect(page.getByLabel("Message AI assistant")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Starred files (0)", exact: true })).toHaveText("0");
   await page.getByLabel("Message AI assistant").fill("Preserve my work.");
   await expect(page.getByRole("button", { name: "Steer assistant" })).toBeEnabled();
   await page.getByRole("button", { name: "Steer assistant" }).click();
@@ -60,10 +63,11 @@ test("a hung initial session read recovers after its deadline", async ({ page })
 
 for (const viewport of viewports) {
   test(`busy status recovers with draft and layout intact at ${viewport.width}px`, async ({ page }, info) => {
+    const draft = "Do not lose this draft or send it automatically.";
     await page.setViewportSize(viewport);
     server.state.checks.push(busy, busy);
     await openChat(page);
-    await composer(page).fill("Do not lose this draft or send it automatically.");
+    await composer(page).fill(draft);
     await expect(warning(page)).toBeVisible();
     await page.screenshot({ path: info.outputPath("busy.png") });
     await expect(page.getByRole("button", { name: "Waiting for the assistant to accept guidance" })).toBeDisabled();
@@ -72,7 +76,7 @@ for (const viewport of viewports) {
     await expect(page.getByText("The assistant kept working during verification recovery.", { exact: true })).toBeVisible();
     await expect(steer(page)).toBeEnabled();
     await expect(warning(page)).toHaveCount(0);
-    await expect(composer(page)).toHaveValue("Do not lose this draft or send it automatically.");
+    await expect(composer(page)).toHaveValue(draft);
     expect(server.state.checkCount).toBe(3);
     expect(server.state.messages).toHaveLength(0);
     expect(server.state.interrupts).toBe(0);
@@ -81,6 +85,11 @@ for (const viewport of viewports) {
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath("recovered.png") });
+    await steer(page).click();
+    await expect.poll(() => server.state.messages.length).toBe(1);
+    expect(server.state.messages[0].message).toBe(draft);
+    await expect(composer(page)).toHaveValue("");
   });
 }
 

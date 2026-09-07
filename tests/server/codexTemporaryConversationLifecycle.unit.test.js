@@ -1645,7 +1645,7 @@ function createRestartedController({
   });
 }
 
-async function withAgentMessageController(operation) {
+async function withAgentMessageController(operation, { throughTerminalService = false } = {}) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-agent-message-"));
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
@@ -1679,6 +1679,7 @@ async function withAgentMessageController(operation) {
     stopRuntimes: 0,
     threadSnapshotTurns: null,
     threadStarts: [],
+    turnReplies: [],
     turns: [],
     subscribers: null
   };
@@ -1703,6 +1704,18 @@ async function withAgentMessageController(operation) {
     createSessionStore() {
       return store;
     },
+    async readCurrentProject() {
+      return { path: projectContextRoot, projectContextRoot, slug: "test-project" };
+    },
+    async readEnv() {
+      return { ok: true, records: [] };
+    },
+    async runInProjectContext(context, callback) {
+      return runWithProjectRequestContext(context, callback);
+    },
+    async saveEnvUserValues() {
+      return { ok: true };
+    },
     async projectInspectionEnvironment() {
       return {
         VIBE64_RUNTIME_NAMESPACE: "test",
@@ -1716,10 +1729,11 @@ async function withAgentMessageController(operation) {
       };
     }
   };
-  const controller = createCodexTerminalController({
+  const controllerOptions = {
     ...TEST_SESSION_CONTEXT_COMPOSITION,
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
+    codexToolHomeRequired: false,
     codexAppServerProviderFactory(providerOptions) {
       captures.providerOptions.push(providerOptions);
       const subscribers = new Set();
@@ -1826,6 +1840,7 @@ async function withAgentMessageController(operation) {
           if (captures.sendTurnWait) {
             await captures.sendTurnWait;
           }
+          captures.turnReplies.push(turnId);
           return {
             id: captures.omitSendTurnId ? "" : turnId,
             raw: {
@@ -1883,7 +1898,15 @@ async function withAgentMessageController(operation) {
       VIBE64_WORKSPACE: "test"
     },
     projectService
-  });
+  };
+  const terminalService = throughTerminalService
+    ? createTerminalService({
+        codexTerminalController: controllerOptions,
+        env: controllerOptions.env,
+        projectService
+      })
+    : null;
+  const controller = terminalService ? null : createCodexTerminalController(controllerOptions);
 
   try {
     await operation({
@@ -1892,10 +1915,15 @@ async function withAgentMessageController(operation) {
       projectService,
       runtime,
       sessionId: session.sessionId,
-      store
+      store,
+      terminalService
     });
   } finally {
-    await controller.closeAllForSession(session.sessionId);
+    if (terminalService) {
+      await terminalService.close();
+    } else {
+      await controller.closeAllForSession(session.sessionId);
+    }
     if (previousRuntimeNamespace === undefined) {
       delete process.env.VIBE64_RUNTIME_NAMESPACE;
     } else {
@@ -2515,7 +2543,7 @@ test("Codex leaves the first visible message raw after a delivered renewal hando
   });
 });
 
-test("provider receipt persists the authored message before its answer while Send is still pending", async () => {
+test("provider receipt persists the authored message before its answer while the acknowledgement is pending", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
     const accepted = Promise.withResolvers();
     captures.sendTurnWait = accepted.promise;
@@ -2534,20 +2562,19 @@ test("provider receipt persists the authored message before its answer while Sen
         } });
       }
     };
-    let requestFinished = false;
     const sending = controller.sendMessage(sessionId, {
       displayMessage: "Deslop saved commit 04f8283622d6.",
       genesisTask: "deslop",
       message: "Deslop commit 04f8283622d6.",
       messageId
-    }).then((result) => { requestFinished = true; return result; });
+    });
     try {
       const turns = await waitForSessionValue(
         () => store.readConversationLog(sessionId),
         (value) => value.some((turn) => turn.commentary?.some((item) => item.text === "I am reviewing the commit.")),
         "the early assistant commentary"
       );
-      assert.equal(requestFinished, false);
+      assert.deepEqual(captures.turnReplies, []);
       assert.equal(turns[0].user.text, "Deslop saved commit 04f8283622d6.");
       assert.equal(turns[0].user.messageId, messageId);
       assert.equal(JSON.stringify(turns).includes("Expanded private Genesis prompt"), false);
@@ -2557,7 +2584,7 @@ test("provider receipt persists the authored message before its answer while Sen
       });
       assert.equal(steered.ok, true, JSON.stringify(steered));
       assert.equal(captures.steers.length, 1);
-      assert.equal(requestFinished, false);
+      assert.deepEqual(captures.turnReplies, []);
     } finally {
       accepted.resolve();
     }
@@ -2567,6 +2594,250 @@ test("provider receipt persists the authored message before its answer while Sen
     assert.equal((await store.readConversationLog(sessionId)).filter((turn) => turn.user?.messageId === messageId).length, 1);
   });
 });
+
+test("terminal service accepts steering after a receipt while the first provider acknowledgement is pending", async () => {
+  await withAgentMessageController(async ({ captures, sessionId, store, terminalService }) => {
+    const accepted = Promise.withResolvers();
+    captures.sendTurnWait = accepted.promise;
+    const messageId = "service-pending-send";
+    captures.onSendTurn = ({ provider, turnId }) => {
+      for (const subscriber of captures.subscribers) {
+        subscriber({
+          method: "item/completed",
+          params: {
+            threadId: provider.threadId,
+            turnId,
+            item: {
+              type: "userMessage",
+              id: "service-user-receipt",
+              clientId: messageId,
+              content: [{ type: "text", text: "First project request." }]
+            }
+          }
+        });
+      }
+    };
+    const sending = terminalService.sendAgentMessage(sessionId, {
+      message: "First project request.",
+      messageId
+    });
+    let steering;
+    let timeout;
+    try {
+      await waitForSessionValue(
+        () => store.readConversationLog(sessionId),
+        (turns) => turns.some((turn) => turn.user?.messageId === messageId),
+        "the terminal service's durable provider receipt"
+      );
+      assert.deepEqual(captures.turnReplies, []);
+      steering = terminalService.sendAgentMessage(sessionId, {
+        message: "Keep the change focused.",
+        messageId: "service-steering-after-receipt"
+      });
+      const result = await Promise.race([
+        steering,
+        new Promise((resolve) => {
+          timeout = setTimeout(() => resolve(null), FIXTURE_WAIT_TIMEOUT_MS);
+        })
+      ]);
+      assert.notEqual(result, null, "Steering waited for the first accepted Send to release server admission.");
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(captures.steers.length, 1);
+      assert.deepEqual(captures.turnReplies, []);
+      const first = await sending;
+      assert.equal(first.ok, true, JSON.stringify(first));
+      assert.equal(
+        (await store.readConversationLog(sessionId)).filter((turn) => turn.user?.messageId === messageId).length,
+        1
+      );
+    } finally {
+      clearTimeout(timeout);
+      accepted.resolve();
+      await Promise.allSettled([sending, steering]);
+    }
+  }, { throughTerminalService: true });
+});
+
+test("terminal service holds admission until its exact receipt is persisted", async () => {
+  await withAgentMessageController(async ({ captures, sessionId, store, terminalService }) => {
+    const acknowledgement = Promise.withResolvers();
+    const persistReceipt = Promise.withResolvers();
+    const messageId = "receipt-must-be-durable";
+    const writeMessage = store.writeConversationUserMessage;
+    let receiptWriteEntered = false;
+    store.writeConversationUserMessage = async (id, input) => {
+      if (input.messageId === messageId) {
+        receiptWriteEntered = true;
+        await persistReceipt.promise;
+      }
+      return writeMessage(id, input);
+    };
+    captures.sendTurnWait = acknowledgement.promise;
+    captures.onSendTurn = ({ provider, turnId }) => {
+      for (const subscriber of captures.subscribers) {
+        subscriber({
+          method: "item/completed",
+          params: {
+            threadId: provider.threadId,
+            turnId,
+            item: {
+              type: "userMessage",
+              id: "other-receipt",
+              clientId: "another-message",
+              content: [{ type: "text", text: "An unrelated message." }]
+            }
+          }
+        });
+      }
+    };
+    const sending = terminalService.sendAgentMessage(sessionId, {
+      message: "Persist this before accepting the next message.",
+      messageId
+    });
+    let timeout;
+    try {
+      await waitForSessionValue(
+        () => store.readConversationLog(sessionId),
+        (turns) => turns.some((turn) => turn.user?.text === "An unrelated message."),
+        "the unrelated receipt to finish processing"
+      );
+      assert.equal((await store.runSessionExclusive(sessionId, "agent-write-mode", () => null)).acquired, false);
+      assert.equal(receiptWriteEntered, false);
+      for (const subscriber of captures.subscribers) {
+        subscriber({
+          method: "item/completed",
+          params: {
+            threadId: captures.provider.threadId,
+            turnId: captures.provider.turnId,
+            item: {
+              type: "userMessage",
+              id: "matching-receipt",
+              clientId: messageId,
+              content: [{ type: "text", text: "The expanded private opening prompt." }]
+            }
+          }
+        });
+      }
+      await waitForSessionValue(() => receiptWriteEntered, Boolean, "the paused authored-message write");
+      assert.equal((await store.runSessionExclusive(sessionId, "agent-write-mode", () => null)).acquired, false);
+      assert.equal(await store.conversationMessageIdExists(sessionId, messageId), false);
+      persistReceipt.resolve();
+      const result = await Promise.race([
+        sending,
+        new Promise((resolve) => {
+          timeout = setTimeout(() => resolve(null), FIXTURE_WAIT_TIMEOUT_MS);
+        })
+      ]);
+      assert.notEqual(result, null, "The persisted receipt did not finish delivery.");
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(await store.conversationMessageIdExists(sessionId, messageId), true);
+      assert.equal((await store.runSessionExclusive(sessionId, "agent-write-mode", () => null)).acquired, true);
+      assert.deepEqual(captures.turnReplies, []);
+    } finally {
+      clearTimeout(timeout);
+      persistReceipt.resolve();
+      acknowledgement.resolve();
+      await sending;
+      store.writeConversationUserMessage = writeMessage;
+    }
+  }, { throughTerminalService: true });
+});
+
+for (const deliveryMode of ["opening", "steering"]) {
+  for (const lateReply of ["success", "failure"]) {
+    test(`terminal service settles duplicate ${deliveryMode} messages from a receipt and ignores a late ${lateReply}`, async () => {
+      await withAgentMessageController(async ({ captures, sessionId, store, terminalService }) => {
+        if (deliveryMode === "steering") {
+          const opened = await terminalService.sendAgentMessage(sessionId, {
+            message: "Start the task.",
+            messageId: "receipt-test-opening"
+          });
+          assert.equal(opened.ok, true, JSON.stringify(opened));
+        }
+        const acknowledgement = Promise.withResolvers();
+        const messageId = `receipt-${deliveryMode}-${lateReply}`;
+        captures.onSendTurn = ({ provider, turnId }) => {
+          for (const subscriber of captures.subscribers) {
+            subscriber({
+              method: "item/completed",
+              params: {
+                threadId: provider.threadId,
+                turnId,
+                item: {
+                  type: "userMessage",
+                  id: `user-${messageId}`,
+                  clientId: messageId,
+                  content: [{ type: "text", text: "The accepted request." }]
+                }
+              }
+            });
+          }
+        };
+        if (deliveryMode === "opening") {
+          captures.sendTurnWait = acknowledgement.promise;
+        } else {
+          captures.onSteerTurn = async (context) => {
+            captures.onSendTurn(context);
+            await acknowledgement.promise;
+            return { id: context.turnId };
+          };
+        }
+        const input = { message: "The accepted request.", messageId };
+        const sending = terminalService.sendAgentMessage(sessionId, input);
+        const duplicate = terminalService.sendAgentMessage(sessionId, input);
+        let timeout;
+        try {
+          const results = await Promise.race([
+            Promise.all([sending, duplicate]),
+            new Promise((resolve) => {
+              timeout = setTimeout(() => resolve(null), FIXTURE_WAIT_TIMEOUT_MS);
+            })
+          ]);
+          assert.notEqual(results, null, "The exact receipt did not settle both requests.");
+          assert.equal(results.every((result) => result.ok), true, JSON.stringify(results));
+          assert.equal(captures.turns.length, 1);
+          assert.equal(captures.steers.length, deliveryMode === "steering" ? 1 : 0);
+          assert.equal(
+            (await store.readConversationLog(sessionId)).filter((turn) => turn.user?.messageId === messageId).length,
+            1
+          );
+
+          completeAgentMessageHarnessTurn(captures, captures.provider, "turn-1", "First task completed.");
+          await waitForSessionValue(
+            () => store.readAgentRun(sessionId, "codex_app_server"),
+            (run) => run?.active === false && run?.providerTurnId === "turn-1",
+            "the accepted turn to finish before its old acknowledgement"
+          );
+          captures.onSendTurn = null;
+          captures.onSteerTurn = null;
+          captures.sendTurnWait = null;
+          const next = await terminalService.sendAgentMessage(sessionId, {
+            message: "Start the next independent task.",
+            messageId: "receipt-test-next-turn"
+          });
+          assert.equal(next.ok, true, JSON.stringify(next));
+          const currentRun = await store.readAgentRun(sessionId, "codex_app_server");
+          assert.equal(currentRun.active, true);
+          assert.equal(currentRun.providerTurnId, "turn-2");
+
+          if (lateReply === "failure") {
+            acknowledgement.reject(new Error("The old provider acknowledgement was lost."));
+          } else {
+            acknowledgement.resolve();
+          }
+          await flushPromises();
+          assert.deepEqual(await store.readAgentRun(sessionId, "codex_app_server"), currentRun);
+          assert.equal(captures.turns.length, 2);
+          assert.equal(captures.renderPrompts.length, 1, "The accepted opening briefing was delivered again.");
+        } finally {
+          clearTimeout(timeout);
+          acknowledgement.resolve();
+          await Promise.allSettled([sending, duplicate]);
+        }
+      }, { throughTerminalService: true });
+    });
+  }
+}
 
 test("agent messages release an orphaned STARTING claim before starting the next turn", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {

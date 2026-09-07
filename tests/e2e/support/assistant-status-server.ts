@@ -35,6 +35,7 @@ export async function assistantStatusServer() {
     messages: [] as Record<string, unknown>[],
     interrupts: 0,
     requests: [] as string[],
+    unexpectedRequests: [] as string[],
     session
   };
   const http = createServer(async (request, response) => {
@@ -49,8 +50,10 @@ export async function assistantStatusServer() {
         response.end(file);
         return;
       }
-      state.requests.push(`${request.method} ${route}`);
-      if (route.endsWith("/agent-session")) {
+      const requestKey = `${request.method} ${route}`;
+      const sessionRoute = `/vibe64/sessions/${session.sessionId}`;
+      state.requests.push(requestKey);
+      if (requestKey === `POST ${sessionRoute}/agent-session`) {
         state.checkCount += 1;
         state.checkTimes.push(Date.now());
         const handler = state.checks.shift();
@@ -58,13 +61,13 @@ export async function assistantStatusServer() {
         else json(response, { ok: true, ...session.agentSession });
         return;
       }
-      if (route === `/vibe64/sessions/${session.sessionId}`) {
+      if (requestKey === `GET ${sessionRoute}`) {
         state.detailCount += 1;
         if (state.detailHandler) await state.detailHandler(response, request);
         else json(response, session);
         return;
       }
-      if (route.endsWith("/agent-message")) {
+      if (requestKey === `POST ${sessionRoute}/agent-message`) {
         const chunks = [];
         for await (const chunk of request) chunks.push(chunk);
         const body = JSON.parse(Buffer.concat(chunks).toString());
@@ -72,29 +75,59 @@ export async function assistantStatusServer() {
         json(response, { ok: true, delivered: true, messageId: body.messageId });
         return;
       }
-      if (route.endsWith("/agent-turn/interrupt")) {
+      if (requestKey === `POST ${sessionRoute}/agent-turn/interrupt`) {
         state.interrupts += 1;
         session.agentSession.turn.active = false;
         publishTurn();
         json(response, { ok: true, interrupted: true });
         return;
       }
-      let result: unknown = { ok: true };
+      if (requestKey === "POST /vibe64/project-runtime/open") {
+        json(response, { ok: true, runtime: { open: true, reason: "status-test" } });
+        return;
+      }
+      if (requestKey === `POST ${sessionRoute}/updates/check`) {
+        json(response, { ok: true, relationship: "current", ahead: 0, behind: 0, updateAvailable: false, incomingVersions: [] });
+        return;
+      }
+      if (requestKey === `POST ${sessionRoute}/presence`) {
+        json(response, { ok: true, status: "unavailable" });
+        return;
+      }
+      if (requestKey === "PUT /vibe64/sessions/current") {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        if (body.sessionId !== session.sessionId) {
+          state.unexpectedRequests.push(`${requestKey}: ${JSON.stringify(body)}`);
+          json(response, { ok: false, error: "Unknown status-test session." }, 404);
+        } else {
+          json(response, { ok: true, sessionId: session.sessionId });
+        }
+        return;
+      }
+      let result: unknown;
       if (route === "/auth/state") result = { ok: true, authenticated: true, setupRequired: false, user: { email: "owner@example.com", role: "owner" } };
       else if (route === "/session") result = { ok: true, csrfToken: "status-e2e", authenticated: true };
       else if (route === "/bootstrap") result = bootstrapPayload;
       else if (route === "/vibe64/projects") result = readyProjectSelectionPayload;
       else if (route === "/studio/current-app") result = currentAppPayload;
-      else if (route.startsWith("/vibe64/env")) result = { ok: true, env: { environment: "dev", records: [], unavailable: null } };
+      else if (route === "/vibe64/env") result = { ok: true, env: { environment: "dev", records: [], unavailable: null } };
       else if (route === "/vibe64/sessions") result = { ok: true, sessions: [session], limits: { openSessionCount: 1 }, creation: { canCreate: true, mode: "direct" } };
-      else if (route.endsWith("/current")) result = { ok: true, sessionId: session.sessionId };
-      else if (route.endsWith("/conversation-log")) result = { ok: true, sessionId: session.sessionId, conversationLog: [conversation], pagination: { count: 1, totalTurnCount: 1, hasMoreBefore: false, limit: 20 } };
-      else if (route.endsWith("/assistant-access")) result = { ok: true, available: true, canUse: true, ownerOnly: false };
-      else if (route.endsWith("/message-suggestions")) result = { ok: true, suggestions: [], canManage: true };
-      else if (route.endsWith("/work")) result = { ok: true, unsaved: false, operation: null, updateOperation: null };
-      else if (route.endsWith("/starred-files")) result = { ok: true, files: [] };
-      else if (route.endsWith("/settings")) result = { ok: true, promptHints: { enabled: false } };
+      else if (route === "/vibe64/sessions/current") result = { ok: true, sessionId: session.sessionId };
+      else if (route === `${sessionRoute}/conversation-log`) result = { ok: true, sessionId: session.sessionId, conversationLog: [conversation], pagination: { count: 1, totalTurnCount: 1, hasMoreBefore: false, limit: 20 } };
+      else if (route === `${sessionRoute}/assistant-access`) result = { ok: true, available: true, canUse: true, ownerOnly: false };
+      else if (route === `${sessionRoute}/message-suggestions`) result = { ok: true, suggestions: [], canManage: true };
+      else if (route === `${sessionRoute}/work`) result = { ok: true, unsaved: false, operation: null, updateOperation: null };
+      else if (route === `${sessionRoute}/renewal`) result = { ok: true, renewal: null, viewerScope: "status-test-owner" };
+      else if (route === `${sessionRoute}/source-editor/stars`) result = { ok: true, files: [] };
+      else if (route === "/vibe64/settings") result = { ok: true, promptHints: { enabled: false } };
       else if (route === "/vibe64/accounts") result = { ok: true, ready: true, accounts: [] };
+      if (request.method !== "GET" || result === undefined) {
+        state.unexpectedRequests.push(requestKey);
+        json(response, { ok: false, error: `Unexpected status fixture request: ${requestKey}` }, 404);
+        return;
+      }
       json(response, result);
     } catch (error) {
       if (!response.headersSent) json(response, { ok: false, error: String(error) }, 500);
