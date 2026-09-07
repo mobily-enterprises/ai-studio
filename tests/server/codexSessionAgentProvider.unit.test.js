@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  effectiveVibe64AgentExecutionSettings,
+  normalizeVibe64AgentSettings,
+  resolveVibe64AssistantSelection,
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_EXECUTION_WORKLOAD_IDS,
@@ -17,6 +20,49 @@ import {
   createCodexSessionAgentProvider,
   resolveCodexEconomyExecutionProfile
 } from "../../packages/vibe64-terminals/src/server/agent/providers/codexSessionAgentProvider.js";
+
+test("Codex picker discovers new models and thinking levels and preserves the validated selection for execution", async () => {
+  let model = "gpt-6-astra";
+  let reads = 0;
+  const provider = createCodexSessionAgentProvider({
+    controller: {
+      async modelCatalog() {
+        reads += 1;
+        return { data: [{
+          model,
+          displayName: "Current provider model",
+          isDefault: true,
+          defaultReasoningEffort: "ultra",
+          supportedReasoningEfforts: [{ reasoningEffort: "ultra" }]
+        }, { model: "hidden-model", hidden: true }] };
+      }
+    }
+  });
+  const configured = await provider.capabilities({}, { configuredOnly: "true" });
+  assert.equal(resolveVibe64AssistantSelection(configured, { engineId: "codex" }).modelId, "gpt-5.6-sol");
+  assert.equal(reads, 0);
+  const catalog = await provider.capabilities({});
+  assert.deepEqual(catalog.modelProviders[0].models.map((row) => row.id), [model]);
+  const selected = resolveVibe64AssistantSelection(catalog, {
+    engineId: "codex", modelProviderId: "openai", modelId: model, agentId: "codex", variantId: "ultra"
+  });
+  const settings = normalizeVibe64AgentSettings({ providerId: "codex", model: selected.modelId, thinking: selected.variantId });
+  assert.equal(effectiveVibe64AgentExecutionSettings(settings).model, model);
+  assert.equal(effectiveVibe64AgentExecutionSettings(settings).thinking, "ultra");
+  model = "future-provider-model";
+  const refreshed = await provider.capabilities({});
+  assert.deepEqual(refreshed.modelProviders[0].models.map((row) => row.id), [model]);
+  assert.notEqual(refreshed.revision, catalog.revision);
+  assert.throws(() => resolveVibe64AssistantSelection(refreshed, selected));
+});
+
+test("Codex discovery failures stay visible and disconnected accounts do not discover models", async () => {
+  const controller = { async modelCatalog() { throw new Error("Provider unavailable"); } };
+  await assert.rejects(createCodexSessionAgentProvider({ controller }).capabilities({}), /Provider unavailable/u);
+  const disconnected = await createCodexSessionAgentProvider({ controller, connectionStatus: async () => false }).capabilities({});
+  assert.deepEqual(disconnected.modelProviders[0].models, []);
+  assert.equal(disconnected.modelProviders[0].connected, false);
+});
 
 test("Codex adapter forwards trusted renewal operations without selecting an economy profile", async () => {
   const calls = [];

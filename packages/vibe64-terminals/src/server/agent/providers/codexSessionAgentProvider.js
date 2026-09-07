@@ -12,8 +12,6 @@ import {
   VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES,
   VIBE64_AGENT_EXECUTION_PROFILE_IDS,
   VIBE64_AGENT_EXECUTION_TOOL_POLICIES,
-  VIBE64_AGENT_PARAMETER_IDS,
-  VIBE64_AGENT_PROVIDERS,
   VIBE64_CODEX_DEFAULT_MODEL,
   VIBE64_CODEX_DEFAULT_THINKING,
   Vibe64AgentExecutionProfileError,
@@ -53,25 +51,23 @@ function codexAssistantSettings(context = {}, input = {}) {
     : requested;
 }
 
-function codexAssistantCapabilities(connected = true) {
-  const definition = VIBE64_AGENT_PROVIDERS.find((provider) => (
-    provider.id === CODEX_PRODUCT_PROVIDER_ID
-  ));
-  const modelParameter = definition?.parameters?.find((parameter) => (
-    parameter.id === VIBE64_AGENT_PARAMETER_IDS.MODEL
-  ));
-  const models = (Array.isArray(modelParameter?.options) ? modelParameter.options : [])
-    .filter((option) => normalizeText(option.value))
-    .map((option) => ({
-      id: normalizeText(option.value),
-      label: normalizeText(option.label) || normalizeText(option.value),
-      status: "available",
-      variants: (Array.isArray(option.supportedThinking) ? option.supportedThinking : [])
-        .map((variantId) => ({
-          id: normalizeText(variantId),
-          label: normalizeText(variantId).replace(/^./u, (value) => value.toUpperCase())
-        }))
-    }));
+function codexAssistantCapabilities(connected = true, catalog = { data: [] }) {
+  const rows = codexCatalogRows(catalog).filter((model) => model.hidden !== true);
+  const models = rows.map((model) => ({
+    id: normalizeText(model.model),
+    label: normalizeText(model.displayName) || normalizeText(model.model),
+    status: "available",
+    variants: [...codexCatalogReasoningEfforts(model)]
+      .map((variantId) => ({
+        id: normalizeText(variantId),
+        label: normalizeText(variantId).replace(/^./u, (value) => value.toUpperCase())
+      }))
+  }));
+  const defaultModel = rows.find((model) => model.model === VIBE64_CODEX_DEFAULT_MODEL) ||
+    rows.find((model) => model.isDefault === true) || rows[0];
+  const defaultThinking = codexCatalogReasoningEfforts(defaultModel).has(VIBE64_CODEX_DEFAULT_THINKING)
+    ? VIBE64_CODEX_DEFAULT_THINKING
+    : normalizeText(defaultModel?.defaultReasoningEffort);
   const revision = `sha256:${createHash("sha256").update(JSON.stringify({
     connected,
     models
@@ -89,9 +85,9 @@ function codexAssistantCapabilities(connected = true) {
     },
     defaults: {
       agentId: "codex",
-      modelId: VIBE64_CODEX_DEFAULT_MODEL,
+      modelId: normalizeText(defaultModel?.model),
       modelProviderId: "openai",
-      variantId: VIBE64_CODEX_DEFAULT_THINKING
+      variantId: defaultThinking
     },
     engineId: CODEX_PRODUCT_PROVIDER_ID,
     health: {
@@ -507,8 +503,17 @@ function createCodexSessionAgentProvider({
     ]),
     id: CODEX_PRODUCT_PROVIDER_ID,
     transportId: CODEX_APP_SERVER_TRANSPORT_ID,
-    async capabilities(context) {
-      return codexAssistantCapabilities((await connectionStatus(context)) !== false);
+    async capabilities(context = {}, input = {}) {
+      const connected = (await connectionStatus(context)) !== false;
+      const configuredOnly = normalizeText(input.configuredOnly).toLowerCase() === "true";
+      const catalog = connected && !configuredOnly
+        ? await controller.modelCatalog({ signal: context.signal })
+        : { data: connected ? [{
+            model: VIBE64_CODEX_DEFAULT_MODEL,
+            defaultReasoningEffort: VIBE64_CODEX_DEFAULT_THINKING,
+            supportedReasoningEfforts: [{ reasoningEffort: VIBE64_CODEX_DEFAULT_THINKING }]
+          }] : [] };
+      return codexAssistantCapabilities(connected, catalog);
     },
     async closeProject(_context, input = {}) {
       return controller.closeAllForProject(input);

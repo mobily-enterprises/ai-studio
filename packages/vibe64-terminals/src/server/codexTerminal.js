@@ -12919,6 +12919,45 @@ function createCodexTerminalController({
       return readCodexAppServerConversation(sessionId, input, options);
     },
 
+    modelCatalog(options = {}) {
+      return withCodexAppServerModelCatalogDeadline((signal) => (
+        withCodexAppServerProviderLifecycle(async () => {
+          assertCodexAppServerControllerOpen();
+          const toolHome = await codexToolHomeResult();
+          if (toolHome.ok === false) throw new Error(toolHome.error);
+          const providerOptions = codexAppServerRuntimeOptions({
+            toolHomeSource: toolHome.toolHomeSource
+          });
+          const existing = codexAppServerOwnedRuntimes.get(
+            codexAppServerOwnedRuntimeKey("", providerOptions)
+          );
+          if (existing?.provider) {
+            return existing.provider.listModels({ includeHidden: false, limit: 100 }, { signal });
+          }
+          const provider = codexAppServerProviderFactory(providerOptions);
+          let runtime = null;
+          try {
+            runtime = await acquireCodexAppServerRuntime({
+              operation: () => provider.ensureRuntime(),
+              provider,
+              providerOptions
+            });
+            return await provider.listModels({ includeHidden: false, limit: 100 }, { signal });
+          } finally {
+            try {
+              if ((runtime || provider.runtime)?.reused === false) {
+                await stopOwnedCodexAppServerRuntime({ provider });
+              } else {
+                forgetCodexAppServerOwnedRuntime(provider);
+              }
+            } finally {
+              provider.close();
+            }
+          }
+        })
+      ), options);
+    },
+
     executionProfileModelCatalog(sessionId, options = {}) {
       return withCodexAppServerModelCatalogDeadline(
         (signal) => codexAppServerExecutionProfileModelCatalog(sessionId, {

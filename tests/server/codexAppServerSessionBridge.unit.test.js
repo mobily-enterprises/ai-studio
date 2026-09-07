@@ -298,6 +298,14 @@ test("codex app-server bridge uses the current Vibe64 Codex execution settings",
   });
 });
 
+test("Codex thread and turn requests preserve Astra and its advertised ultra effort", () => {
+  const agentSettings = { model: "gpt-6-astra", thinking: "ultra", providerId: "codex" };
+  assert.equal(codexAppServerThreadSettings({ agentSettings, cwd: "/workspace" }).model, "gpt-6-astra");
+  const turn = codexAppServerTurnSettings({ agentSettings, cwd: "/workspace" });
+  assert.equal(turn.model, "gpt-6-astra");
+  assert.equal(turn.effort, "ultra");
+});
+
 test("Codex economy settings are Luna-low, bounded, tool-free, and never fall back", async () => {
   const provider = economyInventoryProvider({
     hooks: [{

@@ -13,6 +13,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-runtime/src/server/sessionStore.js`
 - `packages/vibe64-runtime/src/shared/conversationAttachments.js`
 - `packages/vibe64-runtime/src/shared/assistantSelection.js`
+- `packages/vibe64-runtime/src/shared/agentSettings.js`
 - `packages/vibe64-runtime/src/shared/promptHints.js`
 - `packages/vibe64-runtime/src/server/codexAppServerProvider.js`
 - `packages/vibe64-runtime/src/server/codexAppServerSessionBridge.js`
@@ -25,6 +26,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-terminals/src/server/agentSessionCommand.js`
 - `packages/vibe64-terminals/src/server/conversationActor.js`
 - `packages/vibe64-terminals/src/server/agent/providers/opencodeSessionAgentProvider.js`
+- `packages/vibe64-terminals/src/server/agent/providers/codexSessionAgentProvider.js`
 - `packages/vibe64-terminals/src/server/codexAppServerEvents.js`
 - `packages/vibe64-terminals/src/server/codexTerminal.js`
 - `packages/vibe64-terminals/src/server/codexTurnOutcomeNotice.js`
@@ -191,6 +193,13 @@ already connected AIs even when they cannot manage account connections; only
 people who can manage connections see the shortcut to configure more. Loading,
 retryable failures, and the absence of a connected AI remain visible in the
 relevant selector.
+
+Codex model choices use the running provider's paginated `model/list` catalogue,
+including its display names and supported reasoning efforts. If no Codex service
+is running, discovery starts one temporarily and verifies its shutdown before
+returning. Configured-only new-session choices retain the configured default
+without model discovery. Selected model and reasoning ids survive persistence
+and turn mapping unchanged; selection validation uses the live catalogue.
 
 Managed OpenCode requests allow up to 128K output tokens only when the selected
 model advertises that capacity. A smaller advertised output limit remains

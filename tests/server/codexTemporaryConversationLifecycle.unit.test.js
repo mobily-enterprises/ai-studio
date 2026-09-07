@@ -147,6 +147,7 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
       calls.push(["ensureRuntime"]);
       return {
         endpoint: captures.runtimeInfo.endpoint,
+        reused: captures.runtimeReused === true,
         runtimeDir: captures.runtimeInfo.runtimeDir,
         transport: captures.runtimeInfo.transport
       };
@@ -314,6 +315,40 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
     }
   };
 }
+
+test("chat model discovery reuses a resident provider without closing it", async () => {
+  await withConversationController(async ({ captures, controller }) => {
+    await controller.executionProfileModelCatalog("session-1");
+    const providerCount = captures.providerOptions.length;
+    const catalog = await controller.modelCatalog();
+    assert.equal(catalog.data[0].model, "gpt-5.6-luna");
+    assert.equal(captures.providerOptions.length, providerCount);
+    assert.equal(captures.stopRuntimes, 0);
+    assert.equal(captures.closes, 0);
+  });
+});
+
+test("chat model discovery stops its temporary service on success and failure", async () => {
+  await withConversationController(async ({ captures, controller }) => {
+    assert.equal((await controller.modelCatalog()).data[0].model, "gpt-5.6-luna");
+    assert.equal(captures.stopRuntimes, 1);
+    captures.failModelLists = 1;
+    await assert.rejects(controller.modelCatalog(), /model catalog temporarily unavailable/u);
+    assert.equal(captures.stopRuntimes, 2);
+    captures.stopRuntimeResult = { stopped: false };
+    await assert.rejects(controller.modelCatalog(), /process exit could not be verified/u);
+    captures.stopRuntimeResult = { stopped: true };
+  });
+});
+
+test("chat model discovery leaves an already running shared process alive", async () => {
+  await withConversationController(async ({ captures, controller }) => {
+    captures.runtimeReused = true;
+    await controller.modelCatalog();
+    assert.equal(captures.stopRuntimes, 0);
+    assert.equal(captures.closes, 1);
+  });
+});
 
 test("economy model discovery uses one live provider catalog per connection generation", async () => {
   await withConversationController(async ({ calls, controller }) => {

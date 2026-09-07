@@ -48,6 +48,8 @@ thinking choice at its provider default leaves that choice to the provider
 instead of silently selecting another listed option. Vibe64 also respects each
 AI's declared response capacity rather than assuming every model can produce
 the same size answer.
+The chat's Codex models and thinking choices come from the connected Codex
+service, so newly available models appear without an editor update.
 
 Renewing a session keeps its current AI by default, while letting the person
 choose any other connected assistant application, provider, model, and thinking

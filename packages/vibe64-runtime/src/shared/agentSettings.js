@@ -148,6 +148,11 @@ function normalizedParameterValue(provider = {}, parameterId = "", value = "") {
     return "";
   }
   const requested = normalizeAgentSettingText(value);
+  // Availability is validated against the provider's live assistant catalogue.
+  // Persistence and turn mapping must preserve newly advertised model/effort ids.
+  if (provider.id === VIBE64_AGENT_PROVIDER_IDS.CODEX) {
+    return requested;
+  }
   const options = Array.isArray(parameter.options) ? parameter.options : [];
   const supported = options.some((option) => (
     normalizeAgentSettingText(option.value) === requested
@@ -201,6 +206,7 @@ function supportedAgentThinkingValues(provider = {}, model = "") {
 
 function normalizedAgentThinkingValue(provider = {}, model = "", value = "") {
   const normalized = normalizedParameterValue(provider, VIBE64_AGENT_PARAMETER_IDS.THINKING, value);
+  if (provider.id === VIBE64_AGENT_PROVIDER_IDS.CODEX) return normalized;
   const supported = supportedAgentThinkingValues(provider, model);
   if (!supported || !normalized || supported.has(normalized)) {
     return normalized;
