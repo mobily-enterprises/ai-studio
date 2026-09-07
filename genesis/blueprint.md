@@ -137,11 +137,11 @@ the strict mechanical contracts for workspace setup, launch, preview identity,
 and application deployment, then executes them under its host policy without
 inventing commands from a framework or project shape.
 
-Deslop is a deliberate cleanup of committed work, not an automatic extra agent
-turn. After Save, Vibe64 may offer Deslop for the exact commit it just
+Deslop is a deliberate cleanup that preserves behavior, not an automatic extra
+agent turn. After Save, Vibe64 may offer Deslop for the exact commit it just
 published. Accepting uses the ordinary visible project conversation; declining
-has no lasting effect. People can also request Deslop directly for a commit or
-recent commits outside Vibe64.
+has no lasting effect. People can also request Deslop for the agent's changes
+to the current task, including unsaved work, or explicitly select commits.
 
 People can choose how cautiously the AI engineers a project. The choice follows
 the project's source, always keeps ordinary work simple and targeted, and makes
