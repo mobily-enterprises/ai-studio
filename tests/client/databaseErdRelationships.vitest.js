@@ -163,6 +163,14 @@ describe("Database ERD exploration", () => {
     expect(placed[0].position).toEqual({ x: 0, y: 0 });
     expect(placed[1].position.y).toBeGreaterThan(nodes[0].dimensions.height);
   });
+  it("restores overlapping saved positions exactly and only places new tables around them", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 0, ["parent_id"]), tableNode("new", 0, ["id"])];
+    const saved = [{ table: "parent", x: 50, y: 60 }, { table: "child", x: 70, y: 80 }];
+    const placed = placeErdNodes(nodes, nodes.map((node) => ({ id: node.id, x: 0, y: 0 })), saved);
+    expect(placed[0].position).toEqual({ x: 50, y: 60 });
+    expect(placed[1].position).toEqual({ x: 70, y: 80 });
+    expect(placed[2].position.y).toBeGreaterThan(80 + nodes[1].dimensions.height);
+  });
   it("finds stable relationship neighbourhoods, with explicit groups taking precedence", () => {
     const ids = ["a", "b", "c", "d", "e", "f", "isolated"];
     const nodes = ids.map((id) => ({ id, data: { table: { name: id } } }));

@@ -17,6 +17,8 @@ requiring every table and field to be read at once.
 - `packages/vibe64-database-tools/src/client/workers/erdLayout.js`
 - `packages/vibe64-database-tools/src/client/workers/erdLayout.worker.js`
 - `packages/vibe64-database-tools/src/server/sessionState.js`
+- `packages/vibe64-database-tools/src/server/service.js`
+- `packages/vibe64-database-tools/src/server/events.js`
 
 ## Public contract
 
@@ -28,9 +30,12 @@ When a command finishes after the workspace is hidden, its follow-up state
 reload also defers to normal activation. The command keeps its result without
 creating an unavailable-resource error behind the hidden pane.
 
-Given the selected session's schema snapshot and the current user's saved
+Given the selected session's schema snapshot and its shared saved
 diagram, the ERD starts in Keys only mode unless another mode was saved. All
-columns, per-table expansion, and collapse change visible detail. Search finds
+columns, per-table expansion, and collapse change visible detail without moving
+any table or changing the camera. Extra fields may overlap neighbouring cards;
+they never trigger automatic arrangement, even for very large tables. Fit and
+Reset positions remain explicit controls. Search finds
 tables or columns, reveals the matching field, and centres its table. Selecting
 a table highlights its immediate relationships and linked fields; Focus hides
 everything except that table and its immediate neighbours. Open data retains
@@ -64,10 +69,19 @@ loading a saved view; it does not undo saving or deleting named views.
 
 Up to 20 named views store positions, pins, groups, focus, column display, and
 viewport. Saving an existing name replaces that view with a visible notice.
-Views and current layout are persisted in user-specific session artifacts, not
-in database tables or a shared schema snapshot. Reload restores saved zoom and
-positions. Layout writes are serialized, and responses from older saves or a
-previous session cannot replace the latest visible state. Fullscreen keeps
+Views and the current layout belong to the session, not an individual user.
+Positions, pins, groups, focus and display choices are saved in one shared
+session artifact, separate from database tables and the schema snapshot. A
+successful save publishes a project/session-scoped refresh hint. Other active
+viewers reload protected state and apply the layout without saving it back;
+hidden workspaces catch up on activation. A remote move leaves the viewer's
+current camera and selection alone. Reload restores the shared saved zoom and
+exact positions, even if cards overlap; automatic placement only moves new
+tables unless Reset positions was requested. Writes are serialized and assigned
+increasing revisions; older refreshes cannot replace newer acknowledged layouts. When no shared layout
+exists, the first opened existing user diagram is adopted into the shared
+artifact; old artifacts remain recoverable but cannot override it afterwards.
+SQL history and snippets remain user-specific. Fullscreen keeps
 controls, menus, and dialogs inside the fullscreen element.
 
 ## Implementation map
@@ -78,4 +92,4 @@ ELK fixed-port routes as well as node coordinates. `erdRelationships.js` assigns
 per-column handles and accepts clear worker routes; `erdRouting.js` repairs
 cross-group and moved routes using obstacle-aware orthogonal routing with
 lane-sharing penalties. `sessionState.js` normalizes bounded layout/view data
-and stores it through the existing actor/session artifact boundary.
+and stores the shared diagram through the existing session artifact boundary.

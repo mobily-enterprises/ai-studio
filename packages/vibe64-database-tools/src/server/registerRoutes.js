@@ -108,7 +108,7 @@ function registerRoutes(http, {
 
   route("PUT", "/layout", {
     bodyLimit: 512 * 1024,
-    summary: "Persist this user's selected-session ERD positions."
+    summary: "Persist the shared selected-session ERD layout and notify its viewers."
   }, (request) => databaseTools.saveLayout(withUser(request, routes.requestBody(request))));
 
   route("PUT", "/snippets", {

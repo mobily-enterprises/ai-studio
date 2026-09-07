@@ -551,6 +551,7 @@
 <script setup>
 import {
   computed,
+  onBeforeUnmount,
   reactive,
   ref,
   watch
@@ -625,6 +626,7 @@ const props = defineProps({
 
 const database = useVibe64DatabaseTools({
   active: computed(() => props.active),
+  projectSlug: computed(() => props.projectSlug),
   sessionId: computed(() => props.sessionId)
 });
 const {
@@ -656,6 +658,8 @@ const {
 const activeView = ref("data");
 const copilotOpen = ref(false);
 const erdLayout = ref({ nodes: [] });
+const diagramSavesPending = ref(0);
+let disposed = false;
 const navigatorTab = ref("tables");
 const tableSearch = ref("");
 const selectedTableName = ref("");
@@ -799,6 +803,17 @@ watch([state, () => props.active], ([next, active]) => {
 watch(() => props.sessionId, () => {
   if (hydratedSessionId.value !== props.sessionId) hydratedSessionId.value = "";
 }, { immediate: true });
+
+watch([() => state.value?.layout, () => props.active, diagramSavesPending], ([layout, active, pending]) => {
+  if (active && !pending && layout && layout.revision > (erdLayout.value.revision || 0)) {
+    erdLayout.value = layout;
+  }
+}, { immediate: true });
+
+onBeforeUnmount(() => {
+  disposed = true;
+  clearTimeout(lookupTimer);
+});
 
 watch([cellDialog, lookupSearch], ([open]) => {
   clearTimeout(lookupTimer);
@@ -1134,12 +1149,23 @@ function saveDiagramLayout(layout) {
   const revision = ++diagramSaveRevision;
   const previousLayout = erdLayout.value;
   const pending = JSON.parse(JSON.stringify(layout));
+  pending.revision = previousLayout.revision || 0;
+  diagramSavesPending.value += 1;
   erdLayout.value = pending;
   diagramSaveQueue = diagramSaveQueue.catch(() => null).then(async () => {
-    if (props.sessionId !== sessionId) return;
-    const result = await saveLayout(pending);
-    if (props.sessionId === sessionId && revision === diagramSaveRevision) {
-      erdLayout.value = result?.layout || previousLayout;
+    try {
+      if (disposed || props.sessionId !== sessionId) return;
+      const result = await saveLayout(pending);
+      if (!disposed && props.sessionId === sessionId && revision === diagramSaveRevision) {
+        erdLayout.value = result?.layout || previousLayout;
+      }
+    } catch {
+      // The command owns failure feedback; restore the last acknowledged layout.
+      if (!disposed && props.sessionId === sessionId && revision === diagramSaveRevision) {
+        erdLayout.value = previousLayout;
+      }
+    } finally {
+      diagramSavesPending.value -= 1;
     }
   });
   return diagramSaveQueue;

@@ -6,6 +6,7 @@ import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibil
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import { usePaths } from "@jskit-ai/shell-web/client/navigation/usePaths";
+import { VIBE64_DATABASE_LAYOUT_CHANGED_EVENT } from "../../shared/events.js";
 
 const DATABASE_API_SUFFIX = "/vibe64/database";
 const DATABASE_SURFACE = "app";
@@ -20,10 +21,12 @@ function databaseSessionPath(apiPath = "", sessionId = "", suffix = "") {
 
 function useVibe64DatabaseTools({
   active = true,
+  projectSlug = "",
   sessionId = ""
 } = {}) {
   const paths = usePaths();
   const normalizedSessionId = computed(() => String(unref(sessionId) || "").trim());
+  const normalizedProjectSlug = computed(() => String(unref(projectSlug) || "").trim());
   const enabled = computed(() => Boolean(unref(active) && normalizedSessionId.value));
   const apiPath = computed(() => paths.api(DATABASE_API_SUFFIX, {
     surface: DATABASE_SURFACE
@@ -34,7 +37,13 @@ function useVibe64DatabaseTools({
     enabled,
     fallbackLoadError: "The session database workspace could not be loaded.",
     path: computed(() => enabled.value ? sessionPath.value : ""),
-    queryKey: computed(() => ["vibe64", "database", normalizedSessionId.value, "state"]),
+    queryKey: computed(() => ["vibe64", "database", normalizedProjectSlug.value, normalizedSessionId.value, "state"]),
+    realtime: {
+      event: VIBE64_DATABASE_LAYOUT_CHANGED_EVENT,
+      matches: ({ payload = {} } = {}) => (
+        payload.projectSlug === normalizedProjectSlug.value && payload.sessionId === normalizedSessionId.value
+      )
+    },
     requestRecoveryLabel: "Session database"
   });
 

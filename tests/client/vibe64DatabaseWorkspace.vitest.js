@@ -82,7 +82,7 @@ async function flushWorkspace(runQuery) {
   await Vue.nextTick();
 }
 
-function mountDatabaseWorkspace({ active = true, initialState = null } = {}) {
+function mountDatabaseWorkspace({ active = true, initialState = null, saveLayout = vi.fn() } = {}) {
   const props = Vue.reactive({ active, sessionId: "database-session" });
   const state = Vue.ref(initialState);
   const runQuery = vi.fn(async () => ({
@@ -90,7 +90,7 @@ function mountDatabaseWorkspace({ active = true, initialState = null } = {}) {
     rows: [["kept row"]]
   }));
   mocks.database = {
-    state, runQuery, running: Vue.ref(false), loading: Vue.ref(false), error: Vue.ref(""),
+    state, runQuery, saveLayout, running: Vue.ref(false), loading: Vue.ref(false), error: Vue.ref(""),
     reload: vi.fn(async () => null)
   };
   const renderer = Vue.createRenderer({
@@ -130,6 +130,7 @@ function mountDatabaseWorkspace({ active = true, initialState = null } = {}) {
   app.mount(container);
   return {
     container, props, state, runQuery,
+    workspace: app._instance.subTree.component.setupState,
     editor: () => findNode(container, (node) => node.props["data-sql-editor"] === true),
     async close() {
       app.unmount();
@@ -244,5 +245,64 @@ describe("Database Workspace automatic table admission", () => {
     fixture.props.active = true;
     await flushWorkspace(fixture.runQuery);
     expect(fixture.runQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("Database Workspace shared ERD hydration", () => {
+  const original = { nodes: [{ table: "public.items", x: 10, y: 20 }], revision: 1 };
+  const remote = { nodes: [{ table: "public.items", x: 200, y: 300 }], revision: 2 };
+
+  it("applies live layouts without rerunning SQL and catches up when reactivated", async () => {
+    const fixture = mountDatabaseWorkspace({ initialState: { ...firstState, layout: original } });
+    try {
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout).toEqual(original);
+      fixture.state.value = { ...firstState, layout: remote };
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout).toEqual(remote);
+      expect(fixture.runQuery).toHaveBeenCalledTimes(1);
+      fixture.props.active = false;
+      fixture.state.value = { ...firstState, layout: { ...remote, revision: 3 } };
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout.revision).toBe(2);
+      fixture.props.active = true;
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout.revision).toBe(3);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("defers remote hydration through a pending save and refuses an older refresh", async () => {
+    let finish;
+    const saveLayout = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const fixture = mountDatabaseWorkspace({ initialState: { ...firstState, layout: original }, saveLayout });
+    try {
+      await flushWorkspace(fixture.runQuery);
+      const pending = fixture.workspace.saveDiagramLayout({ nodes: [{ table: "public.items", x: 400, y: 500 }] });
+      await flushWorkspace(fixture.runQuery);
+      fixture.state.value = { ...firstState, layout: { ...remote, revision: 4 } };
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout.nodes[0].x).toBe(400);
+      finish({ layout: { nodes: [{ table: "public.items", x: 400, y: 500 }], revision: 3 } });
+      await pending;
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout.revision).toBe(4);
+      fixture.state.value = { ...firstState, layout: remote };
+      await flushWorkspace(fixture.runQuery);
+      expect(fixture.workspace.erdLayout.revision).toBe(4);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("does not send queued layout writes after unmount", async () => {
+    const saveLayout = vi.fn();
+    const fixture = mountDatabaseWorkspace({ initialState: { ...firstState, layout: original }, saveLayout });
+    await flushWorkspace(fixture.runQuery);
+    const pending = fixture.workspace.saveDiagramLayout(remote);
+    await fixture.close();
+    await pending;
+    expect(saveLayout).not.toHaveBeenCalled();
   });
 });

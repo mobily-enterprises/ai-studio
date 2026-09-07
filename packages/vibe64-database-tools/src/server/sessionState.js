@@ -8,6 +8,7 @@ import {
 } from "@local/vibe64-core/server/core";
 
 const SCHEMA_ARTIFACT_PATH = "database/schema.json";
+const ERD_LAYOUT_ARTIFACT_PATH = "database/erd-layout.json";
 const HISTORY_LIMIT = 50;
 const SNIPPET_LIMIT = 100;
 const LAYOUT_NODE_LIMIT = 2_000;
@@ -31,10 +32,6 @@ function actorKey(vibe64User = null) {
     .update(`vibe64-database-user\u0000${actorIdentity(vibe64User)}`)
     .digest("hex")
     .slice(0, 20);
-}
-
-function layoutArtifactPath(vibe64User = null) {
-  return `database/erd-layout-${actorKey(vibe64User)}.json`;
 }
 
 function workspaceArtifactPath(vibe64User = null) {
@@ -225,26 +222,36 @@ function normalizedLayout(value = null) {
       name: text(view?.name).slice(0, 80)
     })).filter((view) => view.id && view.name),
     updatedAt: text(value?.updatedAt),
+    revision: Number.isSafeInteger(value?.revision) ? value.revision : 0,
     version: 1
   };
 }
 
 async function readErdLayout(store, sessionId = "", vibe64User = null) {
-  const value = parseArtifact(
-    await store.readArtifact(sessionId, layoutArtifactPath(vibe64User)),
-    "The database ERD layout"
-  );
-  return normalizedLayout(value);
+  return serializeWrite(`${sessionId}\u0000${ERD_LAYOUT_ARTIFACT_PATH}`, async () => {
+    const shared = await store.readArtifact(sessionId, ERD_LAYOUT_ARTIFACT_PATH);
+    if (shared) return normalizedLayout(parseArtifact(shared, "The database ERD layout"));
+
+    // Preserve an existing diagram once; all subsequent readers use the shared artifact.
+    const legacy = await store.readArtifact(sessionId, `database/erd-layout-${actorKey(vibe64User)}.json`);
+    const layout = normalizedLayout(parseArtifact(legacy, "The database ERD layout"));
+    if (legacy) {
+      layout.revision = 1;
+      await store.writeJsonArtifact(sessionId, ERD_LAYOUT_ARTIFACT_PATH, layout);
+    }
+    return layout;
+  });
 }
 
-async function saveErdLayout(store, sessionId = "", vibe64User = null, layout = {}) {
-  const normalized = normalizedLayout({
-    ...layout,
-    updatedAt: new Date().toISOString()
+async function saveErdLayout(store, sessionId = "", layout = {}) {
+  const normalized = normalizedLayout(layout);
+  return serializeWrite(`${sessionId}\u0000${ERD_LAYOUT_ARTIFACT_PATH}`, async () => {
+    const previous = parseArtifact(await store.readArtifact(sessionId, ERD_LAYOUT_ARTIFACT_PATH), "The database ERD layout");
+    normalized.revision = (previous?.revision || 0) + 1;
+    normalized.updatedAt = new Date().toISOString();
+    await store.writeJsonArtifact(sessionId, ERD_LAYOUT_ARTIFACT_PATH, normalized);
+    return normalized;
   });
-  const path = layoutArtifactPath(vibe64User);
-  await serializeWrite(`${sessionId}\u0000${path}`, () => store.writeJsonArtifact(sessionId, path, normalized));
-  return normalized;
 }
 
 export {
@@ -254,7 +261,6 @@ export {
   SNIPPET_LIMIT,
   actorKey,
   deleteSnippet,
-  layoutArtifactPath,
   mutateWorkspace,
   readErdLayout,
   readSchemaSnapshot,

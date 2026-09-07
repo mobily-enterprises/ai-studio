@@ -1,4 +1,5 @@
 import { defineFeature } from "@jskit-ai/kernel/server/features";
+import { createDatabaseLayoutChangedPublisher } from "./events.js";
 
 import {
   createDatabaseActions
@@ -22,15 +23,17 @@ const Vibe64DatabaseToolsProvider = defineFeature({
     databaseTools: "vibe64.database-tools"
   },
   requires: {
+    events: "runtime.events",
     http: "runtime.http",
     logger: "runtime.logger",
     project: "vibe64.project",
     terminals: "vibe64.terminals"
   },
-  setup({ http, logger, project, terminals }) {
+  setup({ events, http, logger, project, terminals }) {
     const databaseTools = createService({
       logger,
       projectService: project,
+      publishLayoutChanged: createDatabaseLayoutChangedPublisher(events),
       terminalService: terminals
     });
     registerRoutes(http, {

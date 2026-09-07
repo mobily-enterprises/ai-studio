@@ -121,9 +121,10 @@ export function placeErdNodes(nodes, positions, stored = [], force = false) {
     const position = keep ? saved : suggested.get(node.id) || node.position;
     return { ...node, position: { x: position.x || 0, y: position.y || 0 } };
   });
-  const occupied = result.filter((node) => previous.get(node.id)?.pinned).map((node) => ({ ...node.position, ...node.dimensions }));
+  const fixed = new Set(stored.filter((node) => !force || node.pinned).map((node) => node.table));
+  const occupied = result.filter((node) => fixed.has(node.id)).map((node) => ({ ...node.position, ...node.dimensions }));
   for (const node of result) {
-    if (previous.get(node.id)?.pinned) continue;
+    if (fixed.has(node.id)) continue;
     const rectangle = { ...node.position, ...node.dimensions };
     let collision;
     while ((collision = occupied.find((box) => rectangle.x < box.x + box.width + 36 &&

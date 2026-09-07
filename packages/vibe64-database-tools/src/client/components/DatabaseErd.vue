@@ -215,6 +215,8 @@ let relationshipDragFrame = null;
 let routes = [];
 let storedNodes = props.layout.nodes || [];
 let draggingSnapshot = null;
+let pendingRemoteLayout = null;
+let appliedLayoutRevision = props.layout.revision || 0;
 let disposed = false;
 const layoutResolvers = new Map();
 
@@ -326,13 +328,15 @@ async function rebuild({ force = false } = {}) {
   const initialViewport = !nodes.value.length && saved.length ? props.layout.viewport : null;
   try {
     const sourceNodes = buildNodes(saved);
+    const savedTables = new Set(saved.map((node) => node.table));
+    const needsSave = force || sourceNodes.some((node) => !savedTables.has(node.id));
     const graph = createErdRelationshipRoutes(sourceNodes, relationships.value, { fixedSides: true, calculatePaths: false });
     const layout = await workerLayout(sourceNodes, graph);
     if (disposed || request !== rebuildId) return;
     nodes.value = placeErdNodes(sourceNodes, layout.nodes, saved, force);
     await refreshGraph({ reset: true, layoutPaths: new Map(layout.paths.map((path) => [path.id, path.points])) });
     await updateViewport(initialViewport);
-    persistPositions();
+    if (needsSave) persistPositions();
     if (layout.fallback) feedback.error(new Error("The recommended layout was unavailable; a basic arrangement was used."), "Layout needs attention.");
   } catch (error) {
     if (request === rebuildId) layoutError.value = error.message || "The ERD could not be arranged.";
@@ -340,21 +344,25 @@ async function rebuild({ force = false } = {}) {
     if (request === rebuildId) layoutPending.value = false;
   }
 }
-async function restore(state) {
+async function restore(state, { remote = false } = {}) {
   rebuildId += 1;
   layoutPending.value = true;
   columnMode.value = state.columnMode || "keys";
   focusTable.value = state.focusTable || "";
   activeGroup.value = state.activeGroup || "";
   groups.value = (state.groups || []).map((group) => ({ ...group }));
-  selectedTable.value = "";
-  selectedRelationshipId.value = "";
-  hoveredRelationshipId.value = "";
+  if (remote) {
+    views.value = JSON.parse(JSON.stringify(state.views || []));
+  } else {
+    selectedTable.value = "";
+    selectedRelationshipId.value = "";
+    hoveredRelationshipId.value = "";
+  }
   nodes.value = buildNodes(state.nodes);
   await refreshGraph({ reset: true });
-  await updateViewport(state.viewport);
+  if (!remote) await updateViewport(state.viewport);
   layoutPending.value = false;
-  persistPositions();
+  if (!remote) persistPositions();
 }
 async function undo() {
   if (!undoStack.value.length || layoutPending.value) return;
@@ -371,15 +379,14 @@ async function changeColumnMode(mode) {
   checkpoint();
   columnMode.value = mode;
   const saved = snapshot().nodes.map((node) => ({ ...node, expanded: false }));
-  nodes.value = placeErdNodes(buildNodes(saved), [], saved);
+  nodes.value = buildNodes(saved);
   await refreshGraph();
-  await fitDiagram();
   persistPositions();
 }
 async function changeNode(id, changes) {
   checkpoint();
   const saved = snapshot().nodes.map((node) => node.table === id ? { ...node, ...changes } : node);
-  nodes.value = placeErdNodes(buildNodes(saved), [], saved);
+  nodes.value = buildNodes(saved);
   await refreshGraph();
   persistPositions();
 }
@@ -397,10 +404,25 @@ function onNodeDrag() {
 async function onNodeDragStop() {
   if (relationshipDragFrame !== null) globalThis.cancelAnimationFrame(relationshipDragFrame);
   relationshipDragFrame = null;
-  if (draggingSnapshot) {
-    undoStack.value = [...undoStack.value, draggingSnapshot].slice(-30);
+  const beforeDrag = draggingSnapshot;
+  if (beforeDrag) {
+    undoStack.value = [...undoStack.value, beforeDrag].slice(-30);
     redoStack.value = [];
     draggingSnapshot = null;
+  }
+  if (pendingRemoteLayout) {
+    // Keep this drag without reverting tables moved by another viewer during it.
+    const previous = new Map(beforeDrag.nodes.map((node) => [node.table, node]));
+    const moved = new Map(snapshot().nodes.filter((node) => {
+      const before = previous.get(node.table);
+      return before && (node.x !== before.x || node.y !== before.y);
+    }).map((node) => [node.table, node]));
+    const shared = pendingRemoteLayout;
+    pendingRemoteLayout = null;
+    await restore({ ...shared, nodes: shared.nodes.map((node) => {
+      const position = moved.get(node.table);
+      return position ? { ...node, x: position.x, y: position.y } : node;
+    }) }, { remote: true });
   }
   await refreshGraph();
   persistPositions();
@@ -515,6 +537,15 @@ function onKeydown(event) {
   } else if (event.key === "Escape" && !viewDialog.value && !groupDialog.value) clearSelection();
 }
 watch(() => props.schema, () => { if (layoutWorker) void rebuild(); });
+watch(() => props.layout, (layout) => {
+  if (!layout.revision || layout.revision <= appliedLayoutRevision) return;
+  appliedLayoutRevision = layout.revision;
+  if (draggingSnapshot) {
+    pendingRemoteLayout = layout;
+  } else if (layoutWorker) {
+    void restore(layout, { remote: true });
+  }
+});
 onMounted(() => {
   fullscreenAvailable.value = typeof erdRoot.value?.requestFullscreen === "function";
   document.addEventListener("fullscreenchange", onFullscreenChange);

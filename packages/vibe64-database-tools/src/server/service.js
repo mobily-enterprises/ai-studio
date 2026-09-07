@@ -111,6 +111,7 @@ function auditSql(sql = "") {
 function createService({
   logger = null,
   projectService,
+  publishLayoutChanged = async () => {},
   terminalService = null,
   withKnex = withSessionKnex
 } = {}) {
@@ -494,13 +495,10 @@ function createService({
     async saveLayout(input = {}) {
       return databaseResult(async () => {
         const context = await sessionContext(input);
+        const layout = await saveErdLayout(context.store, context.sessionId, input.layout);
+        await publishLayoutChanged(context.sessionId, context.session);
         return {
-          layout: await saveErdLayout(
-            context.store,
-            context.sessionId,
-            context.vibe64User,
-            input.layout
-          ),
+          layout,
           ok: true
         };
       });
