@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ live: false, resource: null, query: null }));
 vi.mock("vuetify/components/VBtn", () => ({ VBtn: passthroughComponent("button") }));
+vi.mock("vuetify/components/VAlert", () => ({ VAlert: passthroughComponent("aside") }));
 vi.mock("vuetify/components/VTextarea", () => ({ VTextarea: passthroughComponent("textarea") }));
 vi.mock("vuetify/components/VSkeletonLoader", () => ({ VSkeletonLoader: passthroughComponent("div") }));
 
@@ -157,7 +158,7 @@ function mountOnboarding({ active = true, projectPane = "preview", live = true }
     on(event, handler) { expect(event).toBe("vibe64.project.changed"); listeners.add(handler); },
     off(event, handler) { expect(event).toBe("vibe64.project.changed"); listeners.delete(handler); }
   });
-  for (const [name, element] of [["VBtn", "button"], ["VTextarea", "textarea"], ["VSkeletonLoader", "div"]]) {
+  for (const [name, element] of [["VAlert", "aside"], ["VBtn", "button"], ["VTextarea", "textarea"], ["VSkeletonLoader", "div"]]) {
     app.component(name, passthroughComponent(element));
   }
   const container = { children: [], props: {}, type: "root" };
@@ -204,7 +205,7 @@ async function render(state, props = {}) {
       default: () => Vue.h("div", "Normal outputs")
     })
   });
-  for (const [name, element] of [["v-btn", "button"], ["v-textarea", "textarea"], ["v-skeleton-loader", "div"]]) {
+  for (const [name, element] of [["v-alert", "aside"], ["v-btn", "button"], ["v-textarea", "textarea"], ["v-skeleton-loader", "div"]]) {
     app.component(name, passthroughComponent(element));
   }
   return renderToString(app);
@@ -213,7 +214,7 @@ async function render(state, props = {}) {
 describe("Preview project onboarding", () => {
   beforeEach(() => {
     mocks.live = false;
-    mocks.resource = { data: Vue.ref(null), loadError: Vue.ref(""), reload: vi.fn() };
+    mocks.resource = { data: Vue.ref(null), isFetching: Vue.ref(false), loadError: Vue.ref(""), reload: vi.fn() };
   });
   it("offers a starter only for empty projects and disables choices during source work", async () => {
     expect(await render("new")).toContain("Public starter");
@@ -232,6 +233,8 @@ describe("Preview project onboarding", () => {
   it("shows a concrete repair issue and lets ready projects use normal outputs", async () => {
     const attention = await render("attention");
     expect(attention).toContain("The project uses an older format.");
+    expect(attention).toContain("Normal outputs");
+    expect(attention).toContain("Recheck setup");
     expect(attention).not.toContain("Public starter");
     expect(await render("ready")).toContain("Normal outputs");
   });
@@ -239,6 +242,49 @@ describe("Preview project onboarding", () => {
     expect(await render(null)).not.toContain("Public starter");
     expect(await render("new", { archived: true })).toContain("Normal outputs");
     expect(mocks.query.enabled.value).toBe(false);
+  });
+
+  it("opens outputs even when the initial setup request fails", async () => {
+    mocks.resource.loadError.value = "Setup inspection is unavailable.";
+    const html = await render(null);
+    expect(html).toContain("Setup inspection is unavailable.");
+    expect(html).toContain("Normal outputs");
+    expect(html).toContain("Recheck setup");
+  });
+
+  it("keeps the same output instance through setup warnings, failed rechecks and recovery during AI work", async () => {
+    const fixture = mountOnboarding();
+    try {
+      await fixture.settleRead(0);
+      const output = findNode(fixture.container, (node) => node.type === "output");
+      fixture.props.busy = true;
+      await Vue.nextTick();
+      await fixture.projectChanged();
+      const attention = opening("attention");
+      attention.inspection.diagnostics = [{ message: "Program module cites a missing or ineligible source file: src/Old.vue." }];
+      await fixture.settleRead(1, attention);
+      expect(nodeText(fixture.container)).toContain("src/Old.vue");
+      expect(fixture.button("Ask AI to update setup").props.disabled).toBe(true);
+      expect(fixture.button("Recheck setup").props.disabled).toBe(false);
+      expect(findNode(fixture.container, (node) => node.type === "output")).toBe(output);
+
+      const failedCheck = fixture.button("Recheck setup").props.onClick();
+      await Vue.nextTick();
+      expect(fixture.button("Checking setup").props.disabled).toBe(true);
+      await fixture.settleRead(2, { ok: false, error: "Setup inspection failed." });
+      await failedCheck;
+      expect(nodeText(fixture.container)).toContain("Project setup could not be read");
+      expect(findNode(fixture.container, (node) => node.type === "output")).toBe(output);
+
+      const recovery = fixture.button("Recheck setup").props.onClick();
+      await fixture.settleRead(3);
+      await recovery;
+      expect(fixture.button("Recheck setup")).toBeNull();
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+      expect(fixture.outputs.unmounted).not.toHaveBeenCalled();
+    } finally {
+      fixture.close();
+    }
   });
 
   it.each([

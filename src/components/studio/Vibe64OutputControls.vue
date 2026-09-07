@@ -9,7 +9,6 @@
     }"
   >
     <Teleport
-      v-if="visible"
       defer
       :disabled="!toolbarTeleportTarget"
       :to="toolbarTeleportTarget || 'body'"
@@ -89,7 +88,7 @@
           />
 
           <form
-            v-if="embeddedPreview && previewBaseUrl"
+            v-if="embeddedPreview"
             class="vibe64-launch-controls__preview-nav"
             :class="{ 'vibe64-launch-controls__preview-nav--invalid': previewAddressError }"
             :title="previewAddressError || 'Preview URL'"
@@ -141,6 +140,8 @@
               autocapitalize="off"
               autocomplete="off"
               class="vibe64-launch-controls__preview-address"
+              :disabled="!previewBaseUrl"
+              :placeholder="previewDisplayedAddress ? '' : 'Preview URL unavailable'"
               spellcheck="false"
               type="text"
               @blur="previewAddressBlur"

@@ -13,6 +13,7 @@ without leaving the coding workspace.
 - `src/components/studio/Vibe64LongRunningTerminal.vue`
 - `src/components/studio/Vibe64OutputControls.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
+- `src/components/studio/vibe64-session/Vibe64ProjectOnboarding.vue`
 - `src/composables/useVibe64OutputControls.js`
 - `src/composables/useVibe64OutputControlsSurface.js`
 
@@ -25,7 +26,9 @@ plus either an interactive presentation or finite downloadable results. Vibe64
 never guesses a framework command or substitutes an unknown runtime. After
 bounded output discovery proves that a project declares no target, Preview
 states that there is no application output and presents no empty launch
-controls. A blocked Outputs declaration with no targets reports its actionable
+menu. The embedded browser toolbar remains visible; URL navigation requires a
+known preview destination, while Reload can recheck output status without one.
+A blocked Outputs declaration with no targets reports its actionable
 inspection diagnostic instead of claiming that the project has no output.
 Declared targets blocked by missing resources remain visible but disabled.
 Working directories resolve relative to the session source. An ordinary name
@@ -46,6 +49,15 @@ Status inspection resolves the environment without provisioning resources or
 writing project environment files. Confirmed preview readiness supersedes a
 failed overlapping start request, so a running preview is not covered by an old
 startup error. Late start failures from a previous project or session are ignored.
+
+The broad Genesis opening inspection is not launch admission. Existing-project
+setup diagnostics, including stale Program source citations, and inspection
+request failures appear in a persistent compact warning above the preview.
+They do not unmount a running iframe or its toolbar. Recheck setup refreshes
+only that inspection, works during assistant activity, and removes the warning
+when resolved. Reload remains the separate browser/output-status action.
+Starter selection and adoption still guide new or uninitialized projects;
+Vibe64's output and workspace-setup contracts continue to validate actual launches.
 
 Status inspection never starts work. Logs, retry, stop, open, fresh restart,
 result history, and authenticated downloads remain available through the

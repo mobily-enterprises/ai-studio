@@ -268,6 +268,109 @@ test("@preview-lifecycle renders through the proxy and displays the target URL",
   ).toBeVisible();
 });
 
+for (const width of [1280, 390]) {
+  test(`@preview-setup-warning keeps the app and browser usable through Genesis warnings at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockLaunchTerminalSocket(page, { terminalSocketNeverSettles: true });
+    const session = sessionPayload();
+    session.agentSession.turn.active = true;
+    const launch = await mockLaunchSession(page, { session });
+    let state = "attention";
+    let failInspection = false;
+    let reads = 0;
+    await page.route("**/vibe64/onboarding?*", async (route) => {
+      reads += 1;
+      await fulfillJson(route, failInspection ? { ok: false, error: "Setup inspection unavailable." } : {
+        ok: true,
+        available: true,
+        inspection: {
+          state,
+          nextAction: state === "ready" ? "work" : "repair",
+          diagnostics: state === "ready" ? [] : [{
+            code: "PROGRAM_SOURCE_MISSING",
+            message: "Program module cites a missing or ineligible source file: src/components/contacts/ContactUpcomingBookings.vue."
+          }]
+        },
+        templates: []
+      });
+    });
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    if (width === 390) await page.getByRole("button", { name: "Show project", exact: true }).click();
+    const frame = page.locator(".vibe64-launch-controls__preview-frame");
+    const warning = page.locator(".project-preview__warning");
+    await expect(frame).toBeVisible();
+    await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app")).toBeVisible();
+    await expect(warning).toContainText("ContactUpcomingBookings.vue");
+    await expect(warning.getByRole("button", { name: "Ask AI to update setup" })).toBeDisabled();
+    await expect(warning.getByRole("button", { name: "Recheck setup" })).toBeEnabled();
+    const frameElement = await frame.elementHandle();
+    const initialLoads = launch.getPreviewLoadCount();
+
+    failInspection = true;
+    await warning.getByRole("button", { name: "Recheck setup" }).click();
+    await expect(warning).toContainText("Setup inspection unavailable.");
+    await expect(frame).toBeVisible();
+    expect(await frameElement?.evaluate((element) => element === document.querySelector(".vibe64-launch-controls__preview-frame"))).toBe(true);
+    expect(launch.getPreviewLoadCount()).toBe(initialLoads);
+
+    failInspection = false;
+    state = "ready";
+    await warning.getByRole("button", { name: "Recheck setup" }).click();
+    await expect(warning).toHaveCount(0);
+    expect(await frameElement?.evaluate((element) => element === document.querySelector(".vibe64-launch-controls__preview-frame"))).toBe(true);
+    expect(launch.getPreviewLoadCount()).toBe(initialLoads);
+
+    // Returning with a warm cache must show a new warning without replacing the iframe.
+    state = "attention";
+    if (width === 390) {
+      await page.getByRole("button", { name: "Go to dashboard", exact: true }).click();
+      await page.getByRole("button", { name: "Go to preview", exact: true }).click();
+    } else {
+      await page.getByRole("tab", { name: "Dashboard", exact: true }).click();
+      await page.getByRole("tab", { name: "Preview", exact: true }).click();
+    }
+    await expect(warning).toBeVisible();
+    expect(await frameElement?.evaluate((element) => element === document.querySelector(".vibe64-launch-controls__preview-frame"))).toBe(true);
+    expect(launch.getPreviewLoadCount()).toBe(initialLoads);
+
+    if (width === 390) await page.getByRole("button", { name: "Show preview controls", exact: true }).click();
+    await expect(page.getByLabel("Preview URL", { exact: true })).toHaveValue("/home");
+    const readsBeforeReload = reads;
+    await page.locator('button[title="Reload preview"]').click();
+    await expect.poll(() => launch.getPreviewLoadCount()).toBe(initialLoads + 1);
+    expect(reads).toBe(readsBeforeReload);
+    expect(launch.getLaunchStartPayloads()).toHaveLength(0);
+    await expect(page.locator('.vibe64-launch-controls__dock button[title="Open browser"]')).toBeEnabled();
+    if (width === 390) await page.getByRole("button", { name: "Collapse preview controls", exact: true }).click();
+    await expect(frame).toBeVisible();
+    const warningBox = await warning.boundingBox();
+    const frameBox = await frame.boundingBox();
+    expect((warningBox?.y || 0) + (warningBox?.height || 0)).toBeLessThanOrEqual(frameBox?.y || 0);
+    expect(frameBox?.height).toBeGreaterThan(300);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`setup-warning-${width}.png`) });
+  });
+}
+
+test("@preview-setup-warning retains reload when launch settings have no usable target", async ({ page }) => {
+  await mockLaunchTerminalSocket(page);
+  const launch = await mockLaunchSession(page, {
+    initialLaunchStatus: idleLaunchStatusPayload([])
+  });
+  await page.route("**/vibe64/onboarding?*", async (route) => {
+    await fulfillJson(route, { ok: false, error: "Genesis setup could not be read." });
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await expect(page.locator(".project-preview__warning")).toBeVisible();
+  await expect(page.getByLabel("Preview URL", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Preview URL", { exact: true })).toBeDisabled();
+  const reads = launch.getLaunchStatusRequestCount();
+  await page.locator('button[title="Reload preview"]').click();
+  await expect.poll(() => launch.getLaunchStatusRequestCount()).toBeGreaterThan(reads);
+  expect(launch.getLaunchStartPayloads()).toHaveLength(0);
+  await expect(page.locator(".vibe64-launch-controls__preview-frame")).toHaveCount(0);
+});
+
 test("@preview-identity switches between real app identities and Guest without restarting", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {

@@ -112,6 +112,10 @@ environment require the source lock. A ready preview replaces any stale error
 from an overlapping start request.
 People can inspect and explicitly restart the application while the assistant
 is working; automatic startup waits until that work is idle.
+Project-understanding warnings do not replace the application preview. People
+can read a persistent warning, recheck setup, and keep using the preview's URL,
+reload, and navigation controls. Starting an application still requires valid
+launch settings.
 Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.
 
@@ -123,7 +127,7 @@ ends. An interactive AI terminal is launched
 explicitly, always matches the kind of assistant chosen when the session began,
 and can be closed independently of the conversation. A project that declares
 no application output remains idle: Preview says there is nothing to run and
-does not show empty launch controls.
+keeps its browser controls available without offering an empty launch menu.
 
 Genesis remains the portable authority for what a project is, how its Program
 is explained, which technologies it uses, its environment/resource

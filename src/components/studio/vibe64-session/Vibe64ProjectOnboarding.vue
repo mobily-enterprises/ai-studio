@@ -1,62 +1,86 @@
 <template>
-  <slot v-if="props.archived || state === 'ready' || onboarding?.available === false" />
-  <section v-else class="project-onboarding" aria-label="Project setup" :aria-busy="pending">
-    <template v-if="loadError">
-      <h2>Project setup could not be read</h2>
-      <p role="alert">{{ loadError }}</p>
-      <v-btn variant="tonal" @click="resource.reload()">Try again</v-btn>
-    </template>
-    <v-skeleton-loader v-else-if="!onboarding" type="heading, paragraph, card" />
-    <template v-else-if="state === 'new'">
-      <p class="project-onboarding__eyebrow">Your starting point</p>
-      <h2>What would you like to build with?</h2>
-      <p>Choose a ready-made app, or describe your idea in the conversation.</p>
-      <div v-for="group in groups" :key="group.technology" class="project-onboarding__group">
-        <h3>{{ technologyLabel(group.technology) }}</h3>
-        <div class="project-onboarding__choices">
-          <button
-            v-for="template in group.templates"
-            :key="template.id"
-            type="button"
-            class="project-onboarding__choice"
-            :disabled="disabled"
-            @click="apply(template)"
-          >
-            <strong>{{ template.name }}</strong>
-            <span>{{ template.description }}</span>
-            <small v-if="groupsHaveMultipleSources">Source: {{ template.namespace }}</small>
-            <span class="project-onboarding__choose">{{ applying === template.id ? 'Preparing your starter…' : 'Use this starter →' }}</span>
-          </button>
+  <div class="project-preview">
+    <v-alert
+      v-if="!props.archived && (loadError || state === 'attention')"
+      class="project-preview__warning"
+      density="compact"
+      role="status"
+      type="warning"
+      variant="tonal"
+    >
+      <strong>{{ loadError ? 'Project setup could not be read' : 'Project setup needs attention' }}</strong>
+      <p v-if="loadError">{{ loadError }}</p>
+      <template v-else>
+        <p v-for="(diagnostic, index) in onboarding.inspection.diagnostics" :key="index">{{ diagnostic.message }}</p>
+        <p v-if="onboarding.inspection.nextAction === 'update-genesis'">Use an installation with a newer Genesis version to update setup.</p>
+      </template>
+      <div class="project-preview__warning-actions">
+        <v-btn :disabled="!enabled || resource.isFetching.value" size="small" variant="text" @click="resource.reload()">
+          {{ resource.isFetching.value ? 'Checking setup…' : 'Recheck setup' }}
+        </v-btn>
+        <v-btn
+          v-if="!loadError && onboarding.inspection.nextAction !== 'update-genesis'"
+          :disabled="disabled || !props.canAsk"
+          size="small"
+          variant="text"
+          @click="ask('repair')"
+        >
+          Ask AI to update setup
+        </v-btn>
+        <span v-if="props.busy">The assistant is working; setup can still be rechecked.</span>
+        <span v-else-if="asking" role="status">Sending to the conversation…</span>
+      </div>
+    </v-alert>
+    <div v-if="showPreview" class="project-preview__output">
+      <slot />
+    </div>
+    <section v-else class="project-onboarding" aria-label="Project setup" :aria-busy="pending">
+      <v-skeleton-loader v-if="!onboarding" type="heading, paragraph, card" />
+      <template v-else-if="state === 'new'">
+        <p class="project-onboarding__eyebrow">Your starting point</p>
+        <h2>What would you like to build with?</h2>
+        <p>Choose a ready-made app, or describe your idea in the conversation.</p>
+        <div v-for="group in groups" :key="group.technology" class="project-onboarding__group">
+          <h3>{{ technologyLabel(group.technology) }}</h3>
+          <div class="project-onboarding__choices">
+            <button
+              v-for="template in group.templates"
+              :key="template.id"
+              type="button"
+              class="project-onboarding__choice"
+              :disabled="disabled"
+              @click="apply(template)"
+            >
+              <strong>{{ template.name }}</strong>
+              <span>{{ template.description }}</span>
+              <small v-if="groupsHaveMultipleSources">Source: {{ template.namespace }}</small>
+              <span class="project-onboarding__choose">{{ applying === template.id ? 'Preparing your starter…' : 'Use this starter →' }}</span>
+            </button>
+          </div>
         </div>
-      </div>
-      <p v-if="!groups.length">No starters are configured for this installation yet.</p>
-      <v-btn :disabled="disabled || !props.canAsk" variant="text" @click="ask('create')">Start through conversation</v-btn>
-    </template>
-    <template v-else-if="state === 'adoption'">
-      <p class="project-onboarding__eyebrow">Bring your project</p>
-      <h2>Set up this existing project</h2>
-      <p>Tell the AI what this project does and what you want to run. It will work out the setup from your code and preserve your source and Git history.</p>
-      <v-textarea
-        v-model="purpose"
-        label="What is this project?"
-        placeholder="For example: a Python tool that processes invoices. I want to run its command line."
-        rows="3"
-        auto-grow
-        :disabled="disabled"
-      />
-      <div class="project-onboarding__actions">
-        <v-btn :disabled="disabled || !props.canAsk || !purpose.trim()" color="primary" @click="ask('adopt')">Set up project</v-btn>
-        <v-btn :disabled="disabled || !props.canAsk" variant="text" @click="ask('inspect')">Inspect it for me</v-btn>
-      </div>
-    </template>
-    <template v-else>
-      <h2>Project setup needs attention</h2>
-      <p v-for="(diagnostic, index) in onboarding.inspection.diagnostics" :key="index">{{ diagnostic.message }}</p>
-      <p v-if="onboarding.inspection.nextAction === 'update-genesis'">Use an installation with a newer Genesis version to continue.</p>
-      <v-btn v-else :disabled="disabled || !props.canAsk" color="primary" @click="ask('repair')">Ask AI to update setup</v-btn>
-    </template>
-    <p v-if="pending" role="status">{{ applying ? 'Adding the starter to this session…' : 'Sending to the conversation…' }}</p>
-  </section>
+        <p v-if="!groups.length">No starters are configured for this installation yet.</p>
+        <v-btn :disabled="disabled || !props.canAsk" variant="text" @click="ask('create')">Start through conversation</v-btn>
+      </template>
+      <template v-else-if="state === 'adoption'">
+        <p class="project-onboarding__eyebrow">Bring your project</p>
+        <h2>Set up this existing project</h2>
+        <p>Tell the AI what this project does and what you want to run. It will work out the setup from your code and preserve your source and Git history.</p>
+        <v-textarea
+          v-model="purpose"
+          label="What is this project?"
+          placeholder="For example: a Python tool that processes invoices. I want to run its command line."
+          rows="3"
+          auto-grow
+          :disabled="disabled"
+        />
+        <div class="project-onboarding__actions">
+          <v-btn :disabled="disabled || !props.canAsk || !purpose.trim()" color="primary" @click="ask('adopt')">Set up project</v-btn>
+          <v-btn :disabled="disabled || !props.canAsk" variant="text" @click="ask('inspect')">Inspect it for me</v-btn>
+        </div>
+      </template>
+      <p v-if="pending" role="status">{{ applying ? 'Adding the starter to this session…' : 'Sending to the conversation…' }}</p>
+    </section>
+  </div>
 </template>
 
 <script setup>
@@ -111,6 +135,10 @@ const command = useCommand({
 const onboarding = computed(() => resource.data.value?.ok === true ? resource.data.value : null);
 const state = computed(() => onboarding.value?.inspection?.state || "");
 const loadError = computed(() => vibe64ResourceResponseError(resource.data.value) || resource.loadError.value);
+const showPreview = computed(() => {
+  if (props.archived || onboarding.value?.available === false || loadError.value) return true;
+  return onboarding.value !== null && state.value !== "new" && state.value !== "adoption";
+});
 const pending = computed(() => Boolean(applying.value || asking.value));
 const disabled = computed(() => pending.value || props.busy || !enabled.value);
 const groups = computed(() => {
@@ -165,6 +193,12 @@ watch(() => props.busy, (busy, previous) => {
 </script>
 
 <style scoped>
+.project-preview { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
+.project-preview__output { flex: 1; min-height: 0; }
+.project-preview__warning { flex: 0 0 auto; max-height: 35%; overflow-y: auto; overflow-wrap: anywhere; }
+.project-preview__warning p { margin: .25rem 0; }
+.project-preview__warning-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; margin-top: .25rem; }
+.project-preview__warning-actions span { font-size: .8rem; }
 .project-onboarding { width: min(100%, 52rem); margin: auto; padding: clamp(1rem, 3vw, 2.5rem); overflow-y: auto; }
 .project-onboarding h2 { font-size: 1.6rem; line-height: 1.25; margin-bottom: 1rem; }
 .project-onboarding p { margin-bottom: 1.25rem; line-height: 1.6; }
