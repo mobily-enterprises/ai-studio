@@ -265,7 +265,7 @@ function createWorkspaceSetupRunner({
         actor: "app",
         allowedRoots: [sourcePath],
         args: step.argv.slice(1),
-        baseEnv: runtime.promptEnvironment,
+        baseEnv: await runtime.resolvePromptEnvironment(),
         command: step.argv[0],
         cwd: step.cwd,
         envPolicy: "project",
@@ -378,7 +378,7 @@ function createWorkspaceSetupRunner({
     let setup;
     try {
       setup = await inspect({
-        environment: runtime.promptEnvironment,
+        environment: await runtime.resolvePromptEnvironment(),
         projectRoot: sourcePath
       });
     } catch (error) {
@@ -397,7 +397,7 @@ function createWorkspaceSetupRunner({
       if (retry === true) {
         try {
           projectFormat = await inspectProjectFormat({
-            environment: runtime.promptEnvironment,
+            environment: await runtime.resolvePromptEnvironment(),
             projectRoot: sourcePath
           });
         } catch {
@@ -459,7 +459,7 @@ function createWorkspaceSetupRunner({
           actor: "app",
           allowedRoots: [sourcePath],
           args: ["migrate"],
-          baseEnv: runtime.promptEnvironment,
+          baseEnv: await runtime.resolvePromptEnvironment(),
           command: "genesis",
           cwd: sourcePath,
           envPolicy: "project",
@@ -506,7 +506,7 @@ function createWorkspaceSetupRunner({
 
       try {
         setup = await inspect({
-          environment: runtime.promptEnvironment,
+          environment: await runtime.resolvePromptEnvironment(),
           projectRoot: sourcePath
         });
       } catch (inspectionError) {

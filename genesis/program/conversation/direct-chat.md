@@ -41,6 +41,7 @@ including follow-up guidance while a turn is active.
 - `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
 - `src/composables/useVibe64ConversationLog.js`
+- `src/composables/useVibe64SessionRuntimeHost.js`
 - `src/composables/useVibe64PromptHints.js`
 - `src/components/studio/Vibe64CodexSession.vue`
 - `src/components/studio/Vibe64InteractiveTerminal.vue`
@@ -142,6 +143,23 @@ Message delivery and provider work remain visibly distinct. The composer shows
 the initial send while the message is being accepted, then reports the selected
 assistant as working for the rest of the active turn. The session tab and
 assistant avatar use that same live turn state until completion or interruption.
+A durable user-message receipt with the exact submitted message id settles Send
+and the saved-commit Deslop banner even while the HTTP request remains pending.
+Unrelated messages do not acknowledge delivery. Codex records that authored
+message from its provider receipt before subsequent answer notifications;
+expanded Genesis instructions remain out of visible history. The normal HTTP
+completion shares the same write and cannot duplicate the user message.
+Stop settles when the matching turn becomes inactive or the interrupt request
+returns. Subsequent session reconciliation runs in the background. Recoverable
+Git checkpoints retain their lifecycle without holding the composer busy after
+the stopped state has been published. A new message may start without waiting
+for an already-confirmed message's HTTP response. A later turn can also be
+interrupted while an earlier confirmed Stop request is still finishing; the
+transport does not discard it as a duplicate in-flight command. Late results from an older
+request or a previously selected session cannot overwrite the current draft.
+An interruption failure uses the top error banner so it cannot cover the mobile
+composer's Stop or Steer controls. Retrying, a changed turn, or leaving the
+session clears that failure.
 If message delivery fails, the exact error belongs to the failed message with
 its Resend, Cancel, and Edit actions inside the scrollable conversation. The
 composer does not repeat that raw error below its input or let it displace the

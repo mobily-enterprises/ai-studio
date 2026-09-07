@@ -2515,6 +2515,59 @@ test("Codex leaves the first visible message raw after a delivered renewal hando
   });
 });
 
+test("provider receipt persists the authored message before its answer while Send is still pending", async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
+    const accepted = Promise.withResolvers();
+    captures.sendTurnWait = accepted.promise;
+    const messageId = "message-deslop-receipt";
+    captures.onSendTurn = ({ provider, turnId }) => {
+      for (const subscriber of captures.subscribers) {
+        subscriber({ method: "item/completed", params: {
+          threadId: provider.threadId,
+          turnId,
+          item: { type: "userMessage", id: "user-receipt", clientId: messageId, content: [{ type: "text", text: "Expanded private Genesis prompt" }] }
+        } });
+        subscriber({ method: "item/completed", params: {
+          threadId: provider.threadId,
+          turnId,
+          item: { type: "agentMessage", id: "reply-before-http", phase: "commentary", text: "I am reviewing the commit." }
+        } });
+      }
+    };
+    let requestFinished = false;
+    const sending = controller.sendMessage(sessionId, {
+      displayMessage: "Deslop saved commit 04f8283622d6.",
+      genesisTask: "deslop",
+      message: "Deslop commit 04f8283622d6.",
+      messageId
+    }).then((result) => { requestFinished = true; return result; });
+    try {
+      const turns = await waitForSessionValue(
+        () => store.readConversationLog(sessionId),
+        (value) => value.some((turn) => turn.commentary?.some((item) => item.text === "I am reviewing the commit.")),
+        "the early assistant commentary"
+      );
+      assert.equal(requestFinished, false);
+      assert.equal(turns[0].user.text, "Deslop saved commit 04f8283622d6.");
+      assert.equal(turns[0].user.messageId, messageId);
+      assert.equal(JSON.stringify(turns).includes("Expanded private Genesis prompt"), false);
+      const steered = await controller.sendMessage(sessionId, {
+        message: "Keep the cleanup inside this commit.",
+        messageId: "message-during-pending-send"
+      });
+      assert.equal(steered.ok, true, JSON.stringify(steered));
+      assert.equal(captures.steers.length, 1);
+      assert.equal(requestFinished, false);
+    } finally {
+      accepted.resolve();
+    }
+    const result = await sending;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.conversationTurn.user.messageId, messageId);
+    assert.equal((await store.readConversationLog(sessionId)).filter((turn) => turn.user?.messageId === messageId).length, 1);
+  });
+});
+
 test("agent messages release an orphaned STARTING claim before starting the next turn", async () => {
   await withAgentMessageController(async ({ captures, controller, sessionId, store }) => {
     const started = await controller.sendMessage(sessionId, {

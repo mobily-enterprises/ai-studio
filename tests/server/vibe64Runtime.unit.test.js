@@ -29,6 +29,40 @@ test("session runtime never derives private state from a project context path", 
   );
 });
 
+test("reading session state never resolves prompt environment and prompt rendering shares its lazy resolution", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    let environmentReads = 0;
+    const environment = { PLATFORM_VALUE: "platform" };
+    const runtime = new Vibe64SessionRuntime({
+      inspectSourceByDefault: false,
+      projectContextRoot: targetRoot,
+      projectRuntimeRoot: projectRuntimeRoot(targetRoot),
+      promptEnvironment: async () => {
+        environmentReads += 1;
+        return environment;
+      },
+      promptRenderer: async ({ environment: resolved }) => {
+        assert.equal(resolved, environment);
+        return { prompt: "Composed" };
+      }
+    });
+    await runtime.store.createSession({
+      metadata: sourceMetadata(targetRoot, "lazy-environment"),
+      runtimeKind: "genesis",
+      sessionId: "lazy-environment"
+    });
+    await mkdir(sourcePath(targetRoot, "lazy-environment"), { recursive: true });
+    await runtime.getSession("lazy-environment");
+    await runtime.listSessionSummaries({ statusGroup: "open" });
+    assert.equal(environmentReads, 0);
+    await Promise.all([
+      runtime.renderPrompt("lazy-environment", { task: "deslop", request: "Review this commit." }),
+      runtime.resolvePromptEnvironment()
+    ]);
+    assert.equal(environmentReads, 1);
+  });
+});
+
 test("plain runtime creates a Genesis session and awaits source materialization", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const calls = [];

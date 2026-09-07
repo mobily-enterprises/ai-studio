@@ -96,7 +96,7 @@ async function inspectVibe64ForContext(context = {}, inspect, unconfigured) {
   try {
     return await inspect({
       environment: {
-        ...(context.runtime?.promptEnvironment || process.env),
+        ...(await context.runtime?.resolvePromptEnvironment() || process.env),
         ...(context.projectEnvironment || {})
       },
       projectRoot: sourceRoot

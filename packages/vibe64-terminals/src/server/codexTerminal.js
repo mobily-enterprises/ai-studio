@@ -1380,6 +1380,7 @@ function createCodexTerminalController({
   const codexAppServerSessionClosures = new Map();
   const codexAppServerRenewalSessionClosures = new WeakSet();
   const codexAppServerMessageDeliveries = new Map();
+  const codexAppServerPendingUserMessages = new Map();
   const codexAppServerConversationTurnStarts = new Map();
   const codexAppServerEventSubscriptions = new Map();
   const codexAppServerManagedSessions = new Map();
@@ -4943,6 +4944,22 @@ function createCodexTerminalController({
     const run = await readCodexAppServerAgentRunForSession(store, normalizedSessionId);
     const ownership = codexAppServerPendingUserMessageOwnership(run, clientId);
     if (ownership) {
+      // The provider's user-message receipt precedes its answer notifications.
+      // Persist the authored message here so answers cannot overtake it while
+      // the original HTTP request is still finishing startup bookkeeping.
+      const pendingMessage = codexAppServerPendingUserMessages.get(
+        `${codexTerminalNamespace(normalizedSessionId)}\0${ownership.clientId}`
+      );
+      if (pendingMessage) {
+        await writeCodexAppServerDeliveredUserMessage(
+          { store },
+          normalizedSessionId,
+          pendingMessage.text,
+          ownership.clientId,
+          await currentConversationActorMetadata(pendingMessage.vibe64User),
+          pendingMessage.attachments
+        );
+      }
       const turn = codexAppServerTurnStateFromAgentRun(run || {});
       const providerTurnId = codexAppServerNotificationTurnId(notification);
       const providerTurnAlreadyTracked = normalizeText(turn.state) === "active" &&
@@ -12269,25 +12286,37 @@ function createCodexTerminalController({
     ) {
       return null;
     }
-    const written = await runtime.store.writeConversationUserMessage(normalizedSessionId, {
-      attachments,
-      messageId: normalizeText(messageId),
-      text: message,
-      turnMetadata
-    });
-    if (!written) {
-      return null;
+    const pendingMessage = codexAppServerPendingUserMessages.get(
+      `${codexTerminalNamespace(normalizedSessionId)}\0${normalizeText(messageId)}`
+    );
+    if (pendingMessage?.recording) {
+      return pendingMessage.recording;
     }
-    await publishSessionChanged(normalizedSessionId, {
-      payload: {
-        conversationLogPatch: {
-          turn: written,
-          type: "upsert-turn"
-        }
-      },
-      reason: "codex-app-server-message-delivered"
-    });
-    return written;
+    const recording = (async () => {
+      const written = await runtime.store.writeConversationUserMessage(normalizedSessionId, {
+        attachments,
+        messageId: normalizeText(messageId),
+        text: message,
+        turnMetadata
+      });
+      if (!written) {
+        return null;
+      }
+      await publishSessionChanged(normalizedSessionId, {
+        payload: {
+          conversationLogPatch: {
+            turn: written,
+            type: "upsert-turn"
+          }
+        },
+        reason: "codex-app-server-message-delivered"
+      });
+      return written;
+    })();
+    if (pendingMessage) {
+      pendingMessage.recording = recording;
+    }
+    return recording;
   }
 
   async function recordCodexTerminalInputGitActor(sessionId = "", data = "", input = {}) {
@@ -13138,6 +13167,13 @@ function createCodexTerminalController({
       if (existing) {
         return existing;
       }
+      if (deliveryKey) {
+        codexAppServerPendingUserMessages.set(deliveryKey, {
+          attachments: input?.displayAttachments,
+          text: codexAppServerMessageDisplayText(input, codexAppServerMessageText(input)),
+          vibe64User: input?.vibe64User || null
+        });
+      }
       const delivery = vibe64Result(async () => {
         if (!codexAppServerPromptDeliveryEnabled) {
           return writeCodexAppServerControlDisabledFailure(sessionId);
@@ -13191,6 +13227,7 @@ function createCodexTerminalController({
       } finally {
         if (deliveryKey && codexAppServerMessageDeliveries.get(deliveryKey) === delivery) {
           codexAppServerMessageDeliveries.delete(deliveryKey);
+          codexAppServerPendingUserMessages.delete(deliveryKey);
         }
       }
     },

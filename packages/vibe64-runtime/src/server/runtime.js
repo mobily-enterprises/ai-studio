@@ -239,7 +239,7 @@ class Vibe64SessionRuntime {
       ? createSessionSource
       : null;
     this.projectSessionSourceRoot = normalizeText(projectSessionSourceRoot);
-    this.promptEnvironment = promptEnvironment && typeof promptEnvironment === "object"
+    this.promptEnvironment = promptEnvironment && ["object", "function"].includes(typeof promptEnvironment)
       ? promptEnvironment
       : process.env;
     this.promptRenderer = typeof promptRenderer === "function"
@@ -439,6 +439,13 @@ class Vibe64SessionRuntime {
     });
   }
 
+  async resolvePromptEnvironment() {
+    if (typeof this.promptEnvironment === "function") {
+      this.promptEnvironment = Promise.resolve().then(this.promptEnvironment);
+    }
+    return this.promptEnvironment;
+  }
+
   async getSession(sessionId, {
     inspectSource = this.inspectSourceByDefault
   } = {}) {
@@ -559,7 +566,7 @@ class Vibe64SessionRuntime {
         id: genesisTask,
         label: normalizeText(request) || genesisTask
       },
-      environment: this.promptEnvironment,
+      environment: await this.resolvePromptEnvironment(),
       input: {
         ...(input && typeof input === "object" && !Array.isArray(input) ? input : {}),
         ...(normalizeText(request) ? { request: normalizeText(request) } : {})

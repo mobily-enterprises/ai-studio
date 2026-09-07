@@ -154,8 +154,8 @@ async function outputContext(t) {
     },
     runtime: {
       adapter: null,
-      promptEnvironment: {
-        DB_PASSWORD: "do-not-return-this"
+      async resolvePromptEnvironment() {
+        return { DB_PASSWORD: "do-not-return-this" };
       }
     },
     session: {

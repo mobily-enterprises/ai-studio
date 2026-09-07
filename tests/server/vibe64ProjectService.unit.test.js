@@ -19,6 +19,9 @@ import {
   createStudioProjectContext
 } from "../../packages/vibe64-core/src/server/studioProjectContext.js";
 import {
+  runWithProjectRequestContext
+} from "../../packages/vibe64-core/src/server/projectRequestContext.js";
+import {
   SESSION_SOURCE_PATH_AUTHORITY_MANAGED
 } from "../../packages/vibe64-core/src/server/sessionSourcePath.js";
 import {
@@ -1110,7 +1113,12 @@ test("the project service exposes the selected session source without leaking it
 
 test("Env is user-owned and reaches Genesis sessions without an adapter", async () => {
   await withTemporaryRoot(async (targetRoot) => {
+    let environmentInspections = 0;
     const service = projectService(targetRoot, {
+      inspectEnvironment() {
+        environmentInspections += 1;
+        return { components: [], environmentDefaults: [], files: [], resources: [], status: "ready" };
+      },
       env: {
         PLATFORM_VALUE: "platform"
       }
@@ -1160,10 +1168,51 @@ test("Env is user-owned and reaches Genesis sessions without an adapter", async 
       BOOKS_ORIGIN: "http://books.test"
     });
 
+    const beforeRuntime = environmentInspections;
     const runtime = await service.createRuntime();
-    assert.equal(runtime.promptEnvironment.PLATFORM_VALUE, "platform");
-    assert.equal(runtime.promptEnvironment.BOOKS_API_KEY, "secret-value");
+    await runtime.store.createSession({ runtimeKind: "genesis", sessionId: "env-lazy-read" });
+    await runtime.getSession("env-lazy-read", { inspectSource: false });
+    assert.equal(environmentInspections, beforeRuntime);
+    const promptEnvironment = await runtime.resolvePromptEnvironment();
+    assert.equal(promptEnvironment.PLATFORM_VALUE, "platform");
+    assert.equal(promptEnvironment.BOOKS_API_KEY, "secret-value");
+    assert.equal(environmentInspections, beforeRuntime + 1);
     assert.equal(runtime.adapter, undefined);
+  });
+});
+
+test("lazy prompt environment stays with the runtime's project when resolved from another request", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const contexts = ["alpha", "beta"].map((slug) => ({
+      projectRuntimeRoot: path.join(targetRoot, slug, "runtime"),
+      slug,
+      sourceRoot: path.join(targetRoot, slug, "source"),
+      targetRoot: path.join(targetRoot, slug, "source")
+    }));
+    for (const context of contexts) {
+      await mkdir(context.sourceRoot, { recursive: true });
+    }
+    const service = projectService(targetRoot, {
+      inspectEnvironment() {
+        return { components: [], environmentDefaults: [], files: [], resources: [], status: "ready" };
+      }
+    });
+    const runtime = await runWithProjectRequestContext(contexts[0], async () => {
+      await service.saveEnvUserValues({
+        environment: "dev",
+        values: { PROJECT_VALUE: { secret: false, value: "alpha" } }
+      });
+      return service.createRuntime({ inspectSource: false });
+    });
+    await runWithProjectRequestContext(contexts[1], async () => {
+      await service.saveEnvUserValues({
+        environment: "dev",
+        values: { PROJECT_VALUE: { secret: false, value: "beta" } }
+      });
+      assert.equal((await runtime.resolvePromptEnvironment()).PROJECT_VALUE, "alpha");
+      const otherRuntime = await service.createRuntime({ inspectSource: false });
+      assert.equal((await otherRuntime.resolvePromptEnvironment()).PROJECT_VALUE, "beta");
+    });
   });
 });
 
@@ -1355,7 +1404,7 @@ test("current-app inspection resolves Env without materializing session files", 
     });
     const service = projectService(targetRoot, {
       inspectEnvironment({ projectRoot }) {
-        if (blockNextTargetInspection && projectRoot === targetRoot) {
+        if (blockNextTargetInspection && projectRoot === quiescedSource) {
           blockNextTargetInspection = false;
           targetInspectionStarted();
           return new Promise((resolve) => {
@@ -1432,17 +1481,11 @@ test("current-app inspection resolves Env without materializing session files", 
   });
 });
 
-test("Env saving cannot update project state or source projection after renewal wins admission", async () => {
+test("Env saving cannot update project state or source projection once renewal is quiesced", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const sessionId = "env-save-renewal";
     const sessionSource = sourcePath(targetRoot, sessionId);
     await mkdir(path.join(sessionSource, ".git", "info"), { recursive: true });
-    let blockNextTargetInspection = false;
-    let releaseTargetInspection = null;
-    let targetInspectionStarted = null;
-    const targetInspectionStart = new Promise((resolve) => {
-      targetInspectionStarted = resolve;
-    });
     const declaration = {
       components: ["example-stack"],
       environmentDefaults: [],
@@ -1451,14 +1494,7 @@ test("Env saving cannot update project state or source projection after renewal 
       status: "ready"
     };
     const service = projectService(targetRoot, {
-      inspectEnvironment({ projectRoot }) {
-        if (blockNextTargetInspection && projectRoot === targetRoot) {
-          blockNextTargetInspection = false;
-          targetInspectionStarted();
-          return new Promise((resolve) => {
-            releaseTargetInspection = () => resolve(declaration);
-          });
-        }
+      inspectEnvironment() {
         return declaration;
       }
     });
@@ -1492,7 +1528,10 @@ test("Env saving cannot update project state or source projection after renewal 
       userValues: await readFile(userValuesPath, "utf8")
     };
 
-    blockNextTargetInspection = true;
+    await store.quiesceSessionForRenewal({
+      renewalId: "renewal-env-save",
+      sourceSessionId: sessionId
+    });
     const pendingSave = service.saveEnvUserValues({
       environment: "dev",
       sessionId,
@@ -1503,12 +1542,7 @@ test("Env saving cannot update project state or source projection after renewal 
         }
       }
     });
-    await targetInspectionStart;
-    await store.quiesceSessionForRenewal({
-      renewalId: "renewal-env-save",
-      sourceSessionId: sessionId
-    });
-    releaseTargetInspection();
+
 
     const blocked = await pendingSave;
     assert.equal(blocked.ok, false);
@@ -2045,14 +2079,8 @@ test("managed app identity writes cannot mutate a renewal-quiesced session sourc
     const sessionId = "identity-renewal";
     const sessionSource = sourcePath(targetRoot, sessionId);
     await mkdir(sessionSource, { recursive: true });
-    let blockNextTargetInspection = false;
-    let releaseTargetInspection = null;
-    let targetInspectionStarted = null;
-    const targetInspectionStart = new Promise((resolve) => {
-      targetInspectionStarted = resolve;
-    });
     const service = projectService(targetRoot, {
-      inspectEnvironment({ projectRoot }) {
+      inspectEnvironment() {
         const declaration = {
           components: [],
           environmentDefaults: [],
@@ -2060,13 +2088,6 @@ test("managed app identity writes cannot mutate a renewal-quiesced session sourc
           resources: [],
           status: "ready"
         };
-        if (blockNextTargetInspection && projectRoot === targetRoot) {
-          blockNextTargetInspection = false;
-          targetInspectionStarted();
-          return new Promise((resolve) => {
-            releaseTargetInspection = () => resolve(declaration);
-          });
-        }
         return declaration;
       }
     });
@@ -2087,7 +2108,10 @@ test("managed app identity writes cannot mutate a renewal-quiesced session sourc
     assert.equal(active.ok, true);
     const storedPath = path.join(sessionSource, ".vibe64", "preview-identities.json");
     const storedBeforeRenewal = await readFile(storedPath, "utf8");
-    blockNextTargetInspection = true;
+    await store.quiesceSessionForRenewal({
+      renewalId: "renewal-preview-identities",
+      sourceSessionId: sessionId
+    });
     const pendingSave = service.savePreviewApplicationIdentities({
       identities: [{
         name: "member",
@@ -2096,12 +2120,7 @@ test("managed app identity writes cannot mutate a renewal-quiesced session sourc
       }],
       sessionId
     });
-    await targetInspectionStart;
-    await store.quiesceSessionForRenewal({
-      renewalId: "renewal-preview-identities",
-      sourceSessionId: sessionId
-    });
-    releaseTargetInspection();
+
 
     const blocked = await pendingSave;
 

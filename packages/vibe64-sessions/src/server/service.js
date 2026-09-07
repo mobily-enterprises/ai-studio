@@ -1471,7 +1471,7 @@ function createService({
     async interruptAgentTurn(sessionId, input = {}) {
       return sessionResult(async () => {
         const result = await terminals.interruptAgentTurn(sessionId, input, {
-          runtime: await project.createRuntime()
+          runtime: await project.createRuntime({ inspectSource: false })
         });
         if (result?.ok !== false) {
           await publishSessionChanged(sessionId, {

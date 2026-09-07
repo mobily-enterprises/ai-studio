@@ -45,6 +45,7 @@ import {
   currentProjectSourceConfigRoot,
   currentProjectSourceRoot,
   currentProjectTargetRoot,
+  runWithProjectRequestContext,
   runWithResolvedProjectRequestContext
 } from "@local/vibe64-core/server/projectRequestContext";
 import {
@@ -1086,13 +1087,14 @@ function createService({
 
   async function createRuntime(options = {}) {
     const target = requireSelectedTargetRoot();
+    const requestContext = currentProjectRequestContext() || {};
     return new Vibe64SessionRuntime({
       createSessionSource: options.createSessionSource,
       inspectSourceByDefault: options.inspectSource !== false,
       projectContextRoot: target,
       projectRuntimeRoot: selectedProjectRuntimeRoot(),
       projectSessionSourceRoot: selectedSessionSourceRoot(),
-      promptEnvironment: await promptEnvironment(),
+      promptEnvironment: () => runWithProjectRequestContext(requestContext, promptEnvironment),
       store: sessionStore()
     });
   }

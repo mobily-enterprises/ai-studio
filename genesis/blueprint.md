@@ -10,6 +10,10 @@ Each session keeps valuable work recoverable and separate from unrelated work.
 Files refreshes after the assistant finishes a turn without discarding the
 person's place or unsaved edits. People can download individual files and keep
 personal project-wide stars, reachable from chat and the file browser in any session.
+Chat responds to confirmed message acceptance and interruption immediately;
+background bookkeeping must not keep Send, Stop, or the saved-commit cleanup
+prompt busy after that confirmation.
+An interruption failure stays visible without covering the composer or its retry controls.
 People can explore a project's database through a readable relationship diagram,
 starting with its keys and expanding detail when needed. Expanding fields keeps
 every table in place and preserves the current zoom. Connections identify

@@ -1,6 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, proxyRefs, ref, unref, watch } from "vue";
-import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
-import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
+import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import { getHttpWebClient } from "@jskit-ai/http-web/client/lib/httpClient";
 import { useVibe64ConversationLog } from "@/composables/useVibe64ConversationLog.js";
 import { useVibe64MountedSessionData } from "@/composables/useVibe64MountedSessionData.js";
@@ -15,8 +14,6 @@ import {
 } from "@/lib/vibe64SessionViewModel.js";
 import {
   agentSettingsInputFromContext,
-  VIBE64_SESSIONS_API_SUFFIX,
-  VIBE64_SURFACE_ID,
   vibe64SessionPath
 } from "@/lib/vibe64SessionRequestConfig.js";
 import { vibe64ApiError, vibe64ApiResponseError } from "@/lib/vibe64ApiResponses.js";
@@ -382,29 +379,20 @@ function useVibe64SessionRuntimeHost(props, emit) {
     launchBusy: Boolean(mounted.detailState.value?.loading)
   }));
 
-  const interruptCommand = useCommand({
-    access: "never",
-    apiSuffix: VIBE64_SESSIONS_API_SUFFIX,
-    buildCommandOptions: (_payload, { context }) => ({
-      method: "POST",
-      path: vibe64SessionPath(
-        readRefOrGetterValue(props.sessionData.sessionsApiPath),
-        context?.sessionId,
-        "/agent-turn/interrupt"
-      )
-    }),
-    buildCommandPayload: (_payload, { context }) => agentTurnControlPayloadFromContext(context),
-    fallbackRunError: "Assistant turn could not be interrupted.",
-    messages: { error: "Assistant turn could not be interrupted." },
-    ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
-    placementSource: "vibe64.sessions.agent-turn.interrupt",
-    suppressSuccessMessage: true,
-    surfaceId: VIBE64_SURFACE_ID,
-    writeMethod: "POST"
+  const interruptFeedback = useUiFeedback({
+    dedupeWindowMs: 0,
+    errorChannel: "banner",
+    source: "vibe64.sessions.agent-turn.interrupt.feedback"
   });
 
+  watch([
+    selectedSessionId,
+    () => props.active,
+    () => selectedSession.value?.agentSession?.turn?.id,
+    () => selectedSession.value?.agentSession?.turn?.active
+  ], () => interruptFeedback.success());
+
   const pendingMessageControllers = new Map();
-  let messageRequestTail = Promise.resolve();
 
   async function interruptAgentTurn(input = "user_interrupt") {
     const sessionId = selectedSessionId.value;
@@ -414,12 +402,28 @@ function useVibe64SessionRuntimeHost(props, emit) {
     const control = input && typeof input === "object" && !Array.isArray(input)
       ? input
       : { reason: String(input || "user_interrupt") };
+    const turnId = selectedSession.value?.agentSession?.turn?.id;
+    interruptFeedback.success();
     try {
-      const result = await interruptCommand.run({ ...control, sessionId });
-      await refreshSessionData().catch(() => null);
+      const result = await getHttpWebClient().request(
+        vibe64SessionPath(
+          readRefOrGetterValue(props.sessionData.sessionsApiPath),
+          sessionId,
+          "/agent-turn/interrupt"
+        ),
+        { body: agentTurnControlPayloadFromContext({ ...control, sessionId }), method: "POST" }
+      );
+      if (result?.ok === false) {
+        throw vibe64ApiError(result, "Assistant turn could not be interrupted.");
+      }
+      void refreshSessionData({ reason: "agent-turn-interrupted" }).catch(() => null);
       return result?.ok !== false;
-    } catch {
-      await refreshSessionData().catch(() => null);
+    } catch (error) {
+      const turn = selectedSession.value?.agentSession?.turn;
+      if (props.active && selectedSessionId.value === sessionId && turn?.active && turn.id === turnId) {
+        interruptFeedback.error(error, "Assistant turn could not be interrupted.");
+      }
+      void refreshSessionData({ reason: "agent-turn-interrupt-failed" }).catch(() => null);
       return false;
     }
   }
@@ -438,7 +442,9 @@ function useVibe64SessionRuntimeHost(props, emit) {
     if (messageId) {
       pendingMessageControllers.set(messageId, controller);
     }
-    const request = messageRequestTail.then(async () => {
+    // A delivered message may be confirmed by realtime before its HTTP response.
+    // Do not make the next message wait for that already-accepted request.
+    const request = (async () => {
       try {
         const signal = agentMessageAcceptanceSignal(controller);
         const result = await getHttpWebClient().request(
@@ -465,8 +471,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
           pendingMessageControllers.delete(messageId);
         }
       }
-    });
-    messageRequestTail = request.then(() => undefined, () => undefined);
+    })();
     return request;
   }
 
@@ -657,6 +662,7 @@ function useVibe64SessionRuntimeHost(props, emit) {
   }, { flush: "post", immediate: true });
 
   onBeforeUnmount(() => {
+    interruptFeedback.success();
     workStateActive = false;
     workStateRefreshQueue.dispose();
     for (const controller of pendingMessageControllers.values()) {

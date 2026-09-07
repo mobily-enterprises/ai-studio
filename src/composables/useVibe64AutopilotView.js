@@ -930,6 +930,8 @@ function useVibe64AutopilotView(props, emit, {
       return false;
     }
     const messageId = String(existingMessageId || "").trim() || nextMessageId();
+    const sendingSessionId = sessionId.value;
+    const sendingProjectSlug = projectSlug.value;
     const optimistic = optimisticMessage(payload, messageId);
     optimisticMessages.value = [
       ...optimisticMessages.value.filter((message) => message.id !== messageId),
@@ -937,15 +939,34 @@ function useVibe64AutopilotView(props, emit, {
     ];
     composerSubmissionKind.value = submissionKind === "steer" ? "steer" : "send";
     composerSending.value = true;
+    let acknowledgeMessage;
+    const receipt = new Promise((resolve) => { acknowledgeMessage = resolve; });
+    const stopWatchingReceipt = watch(
+      [sessionId, projectSlug, () => props.conversationLog?.turns],
+      ([currentSessionId, currentProjectSlug, turns]) => {
+        if (currentSessionId !== sendingSessionId || currentProjectSlug !== sendingProjectSlug) {
+          acknowledgeMessage(false);
+        } else if (Array.isArray(turns) && turns.some((turn) => turn?.user?.messageId === messageId)) {
+          acknowledgeMessage({ ok: true });
+        }
+      },
+      { immediate: true }
+    );
     try {
       const sendMessage = typeof sendMainChatMessage === "function"
         ? sendMainChatMessage
         : props.sendAgentMessage;
-      const response = await sendMessage({
-        ...payload,
-        ...(requestAgentSettings.value ? { agentSettings: requestAgentSettings.value } : {}),
-        messageId
-      });
+      const response = await Promise.race([
+        sendMessage({
+          ...payload,
+          ...(requestAgentSettings.value ? { agentSettings: requestAgentSettings.value } : {}),
+          messageId
+        }),
+        receipt
+      ]);
+      if (sessionId.value !== sendingSessionId || projectSlug.value !== sendingProjectSlug) {
+        return false;
+      }
       const accepted = response !== false && response?.ok !== false;
       const suggested = response?.suggested === true;
       if (!accepted) {
@@ -963,6 +984,9 @@ function useVibe64AutopilotView(props, emit, {
       }
       return accepted;
     } catch (error) {
+      if (sessionId.value !== sendingSessionId || projectSlug.value !== sendingProjectSlug) {
+        return false;
+      }
       const message = normalizedAgentTurnText(error?.message || error) || "Message could not be sent.";
       updateOptimisticMessage(messageId, {
         error: message,
@@ -974,8 +998,11 @@ function useVibe64AutopilotView(props, emit, {
       }
       return false;
     } finally {
-      composerSending.value = false;
-      composerSubmissionKind.value = "";
+      stopWatchingReceipt();
+      if (sessionId.value === sendingSessionId && projectSlug.value === sendingProjectSlug) {
+        composerSending.value = false;
+        composerSubmissionKind.value = "";
+      }
     }
   }
 
@@ -1014,7 +1041,12 @@ function useVibe64AutopilotView(props, emit, {
       questionAnswers.value = {};
       selectedAnswerChoice.value = "";
     }
+    const sendingSessionId = sessionId.value;
+    const sendingProjectSlug = projectSlug.value;
     const accepted = await sendChatPayload(payload, { messageId, submissionKind });
+    if (sessionId.value !== sendingSessionId || projectSlug.value !== sendingProjectSlug) {
+      return false;
+    }
     if (accepted) {
       composerAcceptedAttachments.value = includedAttachments;
     }
@@ -1436,6 +1468,8 @@ function useVibe64AutopilotView(props, emit, {
     ) {
       return false;
     }
+    const sendingSessionId = sessionId.value;
+    const sendingProjectSlug = projectSlug.value;
     savedCommitDeslopSending.value = true;
     try {
       const accepted = await sendChatPayload({
@@ -1448,7 +1482,9 @@ function useVibe64AutopilotView(props, emit, {
       }
       return accepted;
     } finally {
-      savedCommitDeslopSending.value = false;
+      if (sessionId.value === sendingSessionId && projectSlug.value === sendingProjectSlug) {
+        savedCommitDeslopSending.value = false;
+      }
     }
   }
 
@@ -1456,11 +1492,32 @@ function useVibe64AutopilotView(props, emit, {
     if (!agentStopEnabled.value) {
       return false;
     }
+    const stoppingSessionId = sessionId.value;
+    const stoppingProjectSlug = projectSlug.value;
+    const stoppingTurnId = normalizedAgentTurnText(activeAgentTurn.value.id);
     interrupting.value = true;
+    let acknowledgeStop;
+    const receipt = new Promise((resolve) => { acknowledgeStop = resolve; });
+    const stopWatchingReceipt = watch(
+      [sessionId, projectSlug, () => activeAgentTurn.value.id, () => activeAgentTurn.value.active],
+      ([currentSessionId, currentProjectSlug, turnId, active]) => {
+        if (currentSessionId !== stoppingSessionId || currentProjectSlug !== stoppingProjectSlug) {
+          acknowledgeStop(false);
+        } else if (stoppingTurnId && normalizedAgentTurnText(turnId) === stoppingTurnId && active === false) {
+          acknowledgeStop(true);
+        }
+      }
+    );
     try {
-      return await props.interruptAgentTurn({ reason: "user_interrupt" }) !== false;
+      return await Promise.race([
+        props.interruptAgentTurn({ reason: "user_interrupt" }),
+        receipt
+      ]) !== false;
     } finally {
-      interrupting.value = false;
+      stopWatchingReceipt();
+      if (sessionId.value === stoppingSessionId && projectSlug.value === stoppingProjectSlug) {
+        interrupting.value = false;
+      }
     }
   }
 
@@ -1774,7 +1831,10 @@ function useVibe64AutopilotView(props, emit, {
     rightPaneTab.value = "dashboard";
   }, { immediate: true });
 
-  watch(sessionId, () => {
+  watch([sessionId, projectSlug], () => {
+    composerSending.value = false;
+    composerSubmissionKind.value = "";
+    interrupting.value = false;
     composerDraft.value = "";
     composerAttachments.value = [];
     composerAcceptedAttachments.value = false;

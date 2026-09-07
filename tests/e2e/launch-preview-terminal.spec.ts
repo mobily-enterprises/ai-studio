@@ -3457,6 +3457,524 @@ test("@preview-lifecycle an opened long-running output stays open after the laun
   expect(Math.abs(hostHeightAfter - hostHeightBefore)).toBeLessThan(1);
 });
 
+for (const width of [1440, 390]) {
+  test(`@chat-responsive confirmed Send permits steering before HTTP finishes at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockLaunchTerminalSocket(page);
+    const session = sessionPayload();
+    const conversationLog: unknown[] = [];
+    await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, conversationLog, session });
+    const requests: Record<string, unknown>[] = [];
+    let releaseFirst!: () => void;
+    const firstResponse = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}/agent-message`, async (route) => {
+      const payload = route.request().postDataJSON();
+      requests.push(payload);
+      if (requests.length === 1) {
+        await firstResponse;
+        await fulfillJson(route, { ok: false, error: "Late transport failure" }, { status: 500 });
+      } else {
+        await fulfillJson(route, { ok: true, delivered: true, messageId: payload.messageId });
+      }
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      const composer = page.getByLabel("Message AI assistant");
+      await composer.fill("Inspect the booking form");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      await expect.poll(() => requests.length).toBe(1);
+      await expect(page.getByRole("button", { name: "Sending message" })).toBeVisible();
+      const turn = {
+        turnId: "000001",
+        user: {
+          at: new Date().toISOString(),
+          messageId: requests[0].messageId,
+          role: "user",
+          text: "Inspect the booking form"
+        }
+      };
+      conversationLog.push(turn);
+      session.revision = 2;
+      Object.assign(session.agentSession.turn, { active: true, id: "turn-responsive", state: "active" });
+      await publishChatSessionChange(page, {
+        agentSession: session.agentSession,
+        conversationLogPatch: { type: "upsert-turn", turn },
+        reason: "codex-app-server-message-delivered",
+        revision: 2,
+        sessionId: SESSION_ID
+      });
+      await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeEnabled();
+      await composer.fill("Check the mobile form too");
+      await page.getByRole("button", { name: "Steer assistant", exact: true }).click();
+      await expect.poll(() => requests.length).toBe(2);
+      expect(requests[1].message).toBe("Check the mobile form too");
+      await expect(composer).toHaveValue("");
+      await composer.fill("Preserve this next draft");
+      releaseFirst();
+      await expect(composer).toHaveValue("Preserve this next draft");
+      await expect(page.getByRole("button", { name: "Steer assistant", exact: true })).toBeEnabled();
+      await expect(page.getByText("Late transport failure", { exact: true })).toHaveCount(0);
+    } finally {
+      releaseFirst();
+    }
+  });
+
+  test(`@chat-responsive confirmed Stop permits a new Send before HTTP finishes at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockLaunchTerminalSocket(page);
+    const session = sessionPayload();
+    Object.assign(session.agentSession.turn, { active: true, id: "turn-stopping", state: "active" });
+    const requests: TemporaryAiRecoveryRequests = { mainMessages: [], temporaryStarts: [], temporaryTurns: [] };
+    await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+      session,
+      temporaryAiRecoveryRequests: requests
+    });
+    let stopRequests = 0;
+    let releaseStop!: () => void;
+    const stopResponse = new Promise<void>((resolve) => { releaseStop = resolve; });
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}/agent-turn/interrupt`, async (route) => {
+      stopRequests += 1;
+      await stopResponse;
+      await fulfillJson(route, { ok: true });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await page.getByRole("button", { name: "Stop", exact: true }).click();
+      await expect.poll(() => stopRequests).toBe(1);
+      await expect(page.getByRole("button", { name: "Stopping…", exact: true })).toBeDisabled();
+      session.revision = 2;
+      Object.assign(session.agentSession.turn, { active: false, state: "idle" });
+      await publishChatSessionChange(page, {
+        agentSession: session.agentSession,
+        reason: "codex-app-server-turn-idle",
+        revision: 2,
+        sessionId: SESSION_ID
+      });
+      const composer = page.getByLabel("Message AI assistant");
+      await composer.fill("fdd");
+      await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      await expect.poll(() => requests.mainMessages.length).toBe(1);
+      expect(requests.mainMessages[0].message).toBe("fdd");
+      await composer.fill("Next draft survives Stop completion");
+      releaseStop();
+      await expect(composer).toHaveValue("Next draft survives Stop completion");
+      await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    } finally {
+      releaseStop();
+    }
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`@chat-stress only the exact receipt acknowledges Send at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page);
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await chat.composer.fill("Check the booking flow");
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      await chat.receipt(0, { messageId: "unrelated-message" });
+      await chat.publish({
+        reason: "codex-app-server-commentary",
+        conversationLogPatch: { type: "upsert-turn", turn: {
+          turnId: "000003",
+          commentary: [{ role: "assistant", at: new Date().toISOString(), text: "An unrelated update arrived." }]
+        } }
+      });
+      await expect(page.getByRole("button", { name: "Sending message" })).toBeDisabled();
+      await chat.composer.fill("Keep typing while delivery is pending");
+      await chat.composer.press("Enter");
+      await chat.composer.press("Enter");
+      expect(chat.messages.length).toBe(1);
+      await chat.receipt(0);
+      await chat.receipt(0);
+      await expect(chat.steer).toBeEnabled();
+      await chat.steer.click();
+      await expect.poll(() => chat.messages.length).toBe(2);
+      expect(chat.messages[1].body.message).toBe("Keep typing while delivery is pending");
+      expect(chat.messages[0].settled).toBe(false);
+      await chat.messages[1].finish();
+      expect(chat.errors).toEqual([]);
+    } finally { await chat.close(); }
+  });
+
+  test(`@chat-stress HTTP acceptance works without a realtime receipt at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page);
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await chat.composer.fill("First message");
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      await chat.composer.fill("Second draft");
+      await chat.messages[0].finish();
+      await expect(chat.send).toBeEnabled();
+      await expect(chat.composer).toHaveValue("Second draft");
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(2);
+      expect(chat.messages[1].body.messageId).not.toBe(chat.messages[0].body.messageId);
+      await chat.messages[1].finish();
+      expect(chat.errors).toEqual([]);
+    } finally { await chat.close(); }
+  });
+
+  test(`@chat-stress failed Send resends the same message and keeps a newer draft at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page);
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await chat.composer.fill("The original message");
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      await chat.composer.fill("My next draft stays here");
+      await chat.messages[0].finish({ ok: false, error: "Deliberate delivery failure" }, 503);
+      await expect(page.getByText("Deliberate delivery failure", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: /Resend/u }).click();
+      await expect.poll(() => chat.messages.length).toBe(2);
+      expect(chat.messages[1].body.messageId).toBe(chat.messages[0].body.messageId);
+      expect(chat.messages[1].body.message).toBe("The original message");
+      await chat.receipt(1);
+      await expect(chat.steer).toBeEnabled();
+      await expect(chat.composer).toHaveValue("My next draft stays here");
+      expect(chat.errors).toEqual([]);
+    } finally { await chat.close(); }
+  });
+
+  test(`@chat-stress Stop ignores another turn and late failure cannot disturb a new Stop at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page, { active: true });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(1);
+      await chat.turn(false, "unrelated-turn");
+      await chat.composer.fill("A draft after Stop");
+      await expect(chat.send).toBeDisabled();
+      await chat.turn(false, "turn-stress");
+      await expect(chat.send).toBeEnabled();
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      await chat.receipt(0, { turnId: "turn-new" });
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(2);
+      await chat.interrupts[0].finish({ ok: false, error: "Old Stop response failed" }, 503);
+      await expect(page.getByRole("button", { name: "Stopping…", exact: true })).toBeDisabled();
+      await chat.turn(false, "turn-new");
+      await chat.composer.fill("Still usable");
+      await expect(chat.send).toBeEnabled();
+      expect(chat.errors).toEqual([]);
+    } finally { await chat.close(); }
+  });
+
+  test(`@chat-stress a rejected Stop can be retried without losing the draft at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page, { active: true });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await chat.composer.fill("Keep this guidance");
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(1);
+      await chat.interrupts[0].finish({ ok: false, error: "Deliberate interrupt failure" }, 503);
+      const failure = page.getByRole("alert").filter({ hasText: "Deliberate interrupt failure" });
+      await expect(failure).toBeVisible();
+      await expect(chat.stop).toBeEnabled();
+      await expect(chat.steer).toBeEnabled();
+      await expect(chat.composer).toHaveValue("Keep this guidance");
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(2);
+      await expect(failure).toBeHidden();
+      await chat.interrupts[1].finish({ ok: false, error: "Deliberate interrupt failure" }, 503);
+      await expect(failure).toBeVisible();
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(3);
+      await expect(failure).toBeHidden();
+      await chat.turn(false, "turn-stress");
+      await expect(chat.send).toBeEnabled();
+      expect(chat.errors).toEqual([]);
+    } finally { await chat.close(); }
+  });
+
+  test(`@chat-stress Stop acknowledgement does not wait for a held session refresh at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page, { active: true });
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    let refreshes = 0;
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await expect(chat.stop).toBeEnabled();
+      await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}`, async (route) => {
+        refreshes += 1;
+        await refreshGate;
+        await fulfillJson(route, { ok: true, ...chat.sessions[0] });
+      });
+      await chat.composer.fill("Input remains available");
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(1);
+      await chat.interrupts[0].finish();
+      await expect.poll(() => refreshes).toBeGreaterThan(0);
+      await expect(chat.stop).toBeEnabled();
+      await expect(chat.steer).toBeEnabled();
+      await chat.turn(false, "turn-stress");
+      await expect(chat.send).toBeEnabled();
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      expect(chat.messages[0].body.message).toBe("Input remains available");
+      expect(chat.errors).toEqual([]);
+    } finally { releaseRefresh(); await chat.close(); }
+  });
+
+  for (const operation of ["Send", "Stop"]) {
+    test(`@chat-stress switching sessions during ${operation} preserves independent drafts at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const chat = await responsiveChatHarness(page, { active: operation === "Stop", twoSessions: true });
+      try {
+        await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+        await chat.visible.locator(".studio-ai-sessions__tab", { hasText: "Alpha" }).click();
+        if (operation === "Stop") {
+          await chat.stop.click();
+          await expect.poll(() => chat.interrupts.length).toBe(1);
+        } else {
+          await chat.composer.fill("Alpha's pending message");
+          await chat.send.click();
+          await expect.poll(() => chat.messages.length).toBe(1);
+        }
+        await chat.composer.fill("Alpha's next draft");
+        await chat.visible.locator(".studio-ai-sessions__tab", { hasText: "Beta" }).click();
+        await chat.composer.fill("Beta's message");
+        await chat.send.click();
+        const index = operation === "Stop" ? 0 : 1;
+        await expect.poll(() => chat.messages.length).toBe(index + 1);
+        expect(chat.messages[index].sessionId).toBe(`${SESSION_ID}-beta`);
+        await chat.messages[index].finish();
+        await chat.composer.fill("Beta's next draft");
+        await (operation === "Stop" ? chat.interrupts[0] : chat.messages[0])
+          .finish({ ok: false, error: "Alpha's late failure" }, 503);
+        await expect(chat.composer).toHaveValue("Beta's next draft");
+        await expect(chat.send).toBeEnabled();
+        if (operation === "Stop") {
+          await expect(page.getByRole("button", { name: "Stopping…", exact: true, includeHidden: true })).toHaveCount(0);
+          await expect(page.getByRole("alert").filter({ hasText: "Alpha's late failure" })).toBeHidden();
+        }
+        await chat.visible.locator(".studio-ai-sessions__tab", { hasText: "Alpha" }).click();
+        await expect(chat.composer).toHaveValue("Alpha's next draft");
+        expect(chat.errors).toEqual([]);
+      } finally { await chat.close(); }
+    });
+  }
+
+  test(`@chat-stress saved-commit Deslop settles its actual banner before HTTP at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page);
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}/work`, async (route) => {
+      await fulfillJson(route, { ok: true, unsaved: true, operation: null, updateOperation: null });
+    });
+    await page.route(`${BASE_URL}${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}/save`, async (route) => {
+      await fulfillJson(route, { ok: true, status: "saved", reconciled: true, saveCommit: "a".repeat(40) });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await page.getByRole("button", { name: "Save selected session work", exact: true }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
+      await expect(page.getByText("Work saved", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: /Deslop|Clean up/iu }).click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      expect(chat.messages[0].body.genesisTask).toBe("deslop");
+      expect(chat.messages[0].body.message).toBe(`Deslop commit ${"a".repeat(40)}.`);
+      await expect(page.getByRole("button", { name: "Starting…", exact: true })).toBeDisabled();
+      await chat.receipt(0);
+      await expect(page.getByText("Work saved", { exact: true })).toHaveCount(0);
+      await expect(chat.stop).toBeEnabled();
+      expect(chat.messages[0].settled).toBe(false);
+      await chat.stop.click();
+      await expect.poll(() => chat.interrupts.length).toBe(1);
+      await chat.turn(false, "turn-stress");
+      await chat.composer.fill("Continue after stopping Deslop");
+      await expect(chat.send).toBeEnabled();
+      expect(chat.errors).toEqual([]);
+    } finally { await chat.close(); }
+  });
+
+  test(`@chat-stress reconnect recovers a missed receipt without waiting for Send HTTP at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const chat = await responsiveChatHarness(page);
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await chat.composer.fill("Accepted while connection was lost");
+      await chat.send.click();
+      await expect.poll(() => chat.messages.length).toBe(1);
+      await page.context().setOffline(true);
+      await chat.receipt(0, { publishReceipt: false });
+      await chat.composer.fill("Draft survives reconnect");
+      await page.context().setOffline(false);
+      await expect(chat.steer).toBeEnabled({ timeout: 20_000 });
+      await expect(chat.composer).toHaveValue("Draft survives reconnect");
+      expect(chat.messages[0].settled).toBe(false);
+      await chat.steer.click();
+      await expect.poll(() => chat.messages.length).toBe(2);
+      expect(chat.errors).toEqual([]);
+    } finally { await page.context().setOffline(false); await chat.close(); }
+  });
+
+  test(`@chat-stress repeated Send and Stop preserve typing through a long history at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const history = Array.from({ length: 150 }, (_, index) => ({
+      turnId: String(index + 1).padStart(6, "0"),
+      user: { role: "user", at: new Date().toISOString(), messageId: `history-${index}`, text: `Historical request ${index}.` },
+      assistant: { role: "assistant", at: new Date().toISOString(), text: `Historical answer ${index}.\n\n${"Detailed implementation evidence. ".repeat(15)}` }
+    }));
+    const chat = await responsiveChatHarness(page, { history });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await expect(chat.composer).toBeVisible();
+      await page.evaluate(() => {
+        const samples: number[] = [];
+        const slowInputs: { duration: number; insertedLength: number; valueLength: number }[] = [];
+        (window as any).__chatInputPaintSamples = samples;
+        (window as any).__chatSlowInputs = slowInputs;
+        document.addEventListener("input", (event) => {
+          if ((event.target as Element)?.getAttribute("aria-label") === "Message AI assistant") {
+            const started = performance.now();
+            const insertedLength = (event as InputEvent).data?.length || 0;
+            const valueLength = (event.target as HTMLTextAreaElement).value.length;
+            requestAnimationFrame(() => {
+              const duration = performance.now() - started;
+              samples.push(duration);
+              if (duration > 100) slowInputs.push({ duration, insertedLength, valueLength });
+            });
+          }
+        }, true);
+      });
+      for (let cycle = 0; cycle < 5; cycle += 1) {
+        await chat.composer.fill(`Cycle ${cycle}: inspect the booking flow`);
+        await chat.send.click();
+        await expect.poll(() => chat.messages.length).toBe(cycle + 1);
+        await chat.composer.pressSequentially("Keep the typed draft.", { delay: 5 });
+        await chat.receipt(cycle, { turnId: `cycle-${cycle}` });
+        await expect(chat.steer).toBeEnabled();
+        await expect(chat.composer).toHaveValue("Keep the typed draft.");
+        await chat.stop.click();
+        await expect.poll(() => chat.interrupts.length).toBe(cycle + 1);
+        await chat.turn(false, `cycle-${cycle}`);
+        await expect(chat.send).toBeEnabled();
+        await expect(chat.composer).toHaveValue("Keep the typed draft.");
+      }
+      for (const request of [...chat.messages, ...chat.interrupts].reverse()) {
+        await request.finish();
+      }
+      await expect(chat.send).toBeEnabled();
+      await expect(chat.composer).toHaveValue("Keep the typed draft.");
+      const samples = await page.evaluate(() => (window as any).__chatInputPaintSamples as number[]);
+      samples.sort((left, right) => left - right);
+      const p95 = samples[Math.floor(samples.length * 0.95)];
+      const slowInputs = await page.evaluate(() => (window as any).__chatSlowInputs);
+      await testInfo.attach("input-to-next-frame.json", { body: JSON.stringify({ width, samples: samples.length, p95, max: samples.at(-1), slowInputs }), contentType: "application/json" });
+      expect(samples.length).toBeGreaterThan(50);
+      // Run with --trace=off for timing; trace snapshots can block frames in this large fixture.
+      if (testInfo.project.use.trace === "off") expect(p95).toBeLessThan(300);
+      expect(chat.errors).toEqual([]);
+      await page.screenshot({ path: testInfo.outputPath("chat-after-repeated-cycles.png") });
+    } finally { await chat.close(); }
+  });
+}
+
+type HeldChatRequest = {
+  body: Record<string, unknown>;
+  sessionId: string;
+  settled: boolean;
+  finish(body?: Record<string, unknown>, status?: number): Promise<void>;
+};
+
+async function responsiveChatHarness(page: Page, {
+  active = false,
+  twoSessions = false,
+  history = []
+}: { active?: boolean; twoSessions?: boolean; history?: unknown[] } = {}) {
+  page.setDefaultTimeout(10_000);
+  await mockLaunchTerminalSocket(page);
+  const sessions = [sessionPayload({ sessionName: twoSessions ? "Alpha" : "Renderer session" })];
+  if (twoSessions) sessions.push(sessionPayload({ sessionId: `${SESSION_ID}-beta`, sessionName: "Beta" }));
+  Object.assign(sessions[0].agentSession.turn, { active, id: "turn-stress", state: active ? "active" : "idle" });
+  const conversationLog = [...history];
+  await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, conversationLog, session: sessions[0], sessionList: sessions });
+  const messages: HeldChatRequest[] = [];
+  const interrupts: HeldChatRequest[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route(/\/vibe64\/sessions\/[^/]+\/(?:agent-message|agent-turn\/interrupt)$/u, async (route) => {
+    const request = route.request();
+    const response = Promise.withResolvers<{ body: Record<string, unknown>; status: number }>();
+    const finished = Promise.withResolvers<void>();
+    const record: HeldChatRequest = {
+      body: request.postDataJSON(),
+      sessionId: new URL(request.url()).pathname.split("/sessions/")[1].split("/")[0],
+      settled: false,
+      async finish(body = { ok: true, delivered: true }, status = 200) {
+        if (!record.settled) {
+          record.settled = true;
+          response.resolve({ body, status });
+        }
+        await finished.promise;
+      }
+    };
+    (request.url().endsWith("/agent-message") ? messages : interrupts).push(record);
+    const result = await response.promise;
+    try { await fulfillJson(route, result.body, { status: result.status }); }
+    finally { finished.resolve(); }
+  });
+  const visible = page.locator(".studio-autopilot__chat-panel:visible");
+  async function publish(change: Record<string, unknown>, sessionId = SESSION_ID) {
+    const session = sessions.find((item) => item.sessionId === sessionId)!;
+    session.revision += 1;
+    await publishChatSessionChange(page, { agentSession: session.agentSession, sessionId, revision: session.revision, ...change });
+  }
+  return {
+    composer: visible.getByLabel("Message AI assistant"),
+    errors, interrupts, messages, publish, sessions, visible,
+    send: visible.getByRole("button", { name: "Send message", exact: true }),
+    steer: visible.getByRole("button", { name: "Steer assistant", exact: true }),
+    stop: visible.getByRole("button", { name: "Stop", exact: true }),
+    async close() { await Promise.all([...messages, ...interrupts].map((request) => request.finish())); },
+    async turn(active: boolean, id: string) {
+      Object.assign(sessions[0].agentSession.turn, { active, id, state: active ? "active" : "idle" });
+      await publish({ reason: active ? "codex-app-server-turn-active" : "codex-app-server-turn-idle" });
+    },
+    async receipt(index: number, { messageId = "", turnId = "turn-stress", publishReceipt = true } = {}) {
+      const request = messages[index];
+      const session = sessions.find((item) => item.sessionId === request.sessionId)!;
+      Object.assign(session.agentSession.turn, { active: true, id: turnId, state: "active" });
+      const id = messageId || request.body.messageId;
+      const previous = conversationLog.find((item: any) => item.user?.messageId === id) as { turnId: string } | undefined;
+      const turn = {
+        turnId: previous?.turnId || String(conversationLog.length + 1).padStart(6, "0"),
+        user: { role: "user", at: new Date().toISOString(), messageId: id, text: request.body.displayMessage || request.body.message }
+      };
+      if (!conversationLog.some((item: any) => item.user?.messageId === id)) conversationLog.push(turn);
+      if (publishReceipt) {
+        await publish({ reason: "codex-app-server-message-delivered", conversationLogPatch: { type: "upsert-turn", turn } }, request.sessionId);
+      } else {
+        session.revision += 1;
+      }
+    }
+  };
+}
+
+async function publishChatSessionChange(page: Page, payload: Record<string, unknown>) {
+  await page.evaluate((change) => {
+    const app = (document.querySelector("#app") as unknown as {
+      __vue_app__: { _context: { provides: Record<string, {
+        onevent(packet: { data: unknown[] }): void;
+      }> } };
+    }).__vue_app__;
+    app._context.provides["jskit.realtime.runtime.client.socket"].onevent({
+      data: ["vibe64.session.changed", change]
+    });
+  }, payload);
+}
+
 async function mockLaunchSession(page: Page, {
   agentTerminalControlOutcomes = [],
   assistantAccess = null,

@@ -625,6 +625,77 @@ describe("useVibe64AutopilotView direct chat", () => {
     }));
   });
 
+  it("accepts Deslop from its exact durable receipt before HTTP completion", async () => {
+    const delivery = deferredResult();
+    const sendAgentMessage = vi.fn(() => delivery.promise);
+    const { props, view } = await createViewWithProps({ sendAgentMessage });
+    view.savedCommitDeslop.value = "04f8283622d6";
+    const sending = view.startSavedCommitDeslop();
+    const messageId = sendAgentMessage.mock.calls[0][0].messageId;
+    props.session.agentSession.turn = { active: true, id: "turn-1", state: "active" };
+    props.conversationLog.turns = [{ user: { messageId: "another-message", text: "Deslop saved commit 04f8283622d6." } }];
+    await nextTick();
+    expect(view.composerSubmitLabel.value).toBe("Sending…");
+    expect(view.savedCommitDeslopSending.value).toBe(true);
+    props.conversationLog.turns = [{ user: { messageId, text: "Deslop saved commit 04f8283622d6." } }];
+    await expect(sending).resolves.toBe(true);
+    expect(view.savedCommitDeslopSending.value).toBe(false);
+    expect(view.agentStopEnabled.value).toBe(true);
+    view.composerDraft.value = "Keep this draft.";
+    expect(view.composerCanSubmit.value).toBe(true);
+    delivery.reject(new Error("Late HTTP connection failure"));
+    await nextTick();
+    expect(view.composerDraft.value).toBe("Keep this draft.");
+    expect(view.chatTurns.value.some((turn) => turn.optimistic?.status === "failed")).toBe(false);
+  });
+
+  it("releases Stop on its settled turn while the request remains pending", async () => {
+    const interrupt = deferredResult();
+    const { props, view } = await createViewWithProps({
+      interruptAgentTurn: () => interrupt.promise,
+      session: {
+        ...viewProps().session,
+        agentSession: { turn: { active: true, id: "turn-1", state: "active" } }
+      }
+    });
+    const stopping = view.requestAgentInterrupt();
+    view.composerDraft.value = "fdd";
+    props.session.agentSession.turn = { active: false, id: "unrelated-turn", state: "idle" };
+    await nextTick();
+    expect(view.composerCanSubmit.value).toBe(false);
+    props.session.agentSession.turn = { active: false, id: "turn-1", state: "idle" };
+    await expect(stopping).resolves.toBe(true);
+    expect(view.composerCanSubmit.value).toBe(true);
+    expect(view.agentStopVisible.value).toBe(false);
+    interrupt.reject(new Error("Late HTTP connection failure"));
+    await nextTick();
+    expect(view.composerCanSubmit.value).toBe(true);
+  });
+
+  it("does not let an old session's pending send overwrite a new session's draft", async () => {
+    const oldDelivery = deferredResult();
+    const newDelivery = deferredResult();
+    const sendAgentMessage = vi.fn()
+      .mockImplementationOnce(() => oldDelivery.promise)
+      .mockImplementationOnce(() => newDelivery.promise);
+    const { props, view } = await createViewWithProps({ sendAgentMessage });
+    props.session.agentSession.turn = { active: true, id: "old-turn", state: "active" };
+    view.composerDraft.value = "Old guidance";
+    const oldSending = view.submitComposerMessage();
+    props.session = { ...viewProps().session, sessionId: "session-2" };
+    await nextTick();
+    view.composerDraft.value = "New session message";
+    await expect(oldSending).resolves.toBe(false);
+    expect(view.composerDraft.value).toBe("New session message");
+    expect(view.composerCanSubmit.value).toBe(true);
+    const newSending = view.submitComposerMessage();
+    oldDelivery.reject(new Error("Old session disconnected"));
+    await nextTick();
+    expect(view.composerSubmitMode.value).toBe("sending");
+    newDelivery.resolve({ ok: true });
+    await expect(newSending).resolves.toBe(true);
+  });
+
   it("keeps Stop and Steer mutually exclusive without locking the editor", async () => {
     const interrupt = deferredResult();
     const steer = deferredResult();

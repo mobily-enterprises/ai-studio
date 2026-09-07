@@ -28,6 +28,9 @@ Execution startup explicitly prepares resources and environment files under the
 session source lock. Preview status, assistant profile discovery, and helper
 conversation cleanup resolve existing values through the inspection API; they
 do not provision resources or materialize project environment files.
+Constructing a session runtime or reading session state does not resolve the
+project environment. Prompt rendering and command execution resolve it when
+needed and share one resolution within that runtime.
 
 Stack declarations are inspected only from a real baseline checkout or an
 explicit session source. A hosted catalog project's metadata namespace is not
