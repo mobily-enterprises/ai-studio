@@ -1647,6 +1647,15 @@ function createRestartedController({
 
 async function withAgentMessageController(operation, { throughTerminalService = false } = {}) {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vibe64-agent-message-"));
+  const codexToolHomeSource = path.join(temporaryRoot, "codex-tool-home");
+  await mkdir(path.join(codexToolHomeSource, ".codex"), { recursive: true });
+  await writeFile(
+    path.join(codexToolHomeSource, ".codex", "auth.json"),
+    JSON.stringify({
+      OPENAI_API_KEY: "test-agent-message-api-key",
+      auth_mode: "api_key"
+    })
+  );
   const previousRuntimeNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
   process.env.VIBE64_RUNTIME_NAMESPACE = "test";
   const {
@@ -1734,6 +1743,7 @@ async function withAgentMessageController(operation, { throughTerminalService = 
     codexAppServerActiveReconcileMs: 60_000,
     codexAppServerDaemonWellbeingMs: 60_000,
     codexToolHomeRequired: false,
+    codexToolHomeSource,
     codexAppServerProviderFactory(providerOptions) {
       captures.providerOptions.push(providerOptions);
       const subscribers = new Set();
