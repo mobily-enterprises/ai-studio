@@ -21,7 +21,7 @@
         title="Your starred files"
         variant="text"
       >
-        Files<span v-if="bookmarks.files.value.length"> · {{ bookmarks.files.value.length }}</span>
+        {{ bookmarks.files.value.length }}
       </v-btn>
     </template>
     <v-card ref="panel" class="starred-files-menu" rounded="lg" @keydown.esc.stop.prevent="dismiss">
