@@ -9,6 +9,7 @@ host provide managed system values separately.
 - `packages/vibe64-project/src/server/projectEnvironmentFiles.js`
 - `packages/vibe64-terminals/src/server/agentEnvCommand.js`
 - `src/components/studio/EnvPanel.vue`
+- `src/components/studio/RuntimeConfigRecordsTable.vue`
 
 ## Public contract
 
@@ -18,6 +19,10 @@ and applies values to session preparation, checks, launches, and agent work.
 When Genesis declares an environment-file projection, Vibe64 writes it outside
 ordinary Git tracking with restrictive permissions and preserves a pre-existing
 user file before taking ownership.
+
+The shared value table preserves readable value and action columns in narrow
+panes, scrolling within the table rather than collapsing a revealed value or
+widening the page.
 
 Execution startup explicitly prepares resources and environment files under the
 session source lock. Preview status, assistant profile discovery, and helper

@@ -216,6 +216,7 @@ async function copyKey(key = "") {
 }
 
 .runtime-config-records-table :deep(table) {
+  min-width: 40rem;
   table-layout: fixed;
   width: 100%;
 }
