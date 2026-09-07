@@ -51,7 +51,7 @@
       </v-chip>
 
       <Vibe64CreateSessionButton
-        v-if="createVisible"
+        v-if="createVisible && (sessionLimit < 1 || allSessions.length < sessionLimit)"
         aria-label="New session"
         :button-class="createSessionButtonClass"
         icon-only
@@ -387,15 +387,21 @@ const visibleSessions = computed(() => {
 }
 
 .studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab {
+  flex: 1 1 0;
   font-size: 0.92rem;
   height: 2rem;
   letter-spacing: 0;
   max-width: 12.5rem;
   min-height: 2rem;
+  min-width: 0;
 }
 
 .studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab-main {
-  padding-inline: 0.72rem;
+  padding-inline: 0.25rem;
+}
+
+.studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab--active {
+  flex-basis: 1.7rem;
 }
 
 .studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab--active .studio-ai-sessions__tab-main {
@@ -408,8 +414,12 @@ const visibleSessions = computed(() => {
 
 .studio-ai-sessions__toolbar--compact .studio-ai-sessions__status-dot {
   height: 0.58rem;
-  margin-right: 0.42rem;
+  margin-right: 0.25rem;
   width: 0.58rem;
+}
+
+.studio-ai-sessions__toolbar--compact .studio-ai-sessions__repository-state {
+  margin-inline-start: 0.25rem;
 }
 
 .studio-ai-sessions__toolbar--compact .studio-ai-sessions__tab-archive {

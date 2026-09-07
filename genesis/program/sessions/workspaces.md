@@ -11,6 +11,8 @@ the canonical project and from other sessions.
 - `packages/vibe64-runtime/src/server/sessionStore.js`
 - `packages/vibe64-terminals/src/server/sessionSource.js`
 - `src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue`
+- `src/components/studio/vibe64-session/Vibe64SessionToolbar.vue`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/composables/useArchivedVibe64Sessions.js`
 - `src/composables/useVibe64SessionRenewal.js`
 - `src/composables/useVibe64SessionRepositoryStatusRegistry.js`
@@ -24,6 +26,11 @@ across UI refreshes. Archiving stops active work, removes its active workspace,
 and preserves the read-only history needed to recover its conversation and
 understand what happened. Session History reads lightweight archive indexes and
 shows the most recently archived session first.
+
+The chat header shares its available width among up to three session tabs,
+reserving extra room for the selected tab's Archive action. The new-session
+plus is hidden when those visible slots are full and returns when a slot opens.
+Save sits directly beside the session actions so the tabs retain that space.
 
 Renewal creates a fresh native assistant conversation. Its review step defaults
 to the current session's AI but can select another connected engine, provider,

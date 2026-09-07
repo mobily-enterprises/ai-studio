@@ -1365,18 +1365,19 @@ function requestSessionRenewal(returnFocusTarget = null) {
   border-bottom: 1px solid rgba(var(--v-theme-outline), 0.12);
   box-sizing: border-box;
   display: flex;
-  gap: 0.45rem;
+  gap: 0;
   grid-row: 1;
   justify-content: space-between;
   min-height: 3rem;
   min-width: 0;
   overflow: hidden;
-  padding: 0.4rem 0.55rem;
+  padding: 0.4rem 0.25rem;
   width: 100%;
 }
 
 .studio-autopilot__session-header :deep(.studio-ai-sessions__toolbar) {
   flex: 1 1 auto;
+  margin-inline-end: 0.35rem;
   min-width: 0;
   overflow: hidden;
 }

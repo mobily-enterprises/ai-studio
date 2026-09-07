@@ -7,6 +7,9 @@ People can open or create a project, work in isolated sessions, and have a
 direct conversation with the agent while seeing the source, changes, running
 application, environment, and the system's explained structure in one place.
 Each session keeps valuable work recoverable and separate from unrelated work.
+The chat header gives three session tabs room to show their labels, hides the
+new-session plus when all three slots are occupied, and groups Save beside the
+session actions.
 Files refreshes after the assistant finishes a turn without discarding the
 person's place or unsaved edits. People can download individual files and keep
 personal project-wide stars, reachable from chat and the file browser in any session.

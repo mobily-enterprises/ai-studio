@@ -113,6 +113,7 @@ async function renderCreateButton({
 async function renderToolbar({
   canCreate = true,
   createVisible = true,
+  sessions = [],
   title = "Create a new Vibe64 session"
 } = {}) {
   const app = createSSRApp(Vibe64SessionToolbar, {
@@ -123,7 +124,7 @@ async function renderToolbar({
       createSession: vi.fn(),
       createSessionRunning: false,
       createSessionTitle: title,
-      sessions: []
+      sessions
     }
   });
   app.component("VBtn", passthroughComponent("button"));
@@ -161,7 +162,7 @@ describe("session creation controls", () => {
     expect(preview.html).toContain("Create session");
   });
 
-  it("keeps a regular session cap visible with its authoritative disabled reason", async () => {
+  it("hides the toolbar plus at three sessions while keeping the standalone disabled reason", async () => {
     const reason = "Studio allows up to 3 open sessions. Archive one before creating another.";
     const button = await renderCreateButton({
       canCreate: false,
@@ -171,6 +172,7 @@ describe("session creation controls", () => {
     const toolbar = await renderToolbar({
       canCreate: false,
       createVisible: true,
+      sessions: [1, 2, 3].map((id) => ({ sessionId: `session-${id}` })),
       title: reason
     });
 
@@ -179,8 +181,16 @@ describe("session creation controls", () => {
     expect(button.html).not.toContain(" disabled");
     expect(button.html).toContain(`title="${reason}"`);
     expect(button.html).not.toContain("aria-busy");
-    expect(toolbar).toContain(`aria-label="New session. ${reason}"`);
-    expect(toolbar).toContain('aria-disabled="true"');
+    expect(toolbar).not.toContain("New session");
+    expect(toolbar.match(/data-vibe64-session-id=/g)).toHaveLength(3);
+  });
+
+  it.each([0, 1, 2])("keeps New session available with %i sessions", async (count) => {
+    const toolbar = await renderToolbar({
+      sessions: Array.from({ length: count }, (_, id) => ({ sessionId: `session-${id}` }))
+    });
+
+    expect(toolbar).toContain('aria-label="New session"');
   });
 
   it("omits the toolbar action when the server marks creation invisible", async () => {
