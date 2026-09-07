@@ -268,12 +268,17 @@ function normalizeTreeNode(value = null) {
 }
 
 function mergeDirectoryChildren(existingChildren = [], pageChildren = [], append = false) {
+  const byKey = new Map((existingChildren || []).map((child) => [treeNodeKey(child), child]));
+  const mergedChildren = pageChildren.map((child) => {
+    const previous = byKey.get(treeNodeKey(child));
+    return child.type === "directory" && previous?.loaded && !child.loaded
+      ? { ...child, ...previous, name: child.name }
+      : child;
+  });
   if (!append) {
-    return pageChildren;
+    return mergedChildren;
   }
-  const byKey = new Map((Array.isArray(existingChildren) ? existingChildren : [])
-    .map((child) => [treeNodeKey(child), child]));
-  for (const child of pageChildren) {
+  for (const child of mergedChildren) {
     byKey.set(treeNodeKey(child), child);
   }
   return [...byKey.values()];
@@ -561,6 +566,7 @@ function appendSourceEditorExplanationMessages(explanation = null, messages = []
 
 function useVibe64SourceEditor({
   active = true,
+  agentActive = false,
   navigateReferencedSource = null,
   projectSlug,
   readCurrentText = null,
@@ -620,8 +626,10 @@ function useVibe64SourceEditor({
   let searchTimer = null;
   let pendingFileRevalidation = false;
   let pendingTreeRefresh = false;
+  let refreshPromise = null;
   let savePromise = null;
   let textAtUnmount = null;
+  let disposed = false;
   const currentSessionsApiPath = computed(() => String(readRefOrGetterValue(sessionsApiPath) || "").trim());
   const currentSessionId = computed(() => String(readRefOrGetterValue(sessionId) || "").trim());
   const currentProjectSlug = computed(() => String(readRefOrGetterValue(projectSlug) || "").trim());
@@ -772,11 +780,12 @@ function useVibe64SourceEditor({
   }
 
   async function loadDirectoryPage(directoryPath = "", {
+    applyPage = true,
     append = false,
     offset = 0
   } = {}) {
     const normalizedPath = treePathKey(directoryPath);
-    if (!canLoad.value) {
+    if (!canLoad.value || disposed) {
       return null;
     }
     const treeGeneration = treeRequestId;
@@ -806,9 +815,11 @@ function useVibe64SourceEditor({
         policy.value = normalizeSourceEditorPolicy(response.policy || {});
       }
       const page = normalizeTreeNode(response.tree);
-      tree.value = mergeDirectoryPage(tree.value, normalizedPath, page, append);
-      if (selectedRevealTree.value) {
-        tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
+      if (applyPage) {
+        tree.value = mergeDirectoryPage(tree.value, normalizedPath, page, append);
+        if (selectedRevealTree.value) {
+          tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
+        }
       }
       if (!normalizedPath) {
         preexpandedDirectoryPaths.value = normalizePolicyDirectories(
@@ -816,7 +827,7 @@ function useVibe64SourceEditor({
             .flatMap((directoryPath) => loadedDirectoryPaths(tree.value, directoryPath))
         );
       }
-      revealLoadedFilePath(selectedPath.value);
+      if (applyPage) revealLoadedFilePath(selectedPath.value);
       return page;
     } catch (error) {
       if (treeGeneration === treeRequestId && treeDirectoryRequestIds.get(requestKey) === requestId) {
@@ -830,7 +841,7 @@ function useVibe64SourceEditor({
     } finally {
       if (treeGeneration === treeRequestId && treeDirectoryRequestIds.get(requestKey) === requestId) {
         setTreePathLoading(normalizedPath, false);
-        if (!normalizedPath) {
+        if (!normalizedPath && applyPage) {
           loadingTree.value = false;
         }
       }
@@ -847,15 +858,21 @@ function useVibe64SourceEditor({
   async function loadTree({
     preserveLoadedDirectories = true
   } = {}) {
+    const refreshingLoadedTree = preserveLoadedDirectories && Boolean(tree.value);
     const directoriesToReload = preserveLoadedDirectories
       ? loadedTreeDirectoryPaths(tree.value)
       : [];
+    const loadedCounts = new Map(["", ...directoriesToReload].map((directoryPath) => [
+      directoryPath, findTreeDirectory(tree.value, directoryPath)?.children?.length || 0
+    ]));
     const requestId = treeRequestId + 1;
     treeRequestId = requestId;
-    tree.value = null;
-    policy.value = normalizeSourceEditorPolicy({});
-    preexpandedDirectoryPaths.value = [];
-    revealedDirectoryPaths.value = [];
+    if (!preserveLoadedDirectories) {
+      tree.value = null;
+      policy.value = normalizeSourceEditorPolicy({});
+      preexpandedDirectoryPaths.value = [];
+      revealedDirectoryPaths.value = [];
+    }
     treeDirectoryRequestIds.clear();
     treeLoadingPaths.value = [];
     treeLoadErrors.value = {};
@@ -864,26 +881,35 @@ function useVibe64SourceEditor({
       return;
     }
     loadingTree.value = true;
-    await loadDirectoryPage("", {
-      append: false,
-      offset: 0
-    });
-    if (requestId !== treeRequestId) {
-      return;
-    }
-    for (const directoryPath of directoriesToReload) {
-      if (requestId !== treeRequestId || !findTreeDirectory(tree.value, directoryPath)) {
+    let refreshedTree = tree.value;
+    for (const directoryPath of ["", ...directoriesToReload]) {
+      if (requestId !== treeRequestId) return;
+      if (directoryPath && !findTreeDirectory(refreshedTree, directoryPath)) {
         continue;
       }
-      await loadDirectoryPage(directoryPath, {
-        append: false,
-        offset: 0
-      });
+      let offset = 0;
+      do {
+        if (disposed || (refreshingLoadedTree && !currentActive.value)) {
+          pendingTreeRefresh = !disposed;
+          loadingTree.value = false;
+          return;
+        }
+        const page = await loadDirectoryPage(directoryPath, { applyPage: false, append: offset > 0, offset });
+        if (requestId !== treeRequestId) return;
+        if (page) refreshedTree = mergeDirectoryPage(refreshedTree, directoryPath, page, offset > 0);
+        if (!page?.hasMore || !page.nextOffset || page.nextOffset <= offset) break;
+        offset = page.nextOffset;
+      } while (offset < loadedCounts.get(directoryPath));
     }
+    tree.value = refreshedTree;
+    loadingTree.value = false;
     if (selectedRevealTree.value) {
       tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
       revealLoadedFilePath(selectedPath.value);
     }
+    preexpandedDirectoryPaths.value = normalizePolicyDirectories(
+      (policy.value.preexpandedDirectories || []).flatMap((directoryPath) => loadedDirectoryPaths(tree.value, directoryPath))
+    );
   }
 
   function loadDirectory(directoryPath = "") {
@@ -913,7 +939,8 @@ function useVibe64SourceEditor({
   function applyFileResponse(response = {}, {
     column = 0,
     fallbackPath = "",
-    line = 0
+    line = 0,
+    reveal = true
   } = {}) {
     const file = response.file || {};
     const filePath = normalizeEditorPath(file.path || fallbackPath);
@@ -928,7 +955,7 @@ function useVibe64SourceEditor({
     text.value = String(file.text || "");
     savedHash.value = String(file.hash || "");
     dirty.value = false;
-    revealLoadedFilePath(filePath);
+    if (reveal) revealLoadedFilePath(filePath);
     cursorRequest.value = {
       column: Number(column || 0) || 0,
       line: Number(line || 0) || 0,
@@ -1040,7 +1067,7 @@ function useVibe64SourceEditor({
   async function revalidateSelectedFile() {
     const pathAtRequest = selectedPath.value;
     const sessionIdAtRequest = currentSessionId.value;
-    if (!pathAtRequest || !canLoad.value || !currentActive.value) {
+    if (disposed || !pathAtRequest || !canLoad.value || !currentActive.value) {
       return false;
     }
     if (saving.value) {
@@ -1065,6 +1092,10 @@ function useVibe64SourceEditor({
       if (loadFailure.value?.operation === "revalidation") {
         loadFailure.value = null;
       }
+      selectedRevealTree.value = normalizeTreeNode(response.revealTree);
+      if (selectedRevealTree.value) {
+        tree.value = mergeRevealTree(tree.value, selectedRevealTree.value);
+      }
       const nextHash = String(response.file?.hash || "");
       if (dirty.value || saving.value) {
         if (nextHash && nextHash !== savedHash.value) {
@@ -1078,7 +1109,8 @@ function useVibe64SourceEditor({
         return false;
       }
       return applyFileResponse(response, {
-        fallbackPath: pathAtRequest
+        fallbackPath: pathAtRequest,
+        reveal: false
       });
     } catch (error) {
       if (
@@ -1775,10 +1807,27 @@ function useVibe64SourceEditor({
     });
   }
 
-  async function refresh() {
-    await loadTree();
-    await revalidateSelectedFile();
+  function refresh() {
+    if (refreshPromise) {
+      pendingTreeRefresh = true;
+      return refreshPromise;
+    }
+    refreshPromise = (async () => {
+      do {
+        pendingTreeRefresh = false;
+        selectedRevealTree.value = null;
+        await loadTree();
+        await revalidateSelectedFile();
+      } while (pendingTreeRefresh && currentActive.value);
+    })().finally(() => { refreshPromise = null; });
+    return refreshPromise;
   }
+
+  watch([currentSessionId, () => Boolean(readRefOrGetterValue(agentActive))], ([id, working], previous = []) => {
+    if (id !== previous[0] || !previous[1] || working) return;
+    if (currentActive.value) void refresh();
+    else pendingTreeRefresh = true;
+  });
 
   if (typeof window !== "undefined") {
     window.addEventListener("focus", revalidateSelectedFile);
@@ -1787,8 +1836,7 @@ function useVibe64SourceEditor({
   watch([currentSessionsApiPath, currentSessionId, currentActive], async (current, previous = []) => {
     if (current[0] === previous[0] && current[1] === previous[1]) {
       if (current[2] && pendingTreeRefresh) {
-        pendingTreeRefresh = false;
-        await loadTree();
+        await refresh();
       }
       return;
     }
@@ -1821,6 +1869,9 @@ function useVibe64SourceEditor({
   });
 
   onBeforeUnmount(() => {
+    disposed = true;
+    treeRequestId += 1;
+    fileRevalidationRequestId += 1;
     textAtUnmount = currentText();
     const closePending = explanationClosing.value;
     clearExplanationStream();

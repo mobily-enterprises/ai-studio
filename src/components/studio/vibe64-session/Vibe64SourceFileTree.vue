@@ -19,6 +19,7 @@
             size="15"
           />
           <span>{{ child.name }}</span>
+          <v-icon v-if="starredPaths.includes(child.path)" :icon="mdiStar" size="14" aria-label="Starred" />
         </button>
 
         <button
@@ -68,6 +69,18 @@
             density="compact"
           >
             <v-list-item
+              v-if="child.type === 'file'"
+              :prepend-icon="starredPaths.includes(child.path) ? mdiStar : mdiStarOutline"
+              :title="starredPaths.includes(child.path) ? 'Unstar file' : 'Star file'"
+              @click="emit('toggle-star', child.path)"
+            />
+            <v-list-item
+              v-if="child.type === 'file'"
+              :prepend-icon="mdiDownload"
+              title="Download file"
+              @click="emit('download-file', child.path)"
+            />
+            <v-list-item
               v-if="child.type === 'directory'"
               :prepend-icon="mdiFilePlusOutline"
               title="New file here"
@@ -96,12 +109,15 @@
           :node="child"
           :ask-codex-available="askCodexAvailable"
           :selected-path="selectedPath"
+          :starred-paths="starredPaths"
           :expanded-paths="expandedPaths"
           :load-errors="loadErrors"
           :loading-paths="loadingPaths"
           :depth="depth + 1"
           @load-more-directory="emit('load-more-directory', $event)"
           @open-file="emit('open-file', $event)"
+          @toggle-star="emit('toggle-star', $event)"
+          @download-file="emit('download-file', $event)"
           @directory-open-change="emit('directory-open-change', $event)"
           @new-file="emit('new-file', $event)"
           @copy-path="emit('copy-path', $event)"
@@ -156,15 +172,19 @@ import {
   mdiContentCopy,
   mdiDotsHorizontal,
   mdiDotsVertical,
+  mdiDownload,
   mdiFileDocumentOutline,
   mdiFilePlusOutline,
   mdiFolderOutline,
-  mdiRobotOutline
+  mdiRobotOutline,
+  mdiStar,
+  mdiStarOutline
 } from "@mdi/js";
 
 const DIRECTORY_BATCH_SIZE = 20;
 
 const props = defineProps({
+  starredPaths: { type: Array, default: () => [] },
   expandedPaths: {
     default: () => [],
     type: Array
@@ -194,7 +214,7 @@ const props = defineProps({
     type: Boolean
   }
 });
-const emit = defineEmits(["ask-codex", "copy-path", "directory-open-change", "load-more-directory", "new-file", "open-file"]);
+const emit = defineEmits(["ask-codex", "copy-path", "directory-open-change", "download-file", "load-more-directory", "new-file", "open-file", "toggle-star"]);
 
 const nodes = computed(() => Array.isArray(props.node?.children) ? props.node.children : []);
 const visibleNodes = computed(() => nodes.value);

@@ -174,6 +174,7 @@ async function createSourceEditorFixture({
     projectService: {
       async createRuntime() {
         return {
+          stateRoot: path.join(root, "state"),
           get adapter() {
             throw new Error("The neutral source editor must not inspect a legacy adapter.");
           },
@@ -187,7 +188,7 @@ async function createSourceEditorFixture({
             return {
               ...currentSessionState,
               metadata: {
-                ...sourceMetadata(sourceRoot),
+                ...sourceMetadata(path.join(path.dirname(path.dirname(sourceRoot)), sessionId, "source")),
                 ...(providerId ? { agent_identity_provider: providerId } : {}),
                 ...(currentSessionState.metadata || {})
               },
@@ -217,6 +218,63 @@ async function createSourceEditorFixture({
     sourceRoot
   };
 }
+
+test("starred files are durable, personal, project-scoped and shared across sessions", async (t) => {
+  const fixture = await createSourceEditorFixture();
+  const other = await createSourceEditorFixture();
+  t.after(() => Promise.all([fixture, other].map(({ root }) => rm(root, { recursive: true, force: true }))));
+  const input = { sessionId: "session-1", vibe64User: { uid: 1001, username: "ada" } };
+  const secondSource = path.join(path.dirname(path.dirname(fixture.sourceRoot)), "session-2/source/src");
+  await mkdir(secondSource, { recursive: true });
+  await writeFile(path.join(secondSource, "app.js"), "session two\n");
+  assert.equal((await fixture.service.setStarredFile({ ...input, path: "src/app.js", starred: true })).ok, true);
+  assert.deepEqual((await fixture.service.readStarredFiles({ ...input, sessionId: "session-2" })).files,
+    [{ path: "src/app.js", available: true }]);
+  assert.deepEqual((await fixture.service.readStarredFiles({ ...input, vibe64User: { uid: 1002, username: "bob" } })).files, []);
+  assert.deepEqual((await other.service.readStarredFiles(input)).files, []);
+  const records = await readdir(path.join(fixture.root, "state/source-editor/stars"));
+  assert.equal(records.length, 1);
+  const record = path.join(fixture.root, "state/source-editor/stars", records[0]);
+  assert.deepEqual(JSON.parse(await readFile(record, "utf8")).paths, ["src/app.js"]);
+  assert.equal((await lstat(record)).mode & 0o777, 0o600);
+  await rm(path.join(fixture.sourceRoot, "src/app.js"));
+  assert.deepEqual((await fixture.service.readStarredFiles(input)).files,
+    [{ path: "src/app.js", available: false, reason: "Not found in this session" }]);
+  assert.deepEqual((await fixture.service.setStarredFile({ ...input, path: "src/app.js", starred: false })).paths, []);
+});
+
+test("concurrent stars do not lose updates and reject excluded paths and symlinks", async (t) => {
+  const { root, sourceRoot, service } = await createSourceEditorFixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const input = { sessionId: "session-1", vibe64User: { username: "ada" }, starred: true };
+  const results = await Promise.all(["src/app.js", "src/pages-index.jsx"].map((filePath) => service.setStarredFile({ ...input, path: filePath })));
+  assert.ok(results.every((result) => result.ok));
+  assert.equal((await service.readStarredFiles(input)).files.length, 2);
+  await symlink(path.join(sourceRoot, "src/app.js"), path.join(sourceRoot, "link.js"));
+  for (const filePath of ["../secret", ".git/config", "link.js", "src", "missing.js"]) {
+    assert.equal((await service.setStarredFile({ ...input, path: filePath })).ok, false, filePath);
+    assert.equal((await service.downloadFile({ ...input, path: filePath })).ok, false, filePath);
+  }
+  assert.equal((await service.setStarredFile({ ...input, path: "src/app.js", starred: "yes" })).ok, false);
+});
+
+test("downloads preserve binary bytes and allow files larger than the text editor limit", async (t) => {
+  const { root, sourceRoot, service } = await createSourceEditorFixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bytes = Buffer.alloc(2 * 1024 * 1024, 0x82);
+  bytes[0] = 0;
+  await writeFile(path.join(sourceRoot, "résumé.bin"), bytes);
+  const input = { sessionId: "session-1", path: "résumé.bin" };
+  assert.equal((await service.readFile(input)).ok, false);
+  const download = await service.downloadFile(input);
+  assert.equal(download.ok, true);
+  assert.equal(download.name, "résumé.bin");
+  const chunks = [];
+  for await (const chunk of download.fileHandle.createReadStream({ autoClose: true })) chunks.push(chunk);
+  assert.deepEqual(Buffer.concat(chunks), bytes);
+  assert.equal(download.fileHandle.fd, -1);
+  assert.equal((await service.setStarredFile({ ...input, starred: true })).ok, true);
+});
 
 test("source editor pattern matching handles directory excludes", () => {
   assert.equal(pathMatchesPolicyPattern("node_modules/pkg/index.js", "node_modules"), true);

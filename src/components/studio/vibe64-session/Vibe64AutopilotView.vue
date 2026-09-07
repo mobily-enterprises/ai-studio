@@ -386,6 +386,7 @@
                   :session="props.session"
                   :sessions-api-path="props.sessionsApiPath"
                 />
+                <Vibe64StarredFilesMenu :bookmarks="fileBookmarks" @open-file="openSourceEditorFile" />
                 <v-btn
                   v-if="composerAttachmentsSupported"
                   aria-label="Attach files"
@@ -540,6 +541,8 @@
         <Vibe64SessionSourceEditor
           v-if="rightPaneTabMounted('editor')"
           :active="props.active && props.projectPane === 'dashboard' && rightPaneTab === 'editor'"
+          :agent-active="agentActive"
+          :file-bookmarks="fileBookmarks"
           :assistant-available="assistantDirectAllowed"
           :assistant-unavailable-message="assistantRestrictionMessage"
           :ask-codex-available="sourceEditorAskCodexAvailable"
@@ -696,6 +699,8 @@ import Vibe64AssistantAccessPanel from "@/components/studio/vibe64-session/Vibe6
 import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue";
 import Vibe64ProjectOnboarding from "@/components/studio/vibe64-session/Vibe64ProjectOnboarding.vue";
 import Vibe64SessionAssistantMenu from "@/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue";
+import Vibe64StarredFilesMenu from "@/components/studio/vibe64-session/Vibe64StarredFilesMenu.vue";
+import { useVibe64StarredFiles } from "@/composables/useVibe64StarredFiles.js";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";
 import Vibe64ConversationLog from "@/components/studio/vibe64-session/Vibe64ConversationLog.vue";
@@ -981,6 +986,11 @@ const {
   assistantRestrictionMessage,
   requestTemporaryAi: startTemporaryAiTask,
   sendMainChatMessage
+});
+const fileBookmarks = useVibe64StarredFiles({
+  projectSlug,
+  sessionId,
+  sessionsApiPath: () => props.sessionsApiPath
 });
 const composerSuggesting = computed(() => assistantCanRequestMessage.value && [
   "retry",

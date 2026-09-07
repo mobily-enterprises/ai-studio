@@ -6,6 +6,11 @@ from saved project work, and inspect one exact file change at a time.
 ## Sources
 
 - `packages/vibe64-source-editor/src/server/service.js`
+- `packages/vibe64-source-editor/src/server/starredFiles.js`
+- `packages/vibe64-source-editor/src/server/registerRoutes.js`
+- `src/composables/useVibe64StarredFiles.js`
+- `src/components/studio/vibe64-session/Vibe64StarredFilesMenu.vue`
+- `src/components/studio/vibe64-session/Vibe64StarredFilesList.vue`
 - `packages/vibe64-terminals/src/server/repositoryHistory.js`
 - `packages/vibe64-terminals/src/server/sessionWorkOperationCommand.js`
 - `packages/vibe64-terminals/src/server/sessionWorkSave.js`
@@ -37,6 +42,31 @@ or warns without overwriting a dirty draft. A hidden editor admits no new file
 revalidation reads; foreign creates mark its tree for one refresh on return,
 including when no file is selected. Changing source discards that pending tree
 refresh. Reads already in flight may finish.
+An assistant turn becoming idle refreshes the visible tree's already-loaded
+directory pages and selected file. Hidden editors coalesce that work until
+return. This adds no recursive watcher or continuous tree polling. Tree refresh
+keeps the previous tree visible until replacement pages are ready, preserving
+expanded folders, selection and editor position; concurrent local edits are
+never replaced. The existing Refresh action uses the same path.
+
+The selected file header and file-row actions offer Star and Download. Downloads
+return the saved file's original bytes and filename, including binary files and
+files too large to edit. An unsaved selected file offers Download saved file or
+Save & download; a failed save does not download a supposedly saved draft.
+Source containment, excluded-path and symlink protections also apply to downloads.
+
+Stars are personal and project-scoped, not Git changes or shared project settings.
+The server stores at most 100 paths per authenticated account in private project
+runtime state, with serialized atomic updates. Stars follow the account across
+devices and sessions and retain their insertion order. Missing or excluded files
+remain listed as unavailable in the selected session until unstarred. Availability
+checks touch only the bounded starred paths, never the whole source tree.
+The collapsible Starred section and chat's searchable Files picker share one
+client state. The picker is a popover on larger screens and a bottom sheet on
+compact screens. Opening a star uses normal Dashboard Files navigation without
+clearing the chat draft. Toggle failures roll back only the affected star and
+show an error; successful toggles do not generate toasts. Opening the picker
+reloads saved stars, so other-device changes appear without background polling.
 Selected-file observation follows the active session and editor pane.
 Retaining an inactive session does not retain its file connection; returning to the
 editor reconnects and revalidates the selected file through the existing sync

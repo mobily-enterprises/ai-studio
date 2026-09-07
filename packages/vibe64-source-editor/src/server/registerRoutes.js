@@ -141,6 +141,46 @@ function registerRoutes(
     });
   });
 
+  routes.serviceRoute("GET", "/sessions/:sessionId/source-editor/download", {
+    summary: "Download a file from the selected session source."
+  }, async (request, reply) => {
+    const result = await sourceEditor.downloadFile({
+      sessionId: request.params.sessionId,
+      path: routes.requestQuery(request).path
+    });
+    if (!result.ok) {
+      return result;
+    }
+    const encodedName = encodeURIComponent(result.name).replace(/[!'()*]/gu, (character) =>
+      `%${character.codePointAt(0).toString(16).toUpperCase()}`);
+    try {
+      reply.header("Content-Type", "application/octet-stream")
+        .header("Content-Disposition", `attachment; filename*=UTF-8''${encodedName}`)
+        .header("Cache-Control", "private, no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .send(result.fileHandle.createReadStream({ autoClose: true }));
+    } catch (error) {
+      await result.fileHandle.close();
+      throw error;
+    }
+  });
+
+  routes.serviceRoute("GET", "/sessions/:sessionId/source-editor/stars", {
+    summary: "Read this account's starred files for the current project."
+  }, (request) => sourceEditor.readStarredFiles(withVibe64User(request, { sessionId: request.params.sessionId })));
+
+  routes.serviceRoute("POST", "/sessions/:sessionId/source-editor/stars", {
+    bodyLimit: 16 * 1024,
+    summary: "Star or unstar one file for this account and project."
+  }, (request) => {
+    const body = routes.requestBody(request);
+    return sourceEditor.setStarredFile(withVibe64User(request, {
+      sessionId: request.params.sessionId,
+      path: body.path,
+      starred: body.starred
+    }));
+  });
+
   routes.serviceRoute("GET", "/sessions/:sessionId/source-editor/search", {
     summary: "Search editable source files in a Vibe64 session."
   }, (request) => {

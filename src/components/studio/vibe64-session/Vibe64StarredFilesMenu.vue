@@ -1,0 +1,146 @@
+<template>
+  <component
+    :is="mobile ? VBottomSheet : VMenu"
+    v-model="opened"
+    :close-on-content-click="false"
+    :content-props="{ role: 'dialog', 'aria-label': 'Starred files' }"
+    location="top start"
+    max-width="400"
+    @after-enter="focusSearch"
+    @after-leave="restoreTriggerFocus"
+    @update:model-value="onOpenChange"
+  >
+    <template #activator="{ props: activatorProps }">
+      <v-btn
+        ref="trigger"
+        v-bind="activatorProps"
+        aria-haspopup="dialog"
+        :aria-label="`Starred files (${bookmarks.files.value.length})`"
+        :prepend-icon="mdiStarOutline"
+        size="small"
+        title="Your starred files"
+        variant="text"
+      >
+        Files<span v-if="bookmarks.files.value.length"> · {{ bookmarks.files.value.length }}</span>
+      </v-btn>
+    </template>
+    <v-card ref="panel" class="starred-files-menu" rounded="lg" @keydown.esc.stop.prevent="dismiss">
+      <div class="starred-files-menu__header">
+        <h2>Starred files</h2>
+        <v-btn aria-label="Close starred files" :icon="mdiClose" size="small" variant="text" @click="dismiss" />
+      </div>
+      <v-text-field
+        ref="searchField"
+        v-model="query"
+        autofocus
+        clearable
+        density="compact"
+        hide-details
+        label="Find a starred file"
+        :prepend-inner-icon="mdiMagnify"
+        variant="outlined"
+        @keydown.enter.prevent="openFirstMatch"
+      />
+      <div class="starred-files-menu__list">
+        <Vibe64StarredFilesList :bookmarks="bookmarks" :files="matchingFiles" @open-file="openFile" />
+      </div>
+    </v-card>
+  </component>
+</template>
+
+<script setup>
+import { computed, ref } from "vue";
+import { useDisplay } from "vuetify";
+import { VBottomSheet, VMenu } from "vuetify/components";
+import { mdiClose, mdiMagnify, mdiStarOutline } from "@mdi/js";
+import Vibe64StarredFilesList from "./Vibe64StarredFilesList.vue";
+
+const props = defineProps({ bookmarks: { type: Object, required: true } });
+const emit = defineEmits(["open-file"]);
+const { xs: mobile } = useDisplay();
+const opened = ref(false);
+const query = ref("");
+const trigger = ref(null);
+const panel = ref(null);
+const searchField = ref(null);
+const matchingFiles = computed(() => {
+  const search = (query.value || "").trim().toLocaleLowerCase();
+  return props.bookmarks.files.value.filter((file) => file.path.toLocaleLowerCase().includes(search));
+});
+let returnFocus = false;
+
+function focusSearch() {
+  if (opened.value) {
+    searchField.value?.focus();
+  }
+}
+
+function dismiss() {
+  returnFocus = true;
+  opened.value = false;
+}
+
+function restoreTriggerFocus() {
+  if (returnFocus) {
+    trigger.value?.$el?.focus();
+  }
+  returnFocus = false;
+}
+
+function onOpenChange(value) {
+  if (value) {
+    query.value = "";
+    void props.bookmarks.refresh();
+  } else if (document.activeElement === trigger.value?.$el || panel.value?.$el?.contains(document.activeElement)) {
+    returnFocus = true;
+  }
+}
+
+function openFile(filePath) {
+  returnFocus = false;
+  opened.value = false;
+  emit("open-file", { path: filePath });
+}
+
+function openFirstMatch() {
+  const file = matchingFiles.value.find((entry) => entry.available);
+  if (file) {
+    openFile(file.path);
+  }
+}
+</script>
+
+<style scoped>
+.starred-files-menu {
+  width: min(25rem, calc(100vw - 1rem));
+  max-height: min(32rem, 75dvh);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+
+.starred-files-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.starred-files-menu__header h2 {
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.starred-files-menu__list {
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 599px) {
+  .starred-files-menu {
+    width: 100%;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+}
+</style>

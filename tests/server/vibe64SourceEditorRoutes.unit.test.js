@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Readable } from "node:stream";
 
 import { registerRoutes } from "../../packages/vibe64-source-editor/src/server/registerRoutes.js";
 import {
@@ -10,6 +11,40 @@ import {
   withLocalRequestBypass,
   withRouteProject
 } from "./vibe64RouteTestHelpers.js";
+
+test("star routes accept only trusted identity and download responses are private attachments", async () => {
+  await withLocalRequestBypass(async () => withRouteProject(async ({ apiRouteBase, projectContext }) => {
+    const calls = [];
+    const stream = Readable.from([Buffer.from([0, 255, 7])]);
+    const app = testRouteApp();
+    registerRoutes(app.http, {
+      projectContext, routeRelativePath: "vibe64", routeSurface: "app",
+      sourceEditor: {
+        async readTree() { return { ok: true }; },
+        async readStarredFiles(input) { calls.push(input); return { ok: true, files: [] }; },
+        async setStarredFile(input) { calls.push(input); return { ok: true, paths: [input.path] }; },
+        async downloadFile() { return { ok: true, name: "résumé (1).bin", fileHandle: {
+          createReadStream(options) { assert.deepEqual(options, { autoClose: true }); return stream; }
+        } }; }
+      }
+    });
+    const base = `${apiRouteBase}/vibe64/sessions/:sessionId/source-editor`;
+    const actor = { username: "ada", uid: 1001 };
+    const params = routeProjectParams({ sessionId: "session-1" });
+    await findRegisteredRoute(app, { method: "POST", path: `${base}/stars` }).handler({
+      params, vibe64User: actor, input: { body: { path: "src/app.js", starred: true, vibe64User: { username: "bob" } } }
+    }, testReply());
+    assert.deepEqual(calls[0], { sessionId: "session-1", path: "src/app.js", starred: true, vibe64User: actor });
+    await findRegisteredRoute(app, { method: "GET", path: `${base}/stars` }).handler({ params, vibe64User: actor }, testReply());
+    assert.deepEqual(calls[1], { sessionId: "session-1", vibe64User: actor });
+    const reply = { ...testReply(), headers: {}, header(key, value) { this.headers[key] = value; return this; } };
+    await findRegisteredRoute(app, { method: "GET", path: `${base}/download` }).handler({ params, input: { query: { path: "résumé (1).bin" } } }, reply);
+    assert.equal(reply.payload, stream);
+    assert.equal(reply.headers["Content-Disposition"], "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9%20%281%29.bin");
+    assert.equal(reply.headers["Content-Type"], "application/octet-stream");
+    assert.equal(reply.headers["Cache-Control"], "private, no-store");
+  }));
+});
 
 test("source explanation routes use the authenticated Vibe64 actor", async () => {
   await withLocalRequestBypass(async () => {

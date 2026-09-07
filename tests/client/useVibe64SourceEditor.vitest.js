@@ -133,6 +133,7 @@ function realtimeForEvent(event) {
 
 async function createLoadedEditor({
   active = true,
+  agentActive = false,
   currentText,
   navigateReferencedSource = null,
   openFile = true,
@@ -145,6 +146,7 @@ async function createLoadedEditor({
   mocks.requestResults.push(treeResponse());
   const editor = useVibe64SourceEditor({
     active,
+    agentActive,
     navigateReferencedSource,
     projectSlug: ref(projectSlug),
     readCurrentText: () => currentText.value,
@@ -178,6 +180,88 @@ describe("useVibe64SourceEditor", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.resetModules();
+  });
+
+  it("refreshes the tree and clean selected file once the assistant finishes, without clearing the tree", async () => {
+    const currentText = ref("");
+    const agentActive = ref(false);
+    const editor = await createLoadedEditor({ currentText, agentActive });
+    const oldTree = editor.tree.value;
+    const before = mocks.requestCalls.length;
+    agentActive.value = true;
+    await nextTick();
+    expect(mocks.requestCalls.length).toBe(before);
+    let releaseTree;
+    mocks.requestResults.push(new Promise((resolve) => { releaseTree = resolve; }), fileResponse({ hash: "hash-2", text: "changed by assistant" }));
+    agentActive.value = false;
+    await nextTick();
+    expect(editor.tree.value).toBe(oldTree);
+    releaseTree(treeResponse());
+    for (let count = 0; count < 6; count += 1) await flushPromises();
+    expect(mocks.requestCalls.length).toBe(before + 2);
+    expect(editor.text.value).toBe("changed by assistant");
+    expect(editor.selectedPath.value).toBe("src/app.js");
+  });
+
+  it("defers completed-turn refresh while Files is hidden and preserves unsaved edits on return", async () => {
+    const currentText = ref("");
+    const active = ref(true);
+    const agentActive = ref(true);
+    const editor = await createLoadedEditor({ currentText, active, agentActive });
+    currentText.value = "my unsaved changes";
+    editor.updateText();
+    active.value = false;
+    await nextTick();
+    const before = mocks.requestCalls.length;
+    agentActive.value = false;
+    await nextTick();
+    await flushPromises();
+    expect(mocks.requestCalls.length).toBe(before);
+    mocks.requestResults.push(treeResponse(), fileResponse({ hash: "hash-2", text: "agent changes" }));
+    active.value = true;
+    await nextTick();
+    for (let count = 0; count < 6; count += 1) await flushPromises();
+    expect(mocks.requestCalls.length).toBe(before + 2);
+    expect(currentText.value).toBe("my unsaved changes");
+    expect(editor.dirty.value).toBe(true);
+    expect(editor.saveError.value).toContain("changed");
+  });
+
+  it("refreshes only loaded directory pages and commits their replacement together", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText, openFile: false });
+    editor.tree.value = { type: "directory", path: "", loaded: true, children: [
+      { type: "directory", path: "src", name: "src", loaded: true, children: [{ type: "file", path: "src/old.js", name: "old.js" }] },
+      { type: "directory", path: "huge", name: "huge", loaded: false, children: [] }
+    ] };
+    const previousTree = editor.tree.value;
+    const newRoot = treeResponse();
+    newRoot.tree.children = ["src", "huge"].map((path) => ({ type: "directory", name: path, path, loaded: false, children: [] }));
+    let finishDirectory;
+    mocks.requestResults.push(newRoot, new Promise((resolve) => { finishDirectory = resolve; }));
+    const before = mocks.requestCalls.length;
+    const refreshing = editor.refresh();
+    await flushPromises();
+    expect(editor.tree.value).toBe(previousTree);
+    finishDirectory({ ok: true, tree: { type: "directory", path: "src", name: "src", loaded: true, children: [{ type: "file", path: "src/new.js", name: "new.js" }] } });
+    await refreshing;
+    expect(mocks.requestCalls.slice(before).map(([url]) => url)).toEqual([
+      "/api/app/vibe64/sessions/session-1/source-editor/tree?limit=20",
+      "/api/app/vibe64/sessions/session-1/source-editor/tree?path=src&limit=20"
+    ]);
+    expect(editor.tree.value.children[0].children.map((file) => file.path)).toEqual(["src/new.js"]);
+  });
+
+  it("does not resurrect a deleted file from the selected-file reveal cache", async () => {
+    const currentText = ref("");
+    const editor = await createLoadedEditor({ currentText, openFile: false });
+    mocks.requestResults.push(fileResponse({ revealTree: revealTreeForNestedFile("src/app.js") }));
+    await editor.openFile("src/app.js");
+    mocks.requestResults.push(treeResponse(), { ok: false, error: "File no longer exists" });
+    await editor.refresh();
+    expect(editor.tree.value.children).toEqual([]);
+    expect(editor.selectedPath.value).toBe("src/app.js");
+    expect(editor.loadError.value).toContain("File no longer exists");
   });
 
   it("saves source editor files with origin and project scope", async () => {
@@ -469,12 +553,13 @@ describe("useVibe64SourceEditor", () => {
       name: path, path, type: "file"
     }));
     mocks.requestResults.push(updatedTree);
+    if (selected) mocks.requestResults.push(fileResponse());
     active.value = true;
     await nextTick();
     await flushPromises();
     expect(mocks.requestCalls.slice(requestCount)).toEqual([[
       "/api/app/vibe64/sessions/session-1/source-editor/tree?limit=20", {}
-    ]]);
+    ], ...(selected ? [["/api/app/vibe64/sessions/session-1/source-editor/file?path=src%2Fapp.js", {}]] : [])]);
     expect(editor.tree.value.children.map(({ path }) => path)).toEqual(["new-one.js", "new-two.js"]);
     expect(editor.selectedPath.value).toBe(selectedPath);
     expect(editor.loadedVersion.value).toBe(loadedVersion);
@@ -486,7 +571,7 @@ describe("useVibe64SourceEditor", () => {
     active.value = true;
     await nextTick();
     await flushPromises();
-    expect(mocks.requestCalls).toHaveLength(requestCount + 1);
+    expect(mocks.requestCalls).toHaveLength(requestCount + 1 + Number(selected));
     expect(editor.selectedPath.value).toBe(selectedPath);
     expect(currentText.value).toBe(currentDraft);
   });

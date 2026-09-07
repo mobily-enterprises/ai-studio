@@ -18,6 +18,26 @@
         </h2>
       </div>
       <div class="vibe64-source-editor__actions">
+        <v-btn
+          v-if="fileBookmarks"
+          :aria-label="selectedStarred ? 'Unstar file' : 'Star file'"
+          :aria-pressed="selectedStarred"
+          :disabled="!editor.selectedPath.value || fileBookmarks.pendingPaths.value.includes(editor.selectedPath.value)"
+          :icon="selectedStarred ? mdiStar : mdiStarOutline"
+          size="small"
+          :title="selectedStarred ? 'Unstar file' : 'Star file'"
+          variant="text"
+          @click="fileBookmarks.toggle(editor.selectedPath.value)"
+        />
+        <v-btn
+          aria-label="Download file"
+          :disabled="!editor.selectedPath.value || Boolean(downloadingPath)"
+          :icon="mdiDownload"
+          size="small"
+          :title="downloadingPath ? 'Downloading file…' : 'Download file'"
+          variant="text"
+          @click="requestDownload(editor.selectedPath.value)"
+        />
         <span
           v-if="editor.statusLabel.value"
           class="vibe64-source-editor__status"
@@ -73,7 +93,7 @@
         <v-btn
           :disabled="editor.loadingTree.value"
           :icon="mdiRefresh"
-          :loading="editor.loadingTree.value"
+          :aria-busy="editor.loadingTree.value"
           size="small"
           title="Refresh files"
           type="button"
@@ -230,6 +250,11 @@
             </div>
           </div>
 
+          <details v-if="fileBookmarks" class="vibe64-source-editor__starred" open>
+            <summary>Starred <span>{{ fileBookmarks.files.value.length }}</span></summary>
+            <Vibe64StarredFilesList :bookmarks="fileBookmarks" @open-file="editor.openFile" />
+          </details>
+
           <section
             v-if="searchPanelVisible"
             class="vibe64-source-editor__search-results"
@@ -280,7 +305,7 @@
           </section>
 
           <div
-            v-if="editor.loadingTree.value"
+            v-if="editor.loadingTree.value && !editor.tree.value"
             class="vibe64-source-editor__notice"
           >
             Loading files...
@@ -298,6 +323,7 @@
             :loading-paths="editor.treeLoadingPaths.value"
             :node="editor.tree.value"
             :selected-path="editor.selectedPath.value"
+            :starred-paths="fileBookmarks?.paths.value || []"
             :ask-codex-available="askCodexAvailable"
             @ask-codex="askCodexAboutPath"
             @copy-path="copySourcePath"
@@ -305,6 +331,8 @@
             @load-more-directory="editor.loadMoreDirectory"
             @new-file="openNewFileDialog"
             @open-file="editor.openFile"
+            @toggle-star="fileBookmarks?.toggle($event)"
+            @download-file="requestDownload"
           />
         </template>
       </aside>
@@ -443,6 +471,20 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+    <v-dialog v-model="downloadDraftOpen" max-width="440">
+      <v-card title="Download this file?">
+        <v-card-text>
+          This file has unsaved edits. Download the saved version, or save your edits first.
+          <v-alert v-if="downloadError" class="mt-3" density="compact" type="error" variant="tonal">{{ downloadError }}</v-alert>
+        </v-card-text>
+        <v-card-actions class="flex-wrap">
+          <v-btn :disabled="downloadSaving" @click="downloadDraftOpen = false">Cancel</v-btn>
+          <v-btn :disabled="downloadSaving" @click="downloadSavedDraft">Download saved file</v-btn>
+          <v-btn color="primary" :disabled="downloadSaving" @click="saveAndDownload">{{ downloadSaving ? 'Saving…' : 'Save & download' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+    <span class="vibe64-source-editor__download-status" role="status">{{ downloadingPath ? 'Downloading file…' : '' }}</span>
   </section>
 </template>
 
@@ -491,6 +533,7 @@ import {
   mdiChevronRight,
   mdiCollapseAllOutline,
   mdiContentSaveOutline,
+  mdiDownload,
   mdiFileCodeOutline,
   mdiFilePlusOutline,
   mdiFileSearchOutline,
@@ -499,11 +542,18 @@ import {
   mdiRefresh,
   mdiRobotOutline,
   mdiRestore,
+  mdiStar,
+  mdiStarOutline,
   mdiUndoVariant
 } from "@mdi/js";
 
 import Vibe64SourceExplanationPanel from "@/components/studio/vibe64-session/Vibe64SourceExplanationPanel.vue";
 import Vibe64SourceFileTree from "@/components/studio/vibe64-session/Vibe64SourceFileTree.vue";
+import Vibe64StarredFilesList from "@/components/studio/vibe64-session/Vibe64StarredFilesList.vue";
+import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
+import { vibe64SourceEditorDownloadPath } from "@/lib/vibe64SessionRequestConfig.js";
+import { scopedDevelopmentApiUrl } from "@/lib/studioUrls.js";
+import { readRefOrGetterValue } from "@/lib/vueRefOrGetterValue.js";
 import {
   useVibe64SourceEditor
 } from "@/composables/useVibe64SourceEditor.js";
@@ -522,6 +572,8 @@ import {
 const SOURCE_EDITOR_TREE_STATE_STORAGE_KEY = "vibe64:source-editor:tree-state";
 
 const props = defineProps({
+  agentActive: { type: Boolean, default: false },
+  fileBookmarks: { type: Object, default: null },
   active: {
     default: false,
     type: Boolean
@@ -577,11 +629,95 @@ let resettingEditor = false;
 let sourceEditorUnmounted = false;
 const editor = useVibe64SourceEditor({
   active: () => props.active,
+  agentActive: () => props.agentActive,
   navigateReferencedSource: (navigation) => props.navigateReferencedSource?.(navigation),
   projectSlug: () => props.projectSlug,
   readCurrentText: () => editorView?.state.doc.toString() ?? "",
   sessionId: () => props.sessionId,
   sessionsApiPath: () => props.sessionsApiPath
+});
+const selectedStarred = computed(() => props.fileBookmarks?.paths.value.includes(editor.selectedPath.value) || false);
+const downloadingPath = ref("");
+const downloadDraftOpen = ref(false);
+const downloadSaving = ref(false);
+const downloadError = ref("");
+let draftDownload = null;
+const downloadFeedback = useUiFeedback({ source: "vibe64.source-editor.download" });
+
+function requestDownload(filePath) {
+  if (!filePath || downloadingPath.value) {
+    return;
+  }
+  const target = {
+    path: filePath,
+    sessionId: props.sessionId,
+    sessionsApiPath: readRefOrGetterValue(props.sessionsApiPath),
+    projectSlug: props.projectSlug
+  };
+  if (filePath === editor.selectedPath.value && (editor.dirty.value || editor.saving.value)) {
+    draftDownload = target;
+    downloadError.value = "";
+    downloadDraftOpen.value = true;
+  } else {
+    void downloadFile(target);
+  }
+}
+
+async function downloadFile(target) {
+  downloadingPath.value = target.path;
+  try {
+    // The JSON HTTP client cannot return binary bodies. Keep the same project scope and cookie authentication.
+    const url = scopedDevelopmentApiUrl(
+      vibe64SourceEditorDownloadPath(target.sessionsApiPath, target.sessionId, target.path),
+      target.projectSlug
+    );
+    const response = await fetch(url, { credentials: "include" });
+    if (!response.ok || !response.headers.get("content-disposition")?.startsWith("attachment;")) {
+      const failure = await response.json().catch(() => ({}));
+      const message = typeof failure.error === "string"
+        ? failure.error
+        : failure.error?.message || "File could not download. Check your connection and access, then retry.";
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = basename(target.path);
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (cause) {
+    downloadFeedback.error(cause.message || "File could not download.");
+  } finally {
+    downloadingPath.value = "";
+  }
+}
+
+function downloadSavedDraft() {
+  downloadDraftOpen.value = false;
+  void downloadFile(draftDownload);
+}
+
+async function saveAndDownload() {
+  downloadSaving.value = true;
+  await editor.saveNow();
+  downloadSaving.value = false;
+  if (editor.dirty.value || editor.saveError.value) {
+    downloadError.value = editor.saveError.value || "The file still has unsaved edits.";
+    return;
+  }
+  downloadSavedDraft();
+}
+
+watch([() => props.active, () => props.agentActive], ([active, working], [wasActive, wasWorking]) => {
+  if (active && (!wasActive || (wasWorking && !working))) {
+    void props.fileBookmarks?.refresh();
+  }
+});
+watch(() => props.sessionId, () => {
+  downloadDraftOpen.value = false;
 });
 const languageCompartment = new Compartment();
 const lineWrappingCompartment = new Compartment();
@@ -1299,6 +1435,37 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.vibe64-source-editor__starred {
+  margin-bottom: 0.75rem;
+}
+
+.vibe64-source-editor__starred .starred-files-list {
+  max-height: 14rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.vibe64-source-editor__starred summary {
+  cursor: pointer;
+  padding: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.vibe64-source-editor__starred summary span {
+  margin-left: 0.25rem;
+  font-weight: 400;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.vibe64-source-editor__download-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
 .vibe64-source-editor {
   block-size: 100%;
   display: grid;

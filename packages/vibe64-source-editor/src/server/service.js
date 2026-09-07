@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -44,6 +45,7 @@ import {
 import {
   createSourceEditorFileObserver
 } from "./sourceChangeObserver.js";
+import { readStarredFiles, setStarredFile, starredFilesPath } from "./starredFiles.js";
 
 const SOURCE_EDITOR_CONFLICT_CODE = "vibe64_source_editor_conflict";
 const SOURCE_EDITOR_FILE_MATCH_LIMIT = 80;
@@ -808,6 +810,64 @@ function createService({
           revealTree: await sourceEditorFileRevealTree(context, file.path),
           ok: true
         };
+      });
+    },
+
+    async downloadFile(input = {}) {
+      return runSourceEditorOperation(async () => {
+        const context = await sourceEditorContext(input.sessionId);
+        const file = await sourceEditorExistingFile(context, input.path, { maxFileBytes: Infinity });
+        const handle = await open(file.absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+          const stats = await handle.stat();
+          if (!stats.isFile() || stats.dev !== file.stats.dev || stats.ino !== file.stats.ino) {
+            throw sourceEditorError("The file changed while opening. Try downloading again.", "vibe64_source_editor_file_changed", {}, 409);
+          }
+          return { ok: true, fileHandle: handle, name: path.posix.basename(file.relativePath) };
+        } catch (error) {
+          await handle.close();
+          throw error;
+        }
+      });
+    },
+
+    async readStarredFiles(input = {}) {
+      return runSourceEditorOperation(async () => {
+        const context = await sourceEditorContext(input.sessionId);
+        const paths = await readStarredFiles(starredFilesPath(context.runtime.stateRoot, input.vibe64User));
+        const files = [];
+        // Only inspect explicitly bookmarked paths, never scan or watch the tree.
+        for (const filePath of paths) {
+          try {
+            await sourceEditorExistingFile(context, filePath, { maxFileBytes: Infinity });
+            files.push({ path: filePath, available: true });
+          } catch (error) {
+            files.push({
+              path: filePath,
+              available: false,
+              reason: isMissingPathError(error) ? "Not found in this session" : "Unavailable in this session"
+            });
+          }
+        }
+        return { ok: true, files };
+      });
+    },
+
+    async setStarredFile(input = {}) {
+      return runSourceEditorOperation(async () => {
+        if (typeof input.starred !== "boolean") {
+          throw sourceEditorError("Choose whether to star the file.", "vibe64_invalid_starred_file");
+        }
+        const context = await sourceEditorContext(input.sessionId);
+        const filePath = normalizeSourceEditorRelativePath(input.path);
+        if (!filePath) {
+          throw sourceEditorError("Choose a file to star.", "vibe64_invalid_source_editor_path");
+        }
+        if (input.starred) {
+          await sourceEditorExistingFile(context, filePath, { maxFileBytes: Infinity });
+        }
+        const paths = await setStarredFile(starredFilesPath(context.runtime.stateRoot, input.vibe64User), filePath, input.starred);
+        return { ok: true, paths };
       });
     },
 
@@ -1970,7 +2030,9 @@ async function createSourceEditorFile(context = {}, input = {}) {
   return sourceEditorFilePayload(relativePath, savedBuffer, savedStats);
 }
 
-async function sourceEditorExistingFile(context = {}, relativePathValue = "") {
+async function sourceEditorExistingFile(context = {}, relativePathValue = "", {
+  maxFileBytes = context.policy.maxFileBytes
+} = {}) {
   const relativePath = normalizeSourceEditorRelativePath(relativePathValue);
   if (!relativePath) {
     throw sourceEditorError("Choose a file before editing.", "vibe64_invalid_source_editor_path");
@@ -1988,7 +2050,7 @@ async function sourceEditorExistingFile(context = {}, relativePathValue = "") {
       path: relativePath
     });
   }
-  if (stats.size > context.policy.maxFileBytes) {
+  if (stats.size > maxFileBytes) {
     throw sourceEditorError("The selected file is too large for the source editor.", "vibe64_source_editor_file_too_large", {
       maxFileBytes: context.policy.maxFileBytes,
       path: relativePath,
