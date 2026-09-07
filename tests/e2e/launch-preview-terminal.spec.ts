@@ -1866,7 +1866,10 @@ for (const viewport of [{ width: 1280, height: 577 }, { width: 960, height: 700 
       await starter.focus();
       await page.keyboard.press("Enter");
       await expect.poll(() => writes.length).toBe(1);
-      await expect(page.locator(".v-snackbar")).toContainText("The starter could not be downloaded.");
+      const failureFeedback = page.locator(".v-snackbar__wrapper", { hasText: "The starter could not be downloaded." });
+      await expect(failureFeedback).toBeVisible();
+      await expect(failureFeedback).toHaveCSS("opacity", "1");
+      await expect(failureFeedback).toBeInViewport();
       await page.screenshot({ path: testInfo.outputPath("onboarding-starter-failure.png") });
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await expect(starter).toBeEnabled();
