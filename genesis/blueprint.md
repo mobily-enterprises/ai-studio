@@ -115,6 +115,9 @@ environment require the source lock. A ready preview replaces any stale error
 from an overlapping start request.
 People can inspect and explicitly restart the application while the assistant
 is working; automatic startup waits until that work is idle.
+If another assistant operation briefly blocks automatic preview startup, Preview
+waits and retries without raising an error. Other startup failures appear once
+with a retry action.
 Project-understanding warnings do not replace the application preview. People
 can read a persistent warning, recheck setup, and keep using the preview's URL,
 reload, and navigation controls. Starting an application still requires valid

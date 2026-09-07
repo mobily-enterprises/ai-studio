@@ -603,6 +603,7 @@ function useVibe64OutputControlsSurface(props) {
     launchStatusAttempt,
     launchStatusIdleRecoveryExhausted,
     launchStarting,
+    launchWaiting,
     outputExecution,
     outputResults,
     outputRuns,
@@ -648,6 +649,7 @@ function useVibe64OutputControlsSurface(props) {
   } = useVibe64OutputControls({
     autoStartManagedPreview: () => props.autoStartManagedPreview,
     autoStartTargetId: () => props.autoStartTargetId,
+    embeddedPreview: () => props.embeddedPreview,
     previewDisplayed: () => props.previewDisplayed,
     sourceOperationsSuspended: () => props.sourceOperationsSuspended,
     windowDisplayed: () => props.windowDisplayed,
@@ -880,6 +882,7 @@ function useVibe64OutputControlsSurface(props) {
       activeOutputTarget: activeOutputTarget.value,
       embeddedStartTarget: embeddedStartTarget.value,
       launchStarting: launchStarting.value,
+      launchWaiting: launchWaiting.value,
       launchStatusText: launchStatusText.value,
       loading: loading.value,
       operationBusy: operationBusy.value,
@@ -960,6 +963,7 @@ function useVibe64OutputControlsSurface(props) {
   const previewActivityVisible = computed(() => Boolean(
     previewStarting.value ||
     launchStarting.value ||
+    launchWaiting.value ||
     terminalIsRunning.value ||
     loading.value
   ));
@@ -2067,6 +2071,7 @@ function launchPreviewInFlightText({
   activeOutputTarget = null,
   embeddedStartTarget = null,
   launchStarting = false,
+  launchWaiting = false,
   launchStatusText = "",
   loading = false,
   operationBusy = false,
@@ -2086,6 +2091,9 @@ function launchPreviewInFlightText({
   const launchStatus = String(launchStatusText || "").trim();
   if (launchStarting) {
     return `Starting preview: ${outputTargetLabel(embeddedStartTarget || activeOutputTarget)}.`;
+  }
+  if (launchWaiting) {
+    return "Waiting for the assistant operation to finish. Preview will retry automatically.";
   }
   if (operationBusy && terminalCanRestart) {
     return `Restarting preview: ${outputTargetLabel(target)}.`;

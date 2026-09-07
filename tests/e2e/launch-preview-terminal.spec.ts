@@ -1585,7 +1585,9 @@ for (const width of [1440, 390]) {
       const failure = page.locator("strong").filter({ hasText: "Preview could not be started" });
       if (!readinessFirst) {
         releaseStart();
-        await expect(failure).toBeVisible();
+        await expect(page.getByText("Waiting for the assistant operation to finish. Preview will retry automatically.")).toBeVisible();
+        await expect(failure).toHaveCount(0);
+        await expect(page.getByText("Another assistant operation is starting. Try again in a moment.", { exact: true })).toHaveCount(0);
         await page.screenshot({ path: testInfo.outputPath("start-rejected.png") });
       }
       await launch.publishLaunchReady();
@@ -1593,39 +1595,104 @@ for (const width of [1440, 390]) {
       releaseStart();
       await rejectedStart;
       await expect(failure).toHaveCount(0);
+      await expect(page.getByText("Another assistant operation is starting. Try again in a moment.", { exact: true })).toHaveCount(0);
       await expect(page.locator(".vibe64-launch-controls__status-dot--running:visible")).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("preview-recovered.png") });
     });
   }
 }
 
-test("@preview-race repeated busy starts remain retryable and recover to the running app", async ({ page }, testInfo) => {
+for (const width of [1440, 390]) {
+  test(`@preview-contention repeated busy starts recover automatically at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.addInitScript(() => {
+      (window as typeof window & { busyErrorShown?: boolean }).busyErrorShown = false;
+      new MutationObserver(() => {
+        if (document.body?.textContent?.includes("Another assistant operation is starting. Try again in a moment.")) {
+          (window as typeof window & { busyErrorShown?: boolean }).busyErrorShown = true;
+        }
+      }).observe(document, { childList: true, subtree: true, characterData: true });
+    });
+    await mockLaunchTerminalSocket(page);
+    await mockLaunchSession(page, {
+      initialLaunchStatus: idleLaunchStatusPayload(launchStatusPayload().outputTargets)
+    });
+    let starts = 0;
+    const startTimes: number[] = [];
+    await page.route("**/output-runs", async (route) => {
+      startTimes.push(Date.now());
+      if (++starts > 3) {
+        await route.fallback();
+        return;
+      }
+      await fulfillJson(route, {
+        code: "vibe64_agent_write_mode_busy",
+        error: "Another assistant operation is starting. Try again in a moment.",
+        ok: false,
+        retryable: true
+      }, { status: 409 });
+    });
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    if (width < 600) {
+      await page.getByRole("button", { name: "Show project" }).click();
+    }
+    await expect(page.getByText("Waiting for the assistant operation to finish. Preview will retry automatically.")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("waiting.png") });
+    await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible({ timeout: 35_000 });
+    await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app")).toBeVisible();
+    await expect(page.locator("strong").filter({ hasText: "Preview could not be started" })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as typeof window & { busyErrorShown?: boolean }).busyErrorShown)).toBe(false);
+    await expect(page.getByText("Waiting for the assistant operation to finish. Preview will retry automatically.")).toHaveCount(0);
+    expect(starts).toBe(4);
+    for (let index = 1; index < startTimes.length; index += 1) {
+      expect(startTimes[index] - startTimes[index - 1]).toBeGreaterThanOrEqual(6500);
+    }
+    await page.screenshot({ path: testInfo.outputPath("repeated-retry-recovered.png") });
+  });
+}
+
+test("@preview-contention a genuine startup failure appears once and waits for an explicit retry", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   await mockLaunchSession(page, {
     initialLaunchStatus: idleLaunchStatusPayload(launchStatusPayload().outputTargets)
   });
   let starts = 0;
+  const message = "The configured preview command could not be started.";
   await page.route("**/output-runs", async (route) => {
-    if (++starts > 3) {
-      await route.fallback();
-      return;
-    }
+    if (++starts > 1) return route.fallback();
+    await fulfillJson(route, { code: "vibe64_output_start_failed", error: message, ok: false }, { status: 500 });
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  await expect(page.getByText(message, { exact: true })).toHaveCount(1);
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await page.waitForTimeout(8500);
+  expect(starts).toBe(1);
+  await page.getByRole("button", { name: "Restart preview", exact: true }).click();
+  await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app")).toBeVisible();
+  await expect(page.getByText(message, { exact: true })).toHaveCount(0);
+  expect(starts).toBe(2);
+});
+
+test("@preview-contention reload preserves the retry cooldown and recovers", async ({ page }) => {
+  await mockLaunchTerminalSocket(page);
+  await mockLaunchSession(page, {
+    initialLaunchStatus: idleLaunchStatusPayload(launchStatusPayload().outputTargets)
+  });
+  const startTimes: number[] = [];
+  await page.route("**/output-runs", async (route) => {
+    startTimes.push(Date.now());
+    if (startTimes.length > 1) return route.fallback();
     await fulfillJson(route, {
-      code: "vibe64_agent_write_mode_busy",
-      error: "Another assistant operation is starting. Try again in a moment.",
-      ok: false,
-      retryable: true
+      code: "vibe64_agent_write_mode_busy", error: "Another assistant operation is starting. Try again in a moment.",
+      ok: false, retryable: true
     }, { status: 409 });
   });
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    await expect(page.locator("strong").filter({ hasText: "Preview could not be started" })).toBeVisible();
-    await page.getByRole("button", { name: "Restart preview", exact: true }).click();
-  }
-  await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
-  await expect(page.locator("strong").filter({ hasText: "Preview could not be started" })).toHaveCount(0);
-  expect(starts).toBe(4);
-  await page.screenshot({ path: testInfo.outputPath("repeated-retry-recovered.png") });
+  await expect(page.getByText("Waiting for the assistant operation to finish. Preview will retry automatically.")).toBeVisible();
+  await page.reload();
+  await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app")).toBeVisible({ timeout: 15_000 });
+  expect(startTimes).toHaveLength(2);
+  expect(startTimes[1] - startTimes[0]).toBeGreaterThanOrEqual(6500);
 });
 
 for (const cancelHint of [false, true]) {
@@ -4747,20 +4814,21 @@ async function mockLaunchSession(page: Page, {
     async publishLaunchReady() {
       initialLaunchStatusActive = false;
       launchStarted = true;
-      // Deliver the same Socket.IO event as a separate successful launch.
+      // Deliver to the real listeners; onevent would buffer indefinitely because
+      // this HTTP fixture does not establish a live Socket.IO connection.
       await page.evaluate((sessionId) => {
         const app = (document.querySelector("#app") as unknown as {
           __vue_app__: { _context: { provides: Record<string, {
-            onevent(packet: { data: unknown[] }): void;
+            emitEvent(args: unknown[]): void;
           }> } };
         }).__vue_app__;
-        app._context.provides["jskit.realtime.runtime.client.socket"].onevent({
-          data: ["vibe64.session.changed", {
+        app._context.provides["jskit.realtime.runtime.client.socket"].emitEvent(
+          ["vibe64.session.changed", {
             sessionId,
             reason: "output-target-ready",
             clientRefresh: { includeOutputs: true }
           }]
-        });
+        );
       }, session.sessionId);
     },
     getSessionCreationRequestCount() {

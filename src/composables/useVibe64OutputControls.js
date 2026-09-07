@@ -652,6 +652,7 @@ function useVibe64OutputControls({
   autoStartManagedPreview = () => false,
   autoStartTargetId = () => "",
   busy = () => false,
+  embeddedPreview = () => false,
   previewDisplayed = () => true,
   session = null,
   sourceOperationsSuspended = () => false,
@@ -662,6 +663,7 @@ function useVibe64OutputControls({
   const operationBusy = ref(false);
   const launchError = ref("");
   const launchStarting = ref(false);
+  const launchWaiting = ref(false);
   const terminalExpanded = ref(false);
   const autoStartKey = ref("");
   const autoStartCooldownVersion = ref(0);
@@ -773,6 +775,13 @@ function useVibe64OutputControls({
     fallbackRunError: "Output target could not be started.",
     messages: {
       error: "Output target could not be started."
+    },
+    onRunError(error) {
+      // Startup failures belong to the preview, including automatic attempts.
+      // Rethrow before useCommand also presents them as action-feedback toasts.
+      if (readRefOrGetterValue(embeddedPreview)) {
+        throw error;
+      }
     },
     ownershipFilter: ROUTE_VISIBILITY_PUBLIC,
     placementSource: "vibe64.output-target.start",
@@ -1104,6 +1113,7 @@ function useVibe64OutputControls({
       terminalExpanded.value = false;
     }
     launchStarting.value = true;
+    launchWaiting.value = false;
     launchError.value = "";
     operationBusy.value = true;
     const normalizedAutoStartAttemptKey = String(autoStartAttemptKey || "").trim();
@@ -1136,6 +1146,15 @@ function useVibe64OutputControls({
     } catch (error) {
       if (disposed || startedScopeKey !== launchScopeKey.value) {
         return false;
+      }
+      if (normalizedAutoStartAttemptKey) {
+        if (launchStatusAgentWriteBusy(error)) {
+          launchWaiting.value = previewState.value !== "ready";
+          void refresh({ scopeKey: startedScopeKey }).catch(() => null);
+          return false;
+        }
+        // Only a confirmed admission conflict is safe to retry automatically.
+        autoStartKey.value = normalizedAutoStartAttemptKey;
       }
       launchError.value = String(
         error?.message || startTerminalCommand.message || "Output target could not be started."
@@ -1537,6 +1556,7 @@ function useVibe64OutputControls({
   watch([previewState, terminalIndicatorState, launchError], ([state, indicator]) => {
     if (state === "ready" && indicator === "running") {
       launchError.value = "";
+      launchWaiting.value = false;
     }
   });
 
@@ -1564,6 +1584,7 @@ function useVibe64OutputControls({
     attachedTerminalId = "";
     autoStartKey.value = "";
     launchError.value = "";
+    launchWaiting.value = false;
     launchStatusAttempt.value = 0;
     launchStatusAttemptLoading = false;
     launchStatusAttemptScopeKey = launchScopeKey.value;
@@ -1763,6 +1784,7 @@ function useVibe64OutputControls({
     launchStatusAttempt,
     launchStatusIdleRecoveryExhausted,
     launchStarting,
+    launchWaiting,
     outputTargets,
     outputExecution,
     outputResults,

@@ -162,6 +162,11 @@ describe("Vibe64 launch controls surface", () => {
 
   it("describes the exact embedded preview operation while it is in flight", () => {
     expect(launchPreviewInFlightText({
+      launchWaiting: true,
+      loading: true
+    })).toBe("Waiting for the assistant operation to finish. Preview will retry automatically.");
+
+    expect(launchPreviewInFlightText({
       embeddedStartTarget: {
         id: "dev",
         label: "Run app"
