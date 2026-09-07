@@ -2,6 +2,7 @@ import { computed, proxyRefs, reactive, ref, unref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
+import { scopedDevelopmentApiUrl } from "@/lib/studioUrls.js";
 import {
   blockingVibe64SessionPageError
 } from "@/lib/vibe64SessionPanelModel.js";
@@ -84,7 +85,7 @@ function useVibe64SessionPanel(props, emit) {
   const projectSettings = useEndpointResource({
     enabled: computed(() => Boolean(projectSlug.value)),
     fallbackLoadError: "Project settings could not load.",
-    path: PROJECT_SETTINGS_ENDPOINT,
+    path: computed(() => scopedDevelopmentApiUrl(PROJECT_SETTINGS_ENDPOINT, projectSlug.value)),
     queryKey: projectSettingsKey,
     realtime: {
       event: VIBE64_PROJECT_CHANGED_EVENT,

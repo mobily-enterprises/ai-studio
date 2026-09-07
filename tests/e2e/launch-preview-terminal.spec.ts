@@ -2497,6 +2497,65 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 960, height: 900 
   });
 }
 
+for (const source of [
+  { endpoint: "settings", sessionId: "" },
+  { endpoint: "settings", sessionId: "settings-a" },
+  { endpoint: "settings/engineering", sessionId: "settings-a" }
+]) {
+  test(`delayed settings retries stay project-bound: ${source.endpoint}, ${source.sessionId || "selected source"}`, async ({ page }) => {
+    page.setDefaultTimeout(10_000);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.clock.install();
+    await mockLaunchTerminalSocket(page);
+    const session = sessionPayload({ sessionId: "settings-a", sessionName: "Settings A" });
+    await mockLaunchSession(page, { session, sessionList: [session] });
+    const projects = ["example-target-app", "other-target-app"].map((slug) => ({
+      external: false, name: slug, path: `/workspace/${slug}`, selected: true,
+      slug, source: "workspace", runtime: { open: true }
+    }));
+    await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/projects(?:\?.*)?$/u, async (route) => {
+      const slug = /\/app\/project\/([^/]+)/u.exec(page.url())?.[1];
+      const currentProject = projects.find((project) => project.slug === slug);
+      await fulfillJson(route, {
+        ok: true, hasSelection: true, currentProject, projects,
+        projectsRoot: "/workspace", targetRoot: currentProject!.path
+      });
+    });
+    const response = {
+      ok: true, promptHints: { enabled: true, canEdit: true },
+      collaboration: { available: false, canEdit: false },
+      engineering: { available: false }
+    };
+    const reads: Array<{ slug: string; route: Route }> = [];
+    let otherProjectRead = false;
+    await page.route(/\/api(?:\/app\/[^/]+)?\/vibe64\/settings(?:\/engineering)?(?:\?.*)?$/u, async (route) => {
+      const url = new URL(route.request().url());
+      const slug = /\/api\/app\/([^/]+)/u.exec(url.pathname)?.[1] || "unscoped";
+      if (slug === "other-target-app" && url.pathname.endsWith("/vibe64/settings")) otherProjectRead = true;
+      if (url.pathname.endsWith(`/vibe64/${source.endpoint}`) && (url.searchParams.get("sessionId") || "") === source.sessionId) {
+        reads.push({ slug, route });
+        if (slug === "example-target-app") return;
+      }
+      await fulfillJson(route, response);
+    });
+
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/settings${source.sessionId ? `?sessionId=${source.sessionId}` : ""}`);
+    await expect.poll(() => reads.length).toBe(1);
+    expect(reads[0].slug).toBe("example-target-app");
+    await page.getByRole("button", { name: "example-target-app", exact: true }).click();
+    await page.getByRole("list").getByText("other-target-app", { exact: true }).click();
+    await expect(page).toHaveURL(`${BASE_URL}/app/project/other-target-app`);
+    // Wait for the new project's persistent settings reader before releasing A.
+    await expect.poll(() => otherProjectRead).toBe(true);
+    const beforeRetry = reads.length;
+    await fulfillJson(reads[0].route, { ok: false, error: "Transient source A read failure." }, { status: 503 });
+    await page.clock.runFor(3_000);
+    await expect.poll(() => reads.length).toBe(beforeRetry + 1);
+    expect(reads.at(-1)!.slug, "the physical retry must keep its original project").toBe("example-target-app");
+    await fulfillJson(reads.at(-1)!.route, response);
+  });
+}
+
 for (const viewportWidth of [390, 960, 1600]) {
   test(`@preview-lifecycle shared database choice is unavailable with multiple sessions at ${viewportWidth}px`, async ({ page }) => {
     await page.setViewportSize({

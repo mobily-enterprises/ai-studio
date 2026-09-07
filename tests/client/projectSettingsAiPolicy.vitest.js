@@ -401,7 +401,9 @@ function mountPanel({ liveQueries = false, liveCommands = false } = {}) {
   projectSettingsMocks.liveQueries = liveQueries;
   if (liveQueries) {
     configureHttpWebClient({
-      request(url, options) {
+      request(requestUrl, options) {
+        const scope = /^\/api\/app\/([^/]+)(\/.*)$/u.exec(requestUrl);
+        const url = scope ? `/api${scope[2]}` : requestUrl;
         if (options.method === "PUT") {
           expect(liveCommands).toBe(true);
           expect([COLLABORATION_ENDPOINT, ENGINEERING_ENDPOINT]).toContain(url);
@@ -412,7 +414,7 @@ function mountPanel({ liveQueries = false, liveCommands = false } = {}) {
         }
         expect(options.method).toBe("GET");
         expect([PROJECT_SETTINGS_ENDPOINT, ENGINEERING_ENDPOINT]).toContain(url);
-        const projectSlug = projectSettingsMocks.projectSlug.value;
+        const projectSlug = scope ? decodeURIComponent(scope[1]) : projectSettingsMocks.projectSlug.value;
         const sessionId = options.query?.sessionId || "";
         const source = { rootKind: sessionId ? "session-source" : "standalone-source", sessionId };
         const data = url === PROJECT_SETTINGS_ENDPOINT
@@ -423,7 +425,7 @@ function mountPanel({ liveQueries = false, liveCommands = false } = {}) {
           "app", "public", projectSlug, sessionId
         );
         const response = Promise.withResolvers();
-        requests.push({ data, key, projectSlug, sessionId, url, ...response });
+        requests.push({ data, key, projectSlug, requestUrl, sessionId, url, ...response });
         if (closed) response.resolve(data);
         return response.promise;
       }
@@ -558,6 +560,29 @@ describe("ProjectSettingsPanel AI behaviour", () => {
 
   afterEach(() => {
     resetHttpWebClientForTests();
+  });
+
+  it("binds panel and persistent settings read URLs to the query's project and source", async () => {
+    const fixture = mountPanel({ liveQueries: true });
+    try {
+      expect(fixture.requests.map(({ requestUrl, sessionId }) => [requestUrl, sessionId])).toEqual([
+        ["/api/app/project-a/vibe64/settings", ""],
+        ["/api/app/project-a/vibe64/settings", "session-a"],
+        ["/api/app/project-a/vibe64/settings/engineering", "session-a"]
+      ]);
+      await fixture.resolveReads();
+      projectSettingsMocks.projectSlug.value = "project-b";
+      projectSettingsMocks.route.query.sessionId = "session-b";
+      await nextTick();
+      expect(fixture.requests.slice(3).map(({ requestUrl, sessionId }) => [requestUrl, sessionId])).toEqual([
+        ["/api/app/project-b/vibe64/settings", ""],
+        ["/api/app/project-b/vibe64/settings", "session-b"],
+        ["/api/app/project-b/vibe64/settings/engineering", "session-b"]
+      ]);
+      await fixture.resolveReads(3);
+    } finally {
+      fixture.close();
+    }
   });
 
   it.each(["", "session-a"])("refreshes each active settings source once through the real parent query owner (source %j)", async (sessionId) => {

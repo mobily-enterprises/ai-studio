@@ -283,6 +283,7 @@ import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibil
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
 import { useRealtimeEvent } from "@jskit-ai/realtime/client/composables/useRealtimeEvent";
+import { scopedDevelopmentApiUrl } from "@/lib/studioUrls.js";
 import Vibe64AsyncModuleState from "@/components/common/Vibe64AsyncModuleState.vue";
 import {
   useVibe64ProjectSlug
@@ -328,7 +329,7 @@ const routeSessionId = computed(() => String(route.query.sessionId || "").trim()
 
 const resource = useEndpointResource({
   fallbackLoadError: "Project settings could not load.",
-  path: PROJECT_SETTINGS_ENDPOINT,
+  path: computed(() => scopedDevelopmentApiUrl(PROJECT_SETTINGS_ENDPOINT, projectSlug.value)),
   queryKey: computed(() => projectSettingsQueryKey(
     VIBE64_SURFACE_ID,
     ROUTE_VISIBILITY_PUBLIC,
@@ -344,7 +345,7 @@ const resource = useEndpointResource({
 
 const engineeringResource = useEndpointResource({
   fallbackLoadError: "Engineering approach could not load.",
-  path: ENGINEERING_ENDPOINT,
+  path: computed(() => scopedDevelopmentApiUrl(ENGINEERING_ENDPOINT, projectSlug.value)),
   queryKey: computed(() => engineeringSettingsQueryKey(
     VIBE64_SURFACE_ID,
     ROUTE_VISIBILITY_PUBLIC,

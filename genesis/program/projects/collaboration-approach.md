@@ -15,6 +15,7 @@ conveniences outside agent prompts.
 - `src/components/studio/ProjectSettingsPanel.vue`
 - `src/composables/useVibe64SessionPanel.js`
 - `src/lib/studioGateApi.js`
+- `src/lib/studioUrls.js`
 
 ## Public contract
 
@@ -28,6 +29,8 @@ An unsaved choice survives refreshes of that same source. Switching project,
 source kind or source session loads the new source's choices; the previous
 source's draft is never submitted as the new source's settings. A temporary
 query-loading interval does not by itself discard a same-source draft.
+Settings reads retain their original project and source through transport
+retries; switching projects does not redirect an earlier read to the new one.
 Save keeps the choices disabled through the follow-up canonical settings read, so
 the previous save's refresh cannot overwrite a newly enabled choice. A failed
 save releases the controls and preserves the draft for retry; a failed read
