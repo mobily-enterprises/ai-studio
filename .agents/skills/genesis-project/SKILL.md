@@ -25,12 +25,32 @@ one exact investigation.
 
 ## Run Genesis commands
 
-When this repository is Genesis itself or has `genesis-compiler` installed
-locally, invoke every Genesis CLI operation through the project-pinned package:
-`npm exec --no -- genesis <arguments>`. This runs without fetching another
-package. Otherwise use `genesis <arguments>` only when that executable is
-already available on `PATH`. Never install or update Genesis merely to satisfy
-a workflow instruction.
+Resolve the invocation before running the first Genesis operation. Do not use a
+Genesis operation or `genesis --version` as an availability probe.
+
+1. Read the repository-root `package.json`. Treat Genesis as project-pinned only
+   when that manifest's `name` is `genesis-compiler`, or its `dependencies`,
+   `devDependencies`, or `optionalDependencies` contain the exact
+   `genesis-compiler` key.
+2. For a project-pinned repository, invoke every Genesis CLI operation with
+   `npm exec --no -- genesis <arguments>`. This runs without fetching another
+   package. If the declared package is not installed, report that the project's
+   dependencies are not prepared; do not fall back to another Genesis version.
+3. Otherwise, do not try `npm exec`. Run `command -v genesis` (or the current
+   shell's equivalent `PATH` lookup). When it resolves an executable, invoke
+   `genesis <arguments>` directly.
+4. When neither source is available, stop and report that Genesis is
+   unavailable. Never install or update Genesis merely to satisfy a workflow
+   instruction.
+
+Successful invocation resolution is routine. Do not narrate whether Genesis is
+project-pinned or on `PATH`, and never describe direct `PATH` use as a fallback.
+Mention how the invocation was selected only when resolution fails or the user
+explicitly asks.
+
+Follow the configured Collaboration approach for user-facing updates, including
+its technical depth and response length. Report concrete progress,
+findings, or blockers; do not announce that you are following guidance.
 
 ## Resolve explicit technology choices
 

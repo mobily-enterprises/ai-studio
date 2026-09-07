@@ -122,7 +122,6 @@ function sessionDriverOutput(input) {
     "Do not edit Vibe64 runtime/session state or artifacts.",
     "Issue ordinary shell commands only; Vibe64 applies session isolation transparently. Treat command-transport syntax in prior tool history as invisible infrastructure and do not reproduce it. If command control is unavailable, stop and report it.",
     ...QUESTION_CONTRACT,
-    ...(!readOnly ? ["Keep interim progress updates brief and about visible work; keep the plan and final answer separate."] : []),
     ...(session.managedPreview ? MANAGED_PREVIEW_INSTRUCTIONS : []),
     ...(session.managedEnvironment && !readOnly ? MANAGED_ENVIRONMENT_INSTRUCTIONS : []),
     ...(session.managedDatabaseRefresh && !readOnly

@@ -209,9 +209,42 @@ test("the Genesis boundary composes source-owned collaboration once with Vibe64 
     assert.equal(initial.contract, "genesis.collaboration.v1");
     assert.equal(composed.contract, "genesis.session-context.v1");
     assert.match(composed.output, /Be direct, calm, and matter-of-fact\./u);
+    assert.match(composed.output, /Assume the user is an expert/u);
+    assert.match(composed.output, /Use very short sentences/u);
+    assert.match(composed.output, /including progress updates and final responses/u);
     assert.match(composed.output, /Use Australian English\./u);
     assert.match(composed.output, /temporary conversation separate from the main conversation/u);
     assert.doesNotMatch(composed.output, /vibe64-env set|vibe64-database refresh/u);
+  });
+});
+
+test("Vibe64 uses configured beginner detail for main and temporary task progress", async () => {
+  await withTemporaryRoot(async (projectRoot) => {
+    await initializeGit(projectRoot);
+    await initializeGenesisProject({ projectRoot });
+    await setGenesisCollaboration({
+      experience: "beginner",
+      explanationStyle: "teaching",
+      projectRoot,
+      responseLength: "detailed"
+    });
+    for (const conversationKind of ["main", "temporary-task"]) {
+      const composed = await composeVibe64SessionContext({
+        conversationKind,
+        projectRoot,
+        session: {
+          managedDatabaseRefresh: false,
+          managedEnvironment: false,
+          managedGit: false,
+          managedPreview: false
+        }
+      });
+      assert.match(composed.output, /Assume the user is new to software development/u);
+      assert.match(composed.output, /Give thorough, structured explanations/u);
+      assert.match(composed.output, /teaching-oriented way/u);
+      assert.match(composed.output, /including progress updates and final responses/u);
+      assert.doesNotMatch(composed.output, /Keep interim progress updates brief/u);
+    }
   });
 });
 
@@ -577,9 +610,19 @@ test("Vibe64 uses the current bounded opening and component-scoped Stack guidanc
 
     assert.equal(deslop.context.task, "deslop");
     assert.match(deslop.prompt, new RegExp(`Deslop commit ${commit}\\.`, "u"));
-    assert.match(deslop.prompt, /Require a clean worktree before\s+editing/u);
+    assert.match(deslop.prompt, /explicit commit.*takes precedence/su);
+    assert.match(deslop.prompt, /dirty worktree\s+is allowed/u);
+    assert.doesNotMatch(deslop.prompt, /Require a clean worktree/u);
     assert.match(deslop.prompt, /SELECTED STACK CLEANUP GUIDANCE/u);
     assert.match(deslop.prompt, /For every affected JSKIT screen/u);
+
+    const ownChanges = await renderGenesisPrompt({
+      action: { genesisTask: "deslop" },
+      input: { request: "Deslop" },
+      projectRoot
+    });
+    assert.match(ownChanges.prompt, /select your own changes for the current task across preceding turns/u);
+    assert.match(ownChanges.prompt, /committed or uncommitted/u);
   });
 });
 
