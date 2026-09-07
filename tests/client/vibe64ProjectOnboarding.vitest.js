@@ -87,7 +87,7 @@ function nodeText(node) {
 // only Vuetify presentation and the ready OutputControls slot are stand-ins.
 function mountOnboarding({ active = true, projectPane = "preview", live = true } = {}) {
   mocks.live = live;
-  const props = Vue.reactive({ active, archived: false, busy: false, projectPane, sessionId: "session-a" });
+  const props = Vue.reactive({ active, archived: false, busy: false, mounted: true, projectPane, sessionId: "session-a" });
   const reads = [];
   const writes = [];
   const listeners = new Set();
@@ -140,14 +140,14 @@ function mountOnboarding({ active = true, projectPane = "preview", live = true }
     setText: (node, text) => { node.text = text; }
   });
   const app = renderer.createApp({
-    setup: () => () => Vue.h(Onboarding, {
+    setup: () => () => props.mounted ? Vue.h(Onboarding, {
       active: onboardingActive(props),
       archived: props.archived,
       busy: props.busy,
       canAsk: true,
       sendMessage: vi.fn(),
       sessionId: props.sessionId
-    }, { default: () => Vue.h(outputSlot) })
+    }, { default: () => Vue.h(outputSlot) }) : null
   });
   app.use(VueQueryPlugin, { queryClient });
   app.provide(Vue.ssrContextKey, { modules: new Set() });
@@ -387,6 +387,36 @@ describe("Preview project onboarding", () => {
       expect(nodeText(fixture.container)).toContain("Set up this existing project");
       expect(nodeText(fixture.container)).not.toContain("Public starter");
       expect(fixture.outputs.mounted).not.toHaveBeenCalled();
+    } finally {
+      fixture.close();
+      await applying.catch(() => {});
+    }
+  });
+
+  it("does not inspect after a pending starter's component unmounts and refreshes once on remount", async () => {
+    const fixture = mountOnboarding();
+    let applying = Promise.resolve();
+    try {
+      await fixture.settleRead(0, opening("new"));
+      applying = fixture.button("Public starter").props.onClick();
+      let settled = false;
+      void applying.then(() => { settled = true; }, () => { settled = true; });
+      await vi.waitFor(() => expect(fixture.writes).toHaveLength(1));
+      fixture.props.mounted = false;
+      await Vue.nextTick();
+      expect(fixture.props.active).toBe(true);
+      expect(fixture.listeners.size).toBe(0);
+      fixture.writes[0].resolve({ ok: true });
+      await vi.waitFor(() => expect(settled || fixture.reads.length > 1).toBe(true));
+      expect(fixture.reads).toHaveLength(1);
+      await applying;
+
+      fixture.props.mounted = true;
+      await Vue.nextTick();
+      expect(fixture.reads).toHaveLength(2);
+      await fixture.settleRead(1);
+      expect(fixture.outputs.mounted).toHaveBeenCalledOnce();
+      expect(fixture.writes).toHaveLength(1);
     } finally {
       fixture.close();
       await applying.catch(() => {});

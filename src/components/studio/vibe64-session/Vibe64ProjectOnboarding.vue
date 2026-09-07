@@ -60,7 +60,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ROUTE_VISIBILITY_PUBLIC } from "@jskit-ai/kernel/shared/support/visibility";
 import { useCommand } from "@jskit-ai/http-web/client/composables/useCommand";
 import { useEndpointResource } from "@jskit-ai/http-web/client/composables/useEndpointResource";
@@ -80,6 +80,8 @@ const projectSlug = useVibe64ProjectSlug();
 const purpose = ref("");
 const applying = ref("");
 const asking = ref(false);
+let disposed = false;
+onBeforeUnmount(() => { disposed = true; });
 const enabled = computed(() => props.active && !props.archived && Boolean(props.sessionId));
 const resource = useEndpointResource({
   enabled,
@@ -136,7 +138,7 @@ async function apply(template) {
       // The command already reports this failure through shared action feedback.
       return;
     }
-    if (props.sessionId !== sessionId || !enabled.value) return;
+    if (disposed || props.sessionId !== sessionId || !enabled.value) return;
     await resource.reload();
   } finally {
     applying.value = "";

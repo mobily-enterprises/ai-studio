@@ -35,8 +35,9 @@ authorize overwriting an existing application.
 Opening inspections and their refresh subscriptions run only for the visible
 Preview in an active session. Hiding Preview keeps already-rendered outputs
 mounted and running; returning refreshes inspection through the same resource.
-An admitted starter operation may finish while hidden, but it does not request
-another inspection until Preview is visible again.
+An admitted starter operation may finish while hidden or after leaving the
+project, but it does not request another inspection from the hidden or disposed
+view. Returning to Preview performs its normal fresh inspection.
 
 Starter catalogues are owned by Genesis and map a namespace-qualified choice to
 one technology repository and branch. Applying a choice uses the ordinary

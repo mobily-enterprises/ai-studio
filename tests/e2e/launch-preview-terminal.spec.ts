@@ -1877,12 +1877,17 @@ for (const viewport of [{ width: 1280, height: 577 }, { width: 960, height: 700 
       await expect.poll(() => writes.length).toBe(2);
       await expect(starter).toBeDisabled();
       await expect(starter).toContainText("Preparing your starter");
-      await page.getByRole("tab", { name: "Dashboard", exact: true }).click();
-      await expect(page.getByRole("navigation", { name: "Dashboard sections" })).toBeVisible();
+      await (viewport.width <= 960
+        ? page.getByRole("button", { name: "Go to dashboard", exact: true })
+        : page.getByRole("tab", { name: "Dashboard", exact: true })).click();
+      await expect(page).toHaveURL(new RegExp(`${escapeRegExp(DASHBOARD_PATH)}/env/?$`, "u"));
+      await expect(starter).not.toBeVisible();
       releaseStarter.resolve();
       await expect(page.locator(".project-onboarding__choice")).toContainText("Use this starter");
       expect(onboardingReads).toBe(1);
-      await page.getByRole("tab", { name: "Preview", exact: true }).click();
+      await (viewport.width <= 960
+        ? page.getByRole("button", { name: "Go to preview", exact: true })
+        : page.getByRole("tab", { name: "Preview", exact: true })).click();
       await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
       expect(onboardingReads).toBe(2);
       expect(writes).toEqual([
