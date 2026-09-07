@@ -14,7 +14,8 @@ import test from "node:test";
 
 import {
   GENERATED_ENV_HEADER,
-  materializeProjectEnvironmentFiles
+  materializeProjectEnvironmentFiles,
+  projectEnvironmentFilesAreCurrent
 } from "../../packages/vibe64-project/src/server/projectEnvironmentFiles.js";
 
 async function temporarySource(t) {
@@ -42,6 +43,11 @@ test("project environment files are deterministic shared-workspace Stack project
   });
   const envBefore = await lstat(path.join(sourceRoot, ".env"), { bigint: true });
   const excludeBefore = await lstat(path.join(sourceRoot, ".git/info/exclude"), { bigint: true });
+  assert.equal(await projectEnvironmentFilesAreCurrent({
+    environment: { DB_PASSWORD: "secret value", DB_PORT: "3306" },
+    files: [{ format: "dotenv", path: ".env" }],
+    sourceRoot
+  }), true);
   const second = await materializeProjectEnvironmentFiles({
     environment: {
       DB_PASSWORD: "secret value",
@@ -75,6 +81,20 @@ test("project environment files are deterministic shared-workspace Stack project
     ""
   ].join("\n"));
   assert.equal((await lstat(path.join(sourceRoot, ".git", "info", "exclude"))).mode & 0o777, 0o660);
+});
+
+test("checking environment readiness does not create files or take ownership of user content", async (t) => {
+  const sourceRoot = await temporarySource(t);
+  const input = { environment: { VALUE: "current" }, files: [{ format: "dotenv", path: ".env" }], sourceRoot };
+  const excludePath = path.join(sourceRoot, ".git", "info", "exclude");
+  const before = await readFile(excludePath, "utf8");
+  assert.equal(await projectEnvironmentFilesAreCurrent(input), false);
+  await assert.rejects(() => readFile(path.join(sourceRoot, ".env")), { code: "ENOENT" });
+  assert.equal(await readFile(excludePath, "utf8"), before);
+  await materializeProjectEnvironmentFiles(input);
+  await writeFile(path.join(sourceRoot, ".env"), "USER_CONTENT=yes\n");
+  assert.equal(await projectEnvironmentFilesAreCurrent(input), false);
+  assert.equal(await readFile(path.join(sourceRoot, ".env"), "utf8"), "USER_CONTENT=yes\n");
 });
 
 test("project environment files preserve an unmanaged file before taking ownership", async (t) => {

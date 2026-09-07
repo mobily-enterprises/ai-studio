@@ -645,6 +645,33 @@ function createWorkspaceSetupRunner({
   }
 
   return Object.freeze({
+    async isPrepared({ runtime, session } = {}) {
+      if (activeRuns.has(workspaceSetupRunKey(session?.sessionId))) {
+        return false;
+      }
+      const previous = workspaceSetupState(session?.workspaceSetup);
+      if (!["succeeded", "unconfigured"].includes(previous.status)) {
+        return false;
+      }
+      const sourcePath = sessionSourcePath(session);
+      if (!sourcePath) {
+        return false;
+      }
+      let setup;
+      try {
+        setup = await inspect({
+          environment: await runtime.resolvePromptEnvironment(),
+          projectRoot: sourcePath
+        });
+      } catch (error) {
+        // Anything else still goes through start(), which owns diagnostics.
+        return error?.code === "STACK_REQUIRED" && previous.status === "unconfigured";
+      }
+      return setup.status === "unconfigured"
+        ? previous.status === "unconfigured"
+        : setup.status === "ready" && previous.status === "succeeded" &&
+          Boolean(setup.recipeHash) && previous.recipeHash === setup.recipeHash;
+    },
     isRunning(sessionId = "") {
       return activeRuns.has(workspaceSetupRunKey(normalizeText(sessionId)));
     },

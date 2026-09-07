@@ -22,6 +22,7 @@ const RESOURCE_PROVIDER_RESULT_KEYS = new Set([
   "contract",
   "databaseToolEnvironment",
   "ok",
+  "prepared",
   "requiredUnits",
   "resourceValues"
 ]);
@@ -204,6 +205,7 @@ function normalizeResourceEnvironment(resources = [], provided = {}, {
 } = {}) {
   if (
     provided?.contract !== RESOURCE_ENVIRONMENT_CONTRACT ||
+    (provided.prepared !== undefined && typeof provided.prepared !== "boolean") ||
     !Array.isArray(provided.resourceValues) ||
     Object.keys(objectRecord(provided) || {}).some((name) => !RESOURCE_PROVIDER_RESULT_KEYS.has(name))
   ) {

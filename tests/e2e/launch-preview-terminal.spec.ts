@@ -1,6 +1,8 @@
 import { expect, test, type Page, type Request as PlaywrightRequest, type Route } from "@playwright/test";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { readFile, writeFile } from "node:fs/promises";
+import { createPreviewPreparationFixture } from "../fixtures/previewPreparation.js";
 
 import {
   injectLaunchPreviewBridge
@@ -31,6 +33,66 @@ const SESSION_ID = "session-renderer";
 const TARGET_APP_URL = "http://127.0.0.1:4103/home";
 const PROXY_APP_URL = "http://127.0.0.1:49000/home";
 const TEST_ASSISTANT_CATALOG_REVISION = `sha256:${"a".repeat(64)}`;
+
+for (const width of [1440, 390]) {
+  for (const changeEnvironment of [false, true]) {
+    test(`@preview-preparation real preview ${changeEnvironment ? "waits for changed environment" : "starts while assistant admission is occupied"} at ${width}px`, async ({ page }, testInfo) => {
+      const previousNamespace = process.env.VIBE64_RUNTIME_NAMESPACE;
+      process.env.VIBE64_RUNTIME_NAMESPACE = "preview-preparation-browser";
+      let publishReady = async () => {};
+      const fixture = await createPreviewPreparationFixture({
+        publishSessionChanged: {
+          async outputTarget(_sessionId, event) {
+            if (event.reason === "output-target-ready") await publishReady();
+          }
+        }
+      });
+      let release = async () => {};
+      try {
+        await fixture.prepare();
+        if (changeEnvironment) {
+          await writeFile(fixture.stackPath, (await readFile(fixture.stackPath, "utf8")).replace("`initial`", "`updated`"));
+        }
+        release = await fixture.holdAssistantLock();
+        await page.setViewportSize({ width, height: 1000 });
+        await mockLaunchTerminalSocket(page, { terminalSocketNeverSettles: true });
+        const launch = await mockLaunchSession(page);
+        publishReady = launch.publishLaunchReady;
+        let starts = 0;
+        await page.route("**/outputs", async (route) => {
+          await fulfillJson(route, await fixture.terminals.outputTargetStatus(fixture.sessionId));
+        });
+        await page.route("**/output-runs", async (route) => {
+          starts += 1;
+          const result = await fixture.terminals.startOutputTargetTerminal(fixture.sessionId, route.request().postDataJSON());
+          await fulfillJson(route, result, { status: result.ok === false ? 409 : 200 });
+        });
+        await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+        if (width < 600) await page.getByRole("button", { name: "Show project" }).click();
+        if (changeEnvironment) {
+          await expect(page.getByText("Waiting for the assistant operation to finish. Preview will retry automatically.")).toBeVisible();
+          expect(starts).toBe(1);
+          await page.screenshot({ path: testInfo.outputPath("real-preparation-waiting.png") });
+          await release();
+        }
+        const preview = page.frameLocator(".vibe64-launch-controls__preview-frame");
+        await expect(preview.getByRole("heading", { name: `Preview works: ${changeEnvironment ? "updated" : "initial"}` })).toBeVisible({ timeout: 15_000 });
+        expect(starts).toBe(changeEnvironment ? 2 : 1);
+        await expect(page.getByText("Another assistant operation is starting. Try again in a moment.", { exact: true })).toHaveCount(0);
+        if (!changeEnvironment) {
+          expect((await fixture.runtime.store.runSessionExclusive(fixture.sessionId, "agent-write-mode", () => null)).acquired).toBe(false);
+        }
+        await page.screenshot({ path: testInfo.outputPath("real-preview-running.png") });
+      } finally {
+        await page.unrouteAll({ behavior: "wait" });
+        await release();
+        await fixture.close();
+        if (previousNamespace === undefined) delete process.env.VIBE64_RUNTIME_NAMESPACE;
+        else process.env.VIBE64_RUNTIME_NAMESPACE = previousNamespace;
+      }
+    });
+  }
+}
 const PERSONAL_ASSISTANT_ACCESS = Object.freeze({
   accessLabel: "Personal use",
   available: true,

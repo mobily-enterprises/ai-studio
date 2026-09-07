@@ -90,6 +90,80 @@ function collaborationHarness() {
   };
 }
 
+test("prepared execution reuses confirmed resources without source admission and keeps cold resources locked", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "prepared-environment";
+    const sourceRoot = sourcePath(targetRoot, sessionId);
+    await mkdir(path.join(sourceRoot, ".git", "info"), { recursive: true });
+    const resource = {
+      component: "example", resource: {
+        id: "service", kind: "example", environmentAlternatives: [{
+          preferred: true, bindings: { endpoint: "SERVICE_ENDPOINT" }
+        }]
+      }
+    };
+    let prepared = false;
+    let provisions = 0;
+    const service = projectService(targetRoot, {
+      inspectEnvironment: () => ({
+        components: [], environmentDefaults: [], files: [{ format: "dotenv", path: ".env" }],
+        resources: [resource], status: "ready"
+      })
+    });
+    const provided = () => ({
+      contract: "vibe64.resource-environment.v2", ok: true, prepared,
+      resourceValues: [{
+        declaration: { component: "example", id: "service", kind: "example" },
+        values: { endpoint: "https://service.example.test" }
+      }]
+    });
+    service.setResourceEnvironmentProvider({
+      managedDevelopmentDatabase: true,
+      environmentForProvisionedResources: provided,
+      async environmentForResources() { provisions += 1; prepared = true; return provided(); }
+    });
+    const runtime = await service.createRuntime({ inspectSource: false });
+    await runtime.store.createSession({ metadata: sourceMetadata(targetRoot, sessionId), runtimeKind: "genesis", sessionId });
+    const input = { sessionId, reusePrepared: true };
+    await service.projectExecutionEnvironment(input);
+    assert.equal(provisions, 1);
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const holding = runtime.store.runSessionExclusive(sessionId, "agent-write-mode", async () => {
+      entered.resolve(); await release.promise;
+    });
+    await entered.promise;
+    try {
+      assert.deepEqual(await service.projectExecutionEnvironment(input), { SERVICE_ENDPOINT: "https://service.example.test" });
+      prepared = false;
+      await assert.rejects(() => service.projectExecutionEnvironment(input), { code: "vibe64_agent_write_mode_busy" });
+      assert.equal(provisions, 1);
+    } finally { release.resolve(); await holding; }
+    await service.projectExecutionEnvironment(input);
+    assert.equal(provisions, 2);
+  });
+});
+
+test("execution preparation rechecks current declarations after acquiring source admission", async () => {
+  await withTemporaryRoot(async (targetRoot) => {
+    const sessionId = "environment-recheck";
+    const sourceRoot = sourcePath(targetRoot, sessionId);
+    await mkdir(path.join(sourceRoot, ".git", "info"), { recursive: true });
+    let inspections = 0;
+    const service = projectService(targetRoot, {
+      inspectEnvironment: () => ({
+        components: [], environmentDefaults: [{ name: "SETTING", value: ++inspections === 1 ? "stale" : "current" }],
+        files: [{ format: "dotenv", path: ".env" }], resources: [], status: "ready"
+      })
+    });
+    const store = await service.createSessionStore();
+    await store.createSession({ metadata: sourceMetadata(targetRoot, sessionId), runtimeKind: "genesis", sessionId });
+    assert.deepEqual(await service.projectExecutionEnvironment({ sessionId, reusePrepared: true }), { SETTING: "current" });
+    assert.equal(inspections, 2);
+    assert.match(await readFile(path.join(sourceRoot, ".env"), "utf8"), /SETTING=current/u);
+  });
+});
+
 test("an explicit project exposes one plain Genesis project", async () => {
   await withTemporaryRoot(async (targetRoot) => {
     const service = projectService(targetRoot);

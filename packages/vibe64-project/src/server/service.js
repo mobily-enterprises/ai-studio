@@ -73,7 +73,8 @@ import {
   savePreviewApplicationIdentities as saveStoredPreviewApplicationIdentities
 } from "./previewApplicationIdentities.js";
 import {
-  materializeProjectEnvironmentFiles
+  materializeProjectEnvironmentFiles,
+  projectEnvironmentFilesAreCurrent
 } from "./projectEnvironmentFiles.js";
 import {
   applicationDatabaseToolEnvironment,
@@ -419,6 +420,7 @@ function createService({
         platformEnvironmentSecrets: new Set(),
         platformEnvironmentSources: {},
         resources: [],
+        resourcesPrepared: true,
         source,
         warning: ""
       };
@@ -444,6 +446,7 @@ function createService({
         platformEnvironmentSecrets: new Set(),
         platformEnvironmentSources: {},
         resources: [],
+        resourcesPrepared: true,
         source,
         warning: genesisEnvironmentIsUnconfigured(error)
           ? ""
@@ -503,6 +506,7 @@ function createService({
       platformEnvironmentSources: contribution.sources,
       projectEnvironment,
       resources: declaration.resources,
+      resourcesPrepared: !developmentDatabase || provided.prepared === true,
       source,
       warning: ""
     };
@@ -1193,6 +1197,18 @@ function createService({
     },
 
     async projectExecutionEnvironment(input = {}) {
+      if (input.reusePrepared === true) {
+        // A failed read is not evidence of readiness. The ordinary preparation
+        // path below remains responsible for provisioning and its diagnostics.
+        const resolved = await resolvedProjectEnvironment(input, await userEnvRecords()).catch(() => null);
+        if (resolved?.resourcesPrepared && await projectEnvironmentFilesAreCurrent({
+          environment: resolved.projectEnvironment,
+          files: resolved.environmentFiles,
+          sourceRoot: resolved.source.sourceRoot
+        })) {
+          return resolved.projectEnvironment;
+        }
+      }
       return runSessionSourceWorkExclusive(input, async () => {
         const resolved = await resolvedProjectEnvironment(
           input,

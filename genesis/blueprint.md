@@ -118,6 +118,9 @@ is working; automatic startup waits until that work is idle.
 If another assistant operation briefly blocks automatic preview startup, Preview
 waits and retries without raising an error. Other startup failures appear once
 with a retry action.
+A prepared preview can start while another assistant operation holds the session
+lock. Vibe64 checks the current setup recipe and environment first; preparation
+that changes files or resources still requires the lock.
 Project-understanding warnings do not replace the application preview. People
 can read a persistent warning, recheck setup, and keep using the preview's URL,
 reload, and navigation controls. Starting an application still requires valid

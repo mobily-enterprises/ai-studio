@@ -17,6 +17,7 @@ function executionEnvFingerprint(env = {}) {
 
 async function loadProjectExecutionEnvRecords({
   prepare = false,
+  reusePrepared = false,
   projectService = {},
   session = {},
   target = ""
@@ -31,6 +32,7 @@ async function loadProjectExecutionEnvRecords({
   }
   const sessionId = String(session?.sessionId || session?.id || "").trim();
   const env = await resolveEnvironment.call(projectService, {
+    ...(reusePrepared ? { reusePrepared: true } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(sessionId ? { session } : {}),
     target: String(target || "").trim()

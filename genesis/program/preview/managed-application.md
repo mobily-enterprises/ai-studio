@@ -8,6 +8,8 @@ without leaving the coding workspace.
 - `packages/vibe64-genesis/src/server/outputs.js`
 - `packages/vibe64-terminals/src/server/vibe64OutputTargets.js`
 - `packages/vibe64-terminals/src/server/outputTargetTerminal.js`
+- `packages/vibe64-terminals/src/server/service.js`
+- `packages/vibe64-terminals/src/server/workspaceSetup.js`
 - `packages/vibe64-terminals/src/server/outputResults.js`
 - `packages/vibe64-terminals/src/server/launchPreviewProxy.js`
 - `src/components/studio/Vibe64LongRunningTerminal.vue`
@@ -44,6 +46,15 @@ status polling. Later status inspection verifies the bound socket identity and
 republishes a missing or replaced socket. Finite runs snapshot only their
 declared regular files into bounded immutable result storage and expose
 downloads by generated result identity rather than a caller-supplied path.
+
+Preview startup uses its own launch queue and terminal-namespace admission. It
+does not acquire assistant-write admission for an already prepared workspace.
+The setup owner checks the current recipe against its successful result; the
+environment owner checks existing resource readiness, generated dotenv contents,
+and local Git excludes. A changed setup runs under assistant-write admission
+until its command completes. Environment preparation and Git alternates repair
+also recheck under that lock before writing. A rejected preparation stops launch.
+Namespace admission prevents renewal from freezing a launch midway through it.
 
 Status inspection resolves the environment without provisioning resources or
 writing project environment files. Confirmed preview readiness supersedes a

@@ -101,7 +101,7 @@ function gitExcludePattern(relativePath = "") {
     .join("")}`;
 }
 
-async function writeManagedGitExcludes(sourceRoot = "", relativePaths = []) {
+async function managedGitExcludeProjection(sourceRoot = "", relativePaths = []) {
   const gitDirectory = path.join(path.resolve(sourceRoot), ".git");
   const gitEntry = await lstat(gitDirectory).catch((error) => {
     if (["ENOENT", "ENOTDIR"].includes(error?.code)) {
@@ -156,6 +156,13 @@ async function writeManagedGitExcludes(sourceRoot = "", relativePaths = []) {
     GIT_EXCLUDE_END,
     ""
   ].join("\n");
+  return { excludePath, existing, expected, infoDirectory };
+}
+
+async function writeManagedGitExcludes(sourceRoot = "", relativePaths = []) {
+  const { excludePath, existing, expected, infoDirectory } = await managedGitExcludeProjection(
+    sourceRoot, relativePaths
+  );
   if (existing === expected) {
     return;
   }
@@ -232,16 +239,8 @@ async function writeGeneratedDotenv({
   };
 }
 
-async function materializeProjectEnvironmentFiles({
-  environment = {},
-  files = [],
-  now = new Date(),
-  sourceRoot = ""
-} = {}) {
-  if (!sourceRoot || !Array.isArray(files) || files.length === 0) {
-    return [];
-  }
-  const declarations = files.map((file) => {
+function environmentFileDeclarations(files = []) {
+  return files.map((file) => {
     if (file?.format !== "dotenv") {
       const error = new Error(`Unsupported project environment file format: ${file?.format || "(empty)"}.`);
       error.code = "vibe64_environment_file_format_unsupported";
@@ -252,6 +251,41 @@ async function materializeProjectEnvironmentFiles({
       path: String(file.path || "")
     };
   });
+}
+
+async function projectEnvironmentFilesAreCurrent({
+  environment = {},
+  files = [],
+  sourceRoot = ""
+} = {}) {
+  if (!sourceRoot || !Array.isArray(files) || files.length === 0) {
+    return true;
+  }
+  const declarations = environmentFileDeclarations(files);
+  const paths = await Promise.all(declarations.map((file) => assertProjectionPath(sourceRoot, file.path)));
+  const { existing, expected } = await managedGitExcludeProjection(sourceRoot, declarations.map((file) => file.path));
+  if (existing !== expected) {
+    return false;
+  }
+  const dotenv = generatedDotenv(environment);
+  for (const filePath of paths) {
+    if (await optionalFile(filePath) !== dotenv) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function materializeProjectEnvironmentFiles({
+  environment = {},
+  files = [],
+  now = new Date(),
+  sourceRoot = ""
+} = {}) {
+  if (!sourceRoot || !Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+  const declarations = environmentFileDeclarations(files);
   await Promise.all(declarations.map((file) => assertProjectionPath(sourceRoot, file.path)));
   await writeManagedGitExcludes(sourceRoot, declarations.map((file) => file.path));
   const results = [];
@@ -270,5 +304,6 @@ export {
   GENERATED_ENV_HEADER,
   generatedDotenv,
   generatedDotenvIsOwned,
-  materializeProjectEnvironmentFiles
+  materializeProjectEnvironmentFiles,
+  projectEnvironmentFilesAreCurrent
 };

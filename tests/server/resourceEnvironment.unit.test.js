@@ -36,6 +36,16 @@ function databaseResource({
   };
 }
 
+test("resource preparation evidence must be an explicit boolean", () => {
+  const provided = { contract: "vibe64.resource-environment.v2", resourceValues: [] };
+  for (const prepared of [true, false]) {
+    assert.deepEqual(normalizeResourceEnvironment([], { ...provided, prepared }).environment, {});
+  }
+  assert.throws(() => normalizeResourceEnvironment([], { ...provided, prepared: "yes" }), {
+    code: "vibe64_resource_environment_contract_invalid"
+  });
+});
+
 test("standalone database tools invert an explicitly satisfied URL binding", () => {
   const resource = databaseResource();
   const databaseToolEnvironment = applicationDatabaseToolEnvironment([resource], {

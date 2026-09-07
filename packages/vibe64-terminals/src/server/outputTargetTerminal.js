@@ -65,6 +65,9 @@ import {
   sessionClosingReason
 } from "@local/vibe64-runtime/server/sessionLifecycle";
 import {
+  runVibe64AgentWriteExclusive
+} from "@local/vibe64-runtime/server/agentWriteLock";
+import {
   assertSourceInspectionHealthy
 } from "@local/vibe64-runtime/server/sessionSourceInspection";
 import {
@@ -589,6 +592,9 @@ async function createLaunchContext(projectService, sessionId, {
       runtime,
       session
     });
+    if (setup?.ok === false) {
+      throw Object.assign(new Error(setup.error || "Workspace preparation could not start."), setup);
+    }
     if (awaitWorkspacePrepared && setup?.completion) {
       await setup.completion;
     }
@@ -597,6 +603,7 @@ async function createLaunchContext(projectService, sessionId, {
   const sessionSourceRoot = sessionTerminalCwd(session);
   const projectEnvironment = await loadProjectExecutionEnv({
     prepare: prepareEnvironment,
+    reusePrepared: prepareEnvironment,
     projectService,
     session,
     target: "output-target"
@@ -2331,415 +2338,438 @@ function createOutputTargetTerminalController({
 
     async startTerminal(sessionId, input = {}) {
       return vibe64Result(async () => withLaunchStartLock(sessionId, async () => {
-        const context = await createLaunchContext(projectService, sessionId, {
-          awaitWorkspacePrepared: true,
-          ensureWorkspacePrepared,
-          prepareEnvironment: true
-        });
-        const cwd = sessionTerminalCwd(context.session, projectService);
-        let forceRestart = input.forceRestart === true;
-        let outputTargetId = normalizeOutputTargetId(input.outputTargetId);
-        let outputTargets = null;
-        const managedPreviewOperation = input.ensurePreview === true || input.restartPreview === true;
-        if (managedPreviewOperation) {
-          const restartPreview = input.restartPreview === true;
-          const savedOutputTarget = outputTargetFromMetadata(context.session?.metadata || {});
-          outputTargets = await listOutputTargets(context);
-          const previewStatus = await resolveLaunchPreviewStatus({
-            context,
-            launchPreviewProxies,
-            outputTargets,
-            markReady: markLaunchReady,
-            options: {
-              env,
-              projectService,
-              runCommand
-            },
-            publishSessionChanged,
-            sessionId
-          });
-          const launchPlan = managedPreviewLaunchPlan({
-            outputTargets,
-            previewStatus,
-            restart: restartPreview,
-            savedOutputTarget
-          });
-          if (launchPlan.ready) {
-            return launchPlan.terminal;
+        const admission = beginTerminalNamespaceOperation(outputTargetTerminalNamespace(sessionId));
+        if (admission.ok === false) {
+          return launchAdmissionFailure(sessionId) || admission;
+        }
+        try {
+          const frozen = launchAdmissionFailure(sessionId);
+          if (frozen) {
+            return frozen;
           }
-          if (launchPlan.error) {
+          const context = await createLaunchContext(projectService, sessionId, {
+            awaitWorkspacePrepared: true,
+            ensureWorkspacePrepared,
+            prepareEnvironment: true
+          });
+          const unavailable = launchAdmissionFailure(sessionId, context.session);
+          if (unavailable) {
+            return unavailable;
+          }
+          const cwd = sessionTerminalCwd(context.session, projectService);
+          let forceRestart = input.forceRestart === true;
+          let outputTargetId = normalizeOutputTargetId(input.outputTargetId);
+          let outputTargets = null;
+          const managedPreviewOperation = input.ensurePreview === true || input.restartPreview === true;
+          if (managedPreviewOperation) {
+            const restartPreview = input.restartPreview === true;
+            const savedOutputTarget = outputTargetFromMetadata(context.session?.metadata || {});
+            outputTargets = await listOutputTargets(context);
+            const previewStatus = await resolveLaunchPreviewStatus({
+              context,
+              launchPreviewProxies,
+              outputTargets,
+              markReady: markLaunchReady,
+              options: {
+                env,
+                projectService,
+                runCommand
+              },
+              publishSessionChanged,
+              sessionId
+            });
+            const launchPlan = managedPreviewLaunchPlan({
+              outputTargets,
+              previewStatus,
+              restart: restartPreview,
+              savedOutputTarget
+            });
+            if (launchPlan.ready) {
+              return launchPlan.terminal;
+            }
+            if (launchPlan.error) {
+              return {
+                ...(launchPlan.code ? { code: launchPlan.code } : {}),
+                error: launchPlan.error,
+                ok: false
+              };
+            }
+            forceRestart = launchPlan.forceRestart;
+            outputTargetId = launchPlan.outputTargetId;
+          }
+          const diagnosticBase = {
+            cwd,
+            outputTargetId,
+            sessionId
+          };
+          const closingReason = sessionClosingReason(context.session);
+          if (closingReason) {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              message: `Session is ${closingReason}. Preview cannot start while the worktree is being archived.`,
+              reason: "session_closing",
+              status: "failed"
+            });
             return {
-              ...(launchPlan.code ? { code: launchPlan.code } : {}),
-              error: launchPlan.error,
-              ok: false
+              ok: false,
+              error: `Session is ${closingReason}. Preview cannot start while the worktree is being archived.`
             };
           }
-          forceRestart = launchPlan.forceRestart;
-          outputTargetId = launchPlan.outputTargetId;
-        }
-        const diagnosticBase = {
-          cwd,
-          outputTargetId,
-          sessionId
-        };
-        const closingReason = sessionClosingReason(context.session);
-        if (closingReason) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            message: `Session is ${closingReason}. Preview cannot start while the worktree is being archived.`,
-            reason: "session_closing",
-            status: "failed"
-          });
-          return {
-            ok: false,
-            error: `Session is ${closingReason}. Preview cannot start while the worktree is being archived.`
-          };
-        }
-        if (!cwd) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            message: "Vibe64 output target root is not available.",
-            reason: "missing_target_root",
-            status: "failed"
-          });
-          return {
-            ok: false,
-            error: "Vibe64 output target root is not available."
-          };
-        }
-        await ensureTerminalSessionSourceGitSelfContained({
-          session: context.session,
-          workdir: cwd
-        });
-
-        outputTargets ||= await listOutputTargets(context);
-        const outputTarget = findOutputTarget(outputTargets, outputTargetId);
-        if (!outputTarget) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            details: {
-              availableOutputTargetIds: outputTargets.map((target) => String(target?.id || "")).filter(Boolean)
+          if (!cwd) {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              message: "Vibe64 output target root is not available.",
+              reason: "missing_target_root",
+              status: "failed"
+            });
+            return {
+              ok: false,
+              error: "Vibe64 output target root is not available."
+            };
+          }
+          await ensureTerminalSessionSourceGitSelfContained({
+            runExclusive: async (operation) => {
+              const result = await runVibe64AgentWriteExclusive(context.runtime, sessionId, operation);
+              if (!result.acquired) {
+                throw Object.assign(new Error(result.value.error), result.value);
+              }
+              return result.value;
             },
-            message: "Output target is not available.",
-            reason: "output_target_missing",
-            status: "failed"
-          });
-          return {
-            ok: false,
-            error: "Output target is not available."
-          };
-        }
-        if (outputTarget.available === false) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            outputTargetId: outputTarget.id,
-            message: outputTarget.disabledReason || "Output target is disabled.",
-            reason: "output_target_disabled",
-            status: "failed"
-          });
-          return {
-            ok: false,
-            error: outputTarget.disabledReason || "Output target is disabled."
-          };
-        }
-
-        const spec = await createOutputTargetSpec({
-          context: {
-            ...context,
-            outputTarget,
-            vibe64User: input.vibe64User || null
-          },
-          outputTargetId: outputTarget.id
-        });
-        if (spec?.ok === false) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            outputTargetId: outputTarget.id,
-            message: spec.message || "Output target terminal cannot start.",
-            reason: "output_target_spec_failed",
-            status: "failed"
-          });
-          return {
-            ok: false,
-            error: spec.message || "Output target terminal cannot start."
-          };
-        }
-        const commandPreview = commandInvocation(spec);
-
-        const namespace = outputTargetTerminalNamespace(sessionId);
-        let terminalSession;
-        let outputResultsMarker = "";
-        let readinessMarker = "";
-        try {
-          const terminalEnvRecords = await loadProjectExecutionEnvRecords({
-            projectService,
-            runCommand,
-            runtime: context.runtime,
             session: context.session,
-            target: "output-target"
+            workdir: cwd
           });
-          const terminalEnv = projectExecutionEnvFromRecords(terminalEnvRecords);
-          const launchEnvironment = composeLaunchTerminalEnvironment({
-            envBase: {},
-            hashBase: terminalEnv,
-            specEnv: spec.env,
-            terminalEnv
-          });
-          const commandAllowedRoots = [
-            context.sessionSourceRoot,
-            spec.cwd,
-            cwd,
-            ...launchSpecAllowedRoots(spec)
-          ].filter(Boolean);
-          const commandProject = launchExecutionProject(context, terminalEnvRecords);
-          const launchEnvHash = executionEnvFingerprint(launchEnvironment.hashEnv);
-          const launchRestartBaseline = await createLaunchRestartBaseline({
-            restartOnChange: spec.restartOnChange || spec.metadata?.restartOnChange,
-            worktreePath: spec.metadata?.runRoot || spec.cwd || cwd
-          });
-          readinessMarker = readinessMarkerFromSpec(spec);
-          outputResultsMarker = String(spec.metadata?.outputResultsMarker || "").trim();
-          const webOutput = String(spec.metadata?.outputPresentationKind || "").trim() === "web";
-          const previewPublicOrigin = webOutput
-            ? previewPublicOriginForLaunch({
-                env,
-                publicHost: input.publicHost,
-                publicProtocol: input.publicProtocol,
-                sessionId
-              })
-            : "";
-          let launchReadyConfirmed = false;
-          await closeStoppedLaunchTerminals(sessionId);
-          const existingReusableTerminal = forceRestart
-            ? null
-            : reusableLaunchTerminal(sessionId, {
-                launchEnvHash,
-                outputTargetId: outputTarget.id,
-                namespace,
-                spec
-              });
-          await cleanupSupersededLaunchTerminals({
-            launchPreviewProxies,
-            namespace,
-            reusableTerminal: existingReusableTerminal,
-            sessionId
-          });
-          terminalSession = await runCommand({
-            actor: "daemon",
-            allowedRoots: commandAllowedRoots,
-            args: spec.args || [],
-            command: spec.command,
-            cwd: spec.cwd || cwd,
-            env: launchEnvironment.env,
-            envPolicy: webOutput ? "preview" : "project",
-            execution: outputTargetExecutionDescriptor(outputTarget, spec),
-            mode: "pty",
-            project: commandProject,
-            purpose: webOutput ? "preview" : "output",
-            runtimes: webOutput ? previewRuntimesForSpec(spec) : normalizeRuntimeList(spec.runtimes),
-            session: context.session || {},
-            terminal: {
-              commandPreview: spec.commandPreview,
-              maxRunning: 1,
-              metadata: {
-                ...(spec.metadata || {}),
-                attemptedCommand: commandPreview,
-                envHash: launchEnvHash,
-                ...(launchRestartBaseline ? { launchRestartBaseline } : {}),
-                outputTargetId: outputTarget.id,
-                outputTargetLabel: outputTarget.label,
-                ...(previewPublicOrigin ? { previewPublicOrigin } : {}),
-                sessionId,
-                ...terminalNoGithubActorMetadata({
-                  ownerUserKey: "output-target",
-                  reason: "output-target"
-                })
+
+          outputTargets ||= await listOutputTargets(context);
+          const outputTarget = findOutputTarget(outputTargets, outputTargetId);
+          if (!outputTarget) {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              details: {
+                availableOutputTargetIds: outputTargets.map((target) => String(target?.id || "")).filter(Boolean)
               },
+              message: "Output target is not available.",
+              reason: "output_target_missing",
+              status: "failed"
+            });
+            return {
+              ok: false,
+              error: "Output target is not available."
+            };
+          }
+          if (outputTarget.available === false) {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              outputTargetId: outputTarget.id,
+              message: outputTarget.disabledReason || "Output target is disabled.",
+              reason: "output_target_disabled",
+              status: "failed"
+            });
+            return {
+              ok: false,
+              error: outputTarget.disabledReason || "Output target is disabled."
+            };
+          }
+
+          const spec = await createOutputTargetSpec({
+            context: {
+              ...context,
+              outputTarget,
+              vibe64User: input.vibe64User || null
+            },
+            outputTargetId: outputTarget.id
+          });
+          if (spec?.ok === false) {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              outputTargetId: outputTarget.id,
+              message: spec.message || "Output target terminal cannot start.",
+              reason: "output_target_spec_failed",
+              status: "failed"
+            });
+            return {
+              ok: false,
+              error: spec.message || "Output target terminal cannot start."
+            };
+          }
+          const commandPreview = commandInvocation(spec);
+
+          const namespace = outputTargetTerminalNamespace(sessionId);
+          let terminalSession;
+          let outputResultsMarker = "";
+          let readinessMarker = "";
+          try {
+            const terminalEnvRecords = await loadProjectExecutionEnvRecords({
+              projectService,
+              runCommand,
+              runtime: context.runtime,
+              session: context.session,
+              target: "output-target"
+            });
+            const terminalEnv = projectExecutionEnvFromRecords(terminalEnvRecords);
+            const launchEnvironment = composeLaunchTerminalEnvironment({
+              envBase: {},
+              hashBase: terminalEnv,
+              specEnv: spec.env,
+              terminalEnv
+            });
+            const commandAllowedRoots = [
+              context.sessionSourceRoot,
+              spec.cwd,
+              cwd,
+              ...launchSpecAllowedRoots(spec)
+            ].filter(Boolean);
+            const commandProject = launchExecutionProject(context, terminalEnvRecords);
+            const launchEnvHash = executionEnvFingerprint(launchEnvironment.hashEnv);
+            const launchRestartBaseline = await createLaunchRestartBaseline({
+              restartOnChange: spec.restartOnChange || spec.metadata?.restartOnChange,
+              worktreePath: spec.metadata?.runRoot || spec.cwd || cwd
+            });
+            readinessMarker = readinessMarkerFromSpec(spec);
+            outputResultsMarker = String(spec.metadata?.outputResultsMarker || "").trim();
+            const webOutput = String(spec.metadata?.outputPresentationKind || "").trim() === "web";
+            const previewPublicOrigin = webOutput
+              ? previewPublicOriginForLaunch({
+                  env,
+                  publicHost: input.publicHost,
+                  publicProtocol: input.publicProtocol,
+                  sessionId
+                })
+              : "";
+            let launchReadyConfirmed = false;
+            await closeStoppedLaunchTerminals(sessionId);
+            const existingReusableTerminal = forceRestart
+              ? null
+              : reusableLaunchTerminal(sessionId, {
+                  launchEnvHash,
+                  outputTargetId: outputTarget.id,
+                  namespace,
+                  spec
+                });
+            await cleanupSupersededLaunchTerminals({
+              launchPreviewProxies,
               namespace,
-              namespaceLimitPrefix: namespace,
-              onClose: async (event) => {
-                if (event.reason === "exit" && event.exitCode === 0) {
-                  await captureOutputResults({
-                    context,
-                    outputTarget,
-                    spec,
-                    terminalSessionId: event.id,
-                    updateMetadata: (metadata) => updateTerminalSessionMetadata(event.id, metadata, {
-                      namespace
-                    })
+              reusableTerminal: existingReusableTerminal,
+              sessionId
+            });
+            terminalSession = await runCommand({
+              actor: "daemon",
+              allowedRoots: commandAllowedRoots,
+              args: spec.args || [],
+              command: spec.command,
+              cwd: spec.cwd || cwd,
+              env: launchEnvironment.env,
+              envPolicy: webOutput ? "preview" : "project",
+              execution: outputTargetExecutionDescriptor(outputTarget, spec),
+              mode: "pty",
+              project: commandProject,
+              purpose: webOutput ? "preview" : "output",
+              runtimes: webOutput ? previewRuntimesForSpec(spec) : normalizeRuntimeList(spec.runtimes),
+              session: context.session || {},
+              terminal: {
+                commandPreview: spec.commandPreview,
+                maxRunning: 1,
+                metadata: {
+                  ...(spec.metadata || {}),
+                  attemptedCommand: commandPreview,
+                  envHash: launchEnvHash,
+                  ...(launchRestartBaseline ? { launchRestartBaseline } : {}),
+                  outputTargetId: outputTarget.id,
+                  outputTargetLabel: outputTarget.label,
+                  ...(previewPublicOrigin ? { previewPublicOrigin } : {}),
+                  sessionId,
+                  ...terminalNoGithubActorMetadata({
+                    ownerUserKey: "output-target",
+                    reason: "output-target"
+                  })
+                },
+                namespace,
+                namespaceLimitPrefix: namespace,
+                onClose: async (event) => {
+                  if (event.reason === "exit" && event.exitCode === 0) {
+                    await captureOutputResults({
+                      context,
+                      outputTarget,
+                      spec,
+                      terminalSessionId: event.id,
+                      updateMetadata: (metadata) => updateTerminalSessionMetadata(event.id, metadata, {
+                        namespace
+                      })
+                    });
+                  }
+                  if (event.reason === "exit") {
+                    await writePreviewDiagnostic(context.session, {
+                      ...diagnosticBase,
+                      commandPreview,
+                      exitCode: event.exitCode ?? null,
+                      outputTargetId: outputTarget.id,
+                      outputTail: event.output,
+                      reason: event.exitCode === 0 ? "process_exited" : "process_exited_nonzero",
+                      status: event.exitCode === 0 ? "exited" : "failed",
+                      terminalSessionId: event.id
+                    });
+                  }
+                  await launchPreviewProxies.close({
+                    sessionId,
+                    terminalSessionId: event.id
                   });
-                }
-                if (event.reason === "exit") {
+                  const metadataCleared = await clearLaunchMetadataForTerminal(context.store, sessionId, event.id);
+                  if (metadataCleared) {
+                    await publishSessionChanged(sessionId, {
+                      reason: "output-target-stale-cleared"
+                    });
+                  }
+                  if (typeof spec.onClose === "function") {
+                    await spec.onClose(event);
+                  }
+                },
+                onStop: async (event) => {
                   await writePreviewDiagnostic(context.session, {
                     ...diagnosticBase,
                     commandPreview,
                     exitCode: event.exitCode ?? null,
                     outputTargetId: outputTarget.id,
                     outputTail: event.output,
-                    reason: event.exitCode === 0 ? "process_exited" : "process_exited_nonzero",
-                    status: event.exitCode === 0 ? "exited" : "failed",
+                    reason: "process_stopped",
+                    status: "stopped",
                     terminalSessionId: event.id
                   });
-                }
-                await launchPreviewProxies.close({
-                  sessionId,
-                  terminalSessionId: event.id
-                });
-                const metadataCleared = await clearLaunchMetadataForTerminal(context.store, sessionId, event.id);
-                if (metadataCleared) {
-                  await publishSessionChanged(sessionId, {
-                    reason: "output-target-stale-cleared"
-                  });
-                }
-                if (typeof spec.onClose === "function") {
-                  await spec.onClose(event);
-                }
-              },
-              onStop: async (event) => {
-                await writePreviewDiagnostic(context.session, {
-                  ...diagnosticBase,
-                  commandPreview,
-                  exitCode: event.exitCode ?? null,
-                  outputTargetId: outputTarget.id,
-                  outputTail: event.output,
-                  reason: "process_stopped",
-                  status: "stopped",
-                  terminalSessionId: event.id
-                });
-                await launchPreviewProxies.close({
-                  sessionId,
-                  terminalSessionId: event.id
-                });
-                const metadataCleared = await clearLaunchMetadataForTerminal(context.store, sessionId, event.id);
-                if (metadataCleared) {
-                  await publishSessionChanged(sessionId, {
-                    reason: "output-target-stale-cleared"
-                  });
-                }
-                if (typeof spec.onStop === "function") {
-                  await spec.onStop(event);
-                }
-              },
-              onOutput: ({ output, session: runningTerminalSession, updateMetadata }) => {
-                const actions = launchActionsFromOutput(output);
-                if (actions.length > 0 && launchActionsChanged(runningTerminalSession.metadata?.actions, actions)) {
-                  updateMetadata({
-                    actions
-                  });
-                }
-                void writePreviewDiagnostic(context.session, {
-                  ...diagnosticBase,
-                  commandPreview,
-                  outputTargetId: outputTarget.id,
-                  outputTail: output,
-                  reason: "process_output",
-                  status: "running",
-                  terminalSessionId: runningTerminalSession.id
-                }, {
-                  append: false
-                });
-                if (outputResultsMarkerLineSeen(output, outputResultsMarker)) {
-                  void captureOutputResults({
-                    context,
-                    outputTarget,
-                    spec,
-                    terminalSessionId: runningTerminalSession.id,
-                    updateMetadata
-                  });
-                }
-                if (!readinessMarker || launchReadyConfirmed || !launchReadinessMarkerLineSeen(output, readinessMarker)) {
-                  return;
-                }
-                void markLaunchReady({
-                  namespace,
-                  publishSessionChanged,
-                  source: "marker",
-                  store: context.store,
-                  sessionId,
-                  terminalSession: runningTerminalSession,
-                  updateMetadata
-                }).then(async (result) => {
-                  launchReadyConfirmed = result?.ready === true;
-                  if (launchReadyConfirmed) {
-                    await ensureReadyLaunchPreviewProxy(
-                      context,
-                      result.terminal || runningTerminalSession,
-                      { source: "marker" }
-                    );
-                  }
-                }).catch((error) => {
-                  vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.error", {
-                    error: vibe64SessionDebugError(error),
+                  await launchPreviewProxies.close({
                     sessionId,
-                    terminalSessionId: runningTerminalSession.id
-                  }, {
-                    level: "warn"
+                    terminalSessionId: event.id
                   });
-                });
-              },
-              reuseRunning: forceRestart
-                ? false
-                : (runningSession) => {
-                    return launchTerminalCanBeReused(runningSession, {
-                      launchEnvHash,
-                      outputTargetId: outputTarget.id,
-                      spec
+                  const metadataCleared = await clearLaunchMetadataForTerminal(context.store, sessionId, event.id);
+                  if (metadataCleared) {
+                    await publishSessionChanged(sessionId, {
+                      reason: "output-target-stale-cleared"
                     });
                   }
-            }
-          });
-        } catch (error) {
-          releaseLaunchSpecReservation(spec);
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            commandPreview,
-            error,
-            outputTargetId: outputTarget.id,
-            reason: "terminal_start_failed",
-            status: "failed"
-          });
-          throw error;
+                  if (typeof spec.onStop === "function") {
+                    await spec.onStop(event);
+                  }
+                },
+                onOutput: ({ output, session: runningTerminalSession, updateMetadata }) => {
+                  const actions = launchActionsFromOutput(output);
+                  if (actions.length > 0 && launchActionsChanged(runningTerminalSession.metadata?.actions, actions)) {
+                    updateMetadata({
+                      actions
+                    });
+                  }
+                  void writePreviewDiagnostic(context.session, {
+                    ...diagnosticBase,
+                    commandPreview,
+                    outputTargetId: outputTarget.id,
+                    outputTail: output,
+                    reason: "process_output",
+                    status: "running",
+                    terminalSessionId: runningTerminalSession.id
+                  }, {
+                    append: false
+                  });
+                  if (outputResultsMarkerLineSeen(output, outputResultsMarker)) {
+                    void captureOutputResults({
+                      context,
+                      outputTarget,
+                      spec,
+                      terminalSessionId: runningTerminalSession.id,
+                      updateMetadata
+                    });
+                  }
+                  if (!readinessMarker || launchReadyConfirmed || !launchReadinessMarkerLineSeen(output, readinessMarker)) {
+                    return;
+                  }
+                  void markLaunchReady({
+                    namespace,
+                    publishSessionChanged,
+                    source: "marker",
+                    store: context.store,
+                    sessionId,
+                    terminalSession: runningTerminalSession,
+                    updateMetadata
+                  }).then(async (result) => {
+                    launchReadyConfirmed = result?.ready === true;
+                    if (launchReadyConfirmed) {
+                      await ensureReadyLaunchPreviewProxy(
+                        context,
+                        result.terminal || runningTerminalSession,
+                        { source: "marker" }
+                      );
+                    }
+                  }).catch((error) => {
+                    vibe64SessionDebugLog("server.outputTargetTerminal.readyMarker.error", {
+                      error: vibe64SessionDebugError(error),
+                      sessionId,
+                      terminalSessionId: runningTerminalSession.id
+                    }, {
+                      level: "warn"
+                    });
+                  });
+                },
+                reuseRunning: forceRestart
+                  ? false
+                  : (runningSession) => {
+                      return launchTerminalCanBeReused(runningSession, {
+                        launchEnvHash,
+                        outputTargetId: outputTarget.id,
+                        spec
+                      });
+                    }
+              }
+            });
+          } catch (error) {
+            releaseLaunchSpecReservation(spec);
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              commandPreview,
+              error,
+              outputTargetId: outputTarget.id,
+              reason: "terminal_start_failed",
+              status: "failed"
+            });
+            throw error;
+          }
+          if (
+            terminalSession?.ok === false ||
+            (spec.metadata?.port && String(terminalSession?.metadata?.port || "") !== String(spec.metadata.port))
+          ) {
+            releaseLaunchSpecReservation(spec);
+          }
+          if (terminalSession?.ok === false) {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              commandPreview,
+              error: terminalSession.error || "Output target terminal could not start.",
+              outputTargetId: outputTarget.id,
+              reason: "terminal_start_rejected",
+              status: "failed"
+            });
+          } else {
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              commandPreview,
+              outputTargetId: outputTarget.id,
+              reason: "terminal_started",
+              status: "running",
+              terminalSessionId: terminalSession.id
+            });
+          }
+          if (terminalSession?.ok !== false && launchTerminalIsReady(terminalSession, readinessMarker)) {
+            await writeLaunchMetadata(context.store, sessionId, terminalSession);
+            await writePreviewDiagnostic(context.session, {
+              ...diagnosticBase,
+              commandPreview,
+              outputTargetId: outputTarget.id,
+              reason: "launch_ready",
+              status: "ready",
+              terminalSessionId: terminalSession.id
+            });
+            await ensureReadyLaunchPreviewProxy(context, terminalSession, {
+              source: "start"
+            });
+          }
+          return terminalSession;
+        } finally {
+          admission.release();
         }
-        if (
-          terminalSession?.ok === false ||
-          (spec.metadata?.port && String(terminalSession?.metadata?.port || "") !== String(spec.metadata.port))
-        ) {
-          releaseLaunchSpecReservation(spec);
-        }
-        if (terminalSession?.ok === false) {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            commandPreview,
-            error: terminalSession.error || "Output target terminal could not start.",
-            outputTargetId: outputTarget.id,
-            reason: "terminal_start_rejected",
-            status: "failed"
-          });
-        } else {
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            commandPreview,
-            outputTargetId: outputTarget.id,
-            reason: "terminal_started",
-            status: "running",
-            terminalSessionId: terminalSession.id
-          });
-        }
-        if (terminalSession?.ok !== false && launchTerminalIsReady(terminalSession, readinessMarker)) {
-          await writeLaunchMetadata(context.store, sessionId, terminalSession);
-          await writePreviewDiagnostic(context.session, {
-            ...diagnosticBase,
-            commandPreview,
-            outputTargetId: outputTarget.id,
-            reason: "launch_ready",
-            status: "ready",
-            terminalSessionId: terminalSession.id
-          });
-          await ensureReadyLaunchPreviewProxy(context, terminalSession, {
-            source: "start"
-          });
-        }
-        return terminalSession;
       }));
     },
 

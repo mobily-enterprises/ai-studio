@@ -77,12 +77,14 @@ test("preview status, open, and identity selection reject frozen sessions before
   t.after(() => controller.close());
 
   const status = await controller.launchStatus("session-frozen");
+  const start = await controller.startTerminal("session-frozen", { outputTargetId: "app" });
   const opened = await controller.openOutputTarget("session-frozen");
   const identity = await controller.selectPreviewIdentity("session-frozen", {
     identity: "guest"
   });
 
   assert.deepEqual(status, frozen);
+  assert.deepEqual(start, frozen);
   assert.deepEqual(opened, frozen);
   assert.equal(identity.ok, false);
   assert.equal(identity.code, frozen.code);
@@ -272,6 +274,7 @@ test("launch start awaits preparation, publishes hosted ingress, and cannot reta
       releaseLaunchCleanupPublication = resolve;
     });
     const runtime = {
+      async resolvePromptEnvironment() { return {}; },
       async getSession() {
         return session;
       },
@@ -387,7 +390,7 @@ test("launch start awaits preparation, publishes hosted ingress, and cannot reta
     const terminal = await starting;
     await closing;
 
-    assert.equal(terminal.ok, true);
+    assert.equal(terminal.ok, true, JSON.stringify(terminal));
     assert.equal(capturedLaunchProject.slug, "launch-project");
     assert.deepEqual(capturedLaunchExecution, {
       kind: "preview",

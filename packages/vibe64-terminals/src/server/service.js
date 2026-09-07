@@ -431,10 +431,12 @@ function createService({
   });
   const outputTarget = createOutputTargetTerminalController({
     env,
-    ensureWorkspacePrepared: (sessionId, context = {}) => prepareWorkspaceSetup(sessionId, {
-      ...context,
-      publish: true
-    }),
+    ensureWorkspacePrepared: async (sessionId, context = {}) => {
+      if (await workspaceSetup.isPrepared(context)) {
+        return { completion: null, state: context.session.workspaceSetup };
+      }
+      return prepareWorkspaceSetup(sessionId, { publish: true, waitForCompletion: true });
+    },
     projectService,
     publishSessionChanged: publishSessionChanged.outputTarget,
     sessionAdmissionFailure: (sessionId) => sessionTerminalAdmissionFailure(sessionId, "output")
@@ -572,9 +574,13 @@ function createService({
   }
 
   async function prepareWorkspaceSetup(sessionId = "", options = {}) {
-    return runMainAgentWrite(sessionId, options, (context) => (
-      prepareWorkspaceSetupInsideAgentWrite(sessionId, context)
-    ));
+    return runMainAgentWrite(sessionId, options, async (context) => {
+      const setup = await prepareWorkspaceSetupInsideAgentWrite(sessionId, context);
+      if (options.waitForCompletion && setup.completion) {
+        await setup.completion;
+      }
+      return setup;
+    });
   }
 
   async function prepareRenewalWorkspaceSetup(sessionId = "", options = {}) {
@@ -2394,9 +2400,7 @@ function createService({
     },
 
     async startOutputTargetTerminal(sessionId, input = {}) {
-      const result = await runMainAgentWrite(sessionId, input, () => (
-        outputTarget.startTerminal(sessionId, input)
-      ));
+      const result = await outputTarget.startTerminal(sessionId, input);
       await publishTerminalSessionChanged(
         "outputTarget",
         sessionId,

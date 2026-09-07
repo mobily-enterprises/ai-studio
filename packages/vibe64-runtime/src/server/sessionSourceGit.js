@@ -129,7 +129,9 @@ async function inspectSessionSourceMergeState(sourceRoot = "") {
   };
 }
 
-async function ensureSessionSourceGitAlternatesDissociated(sourceRoot = "") {
+async function ensureSessionSourceGitAlternatesDissociated(sourceRoot = "", {
+  runExclusive = null
+} = {}) {
   const normalizedSourceRoot = normalizeText(sourceRoot) ? path.resolve(sourceRoot) : "";
   if (!normalizedSourceRoot) {
     throw vibe64Error(
@@ -151,6 +153,10 @@ async function ensureSessionSourceGitAlternatesDissociated(sourceRoot = "") {
       `Session source Git alternates file is outside the session source: ${alternatesPath}`,
       "vibe64_session_source_git_alternates_outside_source"
     );
+  }
+  if (typeof runExclusive === "function") {
+    // Reinspect under the caller's source lock before changing Git storage.
+    return runExclusive(() => ensureSessionSourceGitAlternatesDissociated(normalizedSourceRoot));
   }
   const repackResult = await runGit(normalizedSourceRoot, [
     "repack",

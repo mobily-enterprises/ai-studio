@@ -1,0 +1,156 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { lstat, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+
+import { createPreviewPreparationFixture } from "../fixtures/previewPreparation.js";
+import {
+  freezeTerminalNamespaceAdmission,
+  listTerminalSessions,
+  thawTerminalNamespaceAdmission
+} from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
+import { outputTargetTerminalNamespace } from "../../packages/vibe64-terminals/src/server/terminalShared.js";
+
+process.env.VIBE64_RUNTIME_NAMESPACE = "preview-preparation-test";
+const execFileAsync = promisify(execFile);
+
+async function fixture(t) {
+  const value = await createPreviewPreparationFixture();
+  t.after(() => value.close());
+  return value;
+}
+
+async function eventually(operation) {
+  let failure;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try { return await operation(); } catch (error) { failure = error; }
+    await delay(30);
+  }
+  throw failure;
+}
+
+async function assertServes(terminal, value = "initial") {
+  assert.equal(terminal.ok, true, JSON.stringify(terminal));
+  await eventually(async () => {
+    const response = await fetch(terminal.metadata.targetUrl);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), `<h1>Preview works: ${value}</h1>`);
+  });
+}
+
+test("prepared previews launch while the assistant lock is occupied and concurrent starts leave one running process", { timeout: 15_000 }, async (t) => {
+  const f = await fixture(t);
+  await f.prepare();
+  const envPath = path.join(f.sourceRoot, ".env");
+  const before = await lstat(envPath, { bigint: true });
+  const release = await f.holdAssistantLock();
+  try {
+    await assertServes(await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" }));
+    const starts = await Promise.all(Array.from({ length: 3 }, () => (
+      f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" })
+    )));
+    assert.equal(starts.every(({ ok }) => ok === true), true);
+    await assertServes(starts.at(-1));
+    assert.equal(listTerminalSessions({ namespace: outputTargetTerminalNamespace(f.sessionId) })
+      .filter(({ status }) => status === "running").length, 1);
+    assert.equal(await f.setupRuns(), 1);
+    assert.equal((await lstat(envPath, { bigint: true })).ctimeNs, before.ctimeNs);
+    assert.equal((await f.runtime.store.runSessionExclusive(f.sessionId, "agent-write-mode", () => null)).acquired, false);
+  } finally { await release(); }
+});
+
+for (const change of ["environment value", "missing environment file", "Git excludes", "setup recipe"]) {
+  test(`changed ${change} waits for the assistant lock, then prepares and serves a real preview`, { timeout: 15_000 }, async (t) => {
+    const f = await fixture(t);
+    await f.prepare();
+    const envPath = path.join(f.sourceRoot, ".env");
+    const excludePath = path.join(f.sourceRoot, ".git", "info", "exclude");
+    if (change === "environment value" || change === "setup recipe") {
+      const stack = await readFile(f.stackPath, "utf8");
+      await writeFile(f.stackPath, change === "environment value"
+        ? stack.replace("`initial`", "`updated`")
+        : stack.replace("`setup.cjs`", "`setup.cjs` `new-recipe`"));
+    } else if (change === "missing environment file") {
+      await rm(envPath);
+    } else {
+      await writeFile(excludePath, "# user rule\n");
+    }
+    const before = await readFile(envPath, "utf8").catch(() => null);
+    const excludeBefore = await readFile(excludePath, "utf8");
+    const release = await f.holdAssistantLock();
+    try {
+      const rejected = await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" });
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.code, "vibe64_agent_write_mode_busy", JSON.stringify(rejected));
+      assert.equal(await f.setupRuns(), 1);
+      assert.equal(await readFile(envPath, "utf8").catch(() => null), before);
+      assert.equal(await readFile(excludePath, "utf8"), excludeBefore);
+    } finally { await release(); }
+    const started = await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" });
+    await assertServes(started, change === "environment value" ? "updated" : "initial");
+    assert.equal(await f.setupRuns(), change === "setup recipe" ? 2 : 1);
+  });
+}
+
+test("preview preparation holds the source lock until its command finishes and keeps shutdown admission intact", { timeout: 15_000 }, async (t) => {
+  const f = await fixture(t);
+  const holdPath = path.join(f.sourceRoot, "hold-setup");
+  await writeFile(holdPath, "hold");
+  const starting = f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" });
+  const namespace = outputTargetTerminalNamespace(f.sessionId);
+  try {
+    await eventually(() => readFile(path.join(f.sourceRoot, "setup-entered.txt")));
+    const contender = await f.runtime.store.runSessionExclusive(f.sessionId, "agent-write-mode", () => {
+      assert.fail("Preparation released its source lock while the command was still running.");
+    });
+    assert.equal(contender.acquired, false);
+    assert.equal(freezeTerminalNamespaceAdmission(namespace, { owner: "test-renewal" }).code, "terminal_admission_busy");
+  } finally { await rm(holdPath, { force: true }); }
+  await assertServes(await starting);
+  assert.equal(freezeTerminalNamespaceAdmission(namespace, { owner: "test-renewal" }).ok, true);
+  try {
+    const rejected = await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app", forceRestart: true });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.code, "terminal_admission_frozen");
+  } finally { thawTerminalNamespaceAdmission(namespace, { owner: "test-renewal" }); }
+  assert.equal(await f.setupRuns(), 1);
+});
+
+test("failed preparation does not launch a preview and leaves the source lock usable", { timeout: 15_000 }, async (t) => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.sourceRoot, "fail-setup"), "fail");
+  const failed = await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.id, undefined);
+  assert.equal((await f.runtime.store.runSessionExclusive(f.sessionId, "agent-write-mode", () => null)).acquired, true);
+  await rm(path.join(f.sourceRoot, "fail-setup"));
+  const retry = await f.terminals.prepareWorkspaceSetup(f.sessionId, { retry: true, waitForCompletion: true });
+  await retry.completion;
+  await assertServes(await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" }));
+});
+
+test("Git alternates repair remains locked while prepared launch inspection stays read-only", { timeout: 15_000 }, async (t) => {
+  const f = await fixture(t);
+  await f.prepare();
+  await execFileAsync("git", ["-C", f.sourceRoot, "add", "."]);
+  await execFileAsync("git", ["-C", f.sourceRoot, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Fixture"]);
+  const borrowed = path.join(f.root, "borrowed");
+  await execFileAsync("git", ["clone", "--shared", f.sourceRoot, borrowed]);
+  const alternatesPath = path.join(f.sourceRoot, ".git", "objects", "info", "alternates");
+  // Borrow the clone's object database, which in turn borrows this source.
+  // A real object store is needed for the repack, so dissociate the clone first.
+  await execFileAsync("git", ["-C", borrowed, "repack", "-a", "-d"]);
+  await rm(path.join(borrowed, ".git", "objects", "info", "alternates"));
+  await writeFile(alternatesPath, `${path.join(borrowed, ".git", "objects")}\n`);
+  const release = await f.holdAssistantLock();
+  try {
+    const rejected = await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" });
+    assert.equal(rejected.code, "vibe64_agent_write_mode_busy", JSON.stringify(rejected));
+    assert.match(await readFile(alternatesPath, "utf8"), /borrowed/u);
+  } finally { await release(); }
+  await assertServes(await f.terminals.startOutputTargetTerminal(f.sessionId, { outputTargetId: "app" }));
+  await assert.rejects(() => readFile(alternatesPath), { code: "ENOENT" });
+});

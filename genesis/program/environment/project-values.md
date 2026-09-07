@@ -25,7 +25,12 @@ panes, scrolling within the table rather than collapsing a revealed value or
 widening the page.
 
 Execution startup explicitly prepares resources and environment files under the
-session source lock. Preview status, assistant profile discovery, and helper
+session source lock. Preview startup may reuse preparation after a read-only
+check confirms that the host reports its exact resources prepared and the
+declared dotenv files and local Git excludes match current values. Otherwise it
+resolves the declarations again under the lock before provisioning or writing.
+An unreadable resource state is not evidence that preparation can be skipped.
+Preview status, assistant profile discovery, and helper
 conversation cleanup resolve existing values through the inspection API; they
 do not provision resources or materialize project environment files.
 Constructing a session runtime or reading session state does not resolve the

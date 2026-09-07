@@ -28,6 +28,11 @@ records progress and exact recipe identity, waits before dependent work, and
 exposes retry after failure. Missing or ambiguous declarations remain explicit;
 Vibe64 never guesses an installer or reads a retired grammar.
 
+Preview can inspect whether the current recipe already succeeded without taking
+assistant-write admission. If preparation is needed, it rereads the session under
+that admission and holds it until the preparation command finishes. A busy
+admission result prevents the preview from continuing with an unprepared recipe.
+
 If an explicit retry finds that Genesis recognizes the project as unversioned
 or outdated and prescribes migration, Vibe64 runs its bundled `genesis migrate`
 command through the same locked managed-source execution boundary. That command

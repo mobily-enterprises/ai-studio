@@ -111,6 +111,7 @@ function terminalWorktreePath(session = {}) {
 }
 
 async function ensureTerminalSessionSourceGitSelfContained({
+  runExclusive = null,
   session = {},
   workdir = ""
 } = {}) {
@@ -122,7 +123,7 @@ async function ensureTerminalSessionSourceGitSelfContained({
       skipped: true
     };
   }
-  return ensureSessionSourceGitAlternatesDissociated(worktreePath);
+  return ensureSessionSourceGitAlternatesDissociated(worktreePath, { runExclusive });
 }
 
 export {
