@@ -98,6 +98,8 @@ Suggestions and tool-free helper conversations can run alongside preview and
 foreground work. Only operations that change shared source or prepare its
 environment require the source lock. A ready preview replaces any stale error
 from an overlapping start request.
+People can inspect and explicitly restart the application while the assistant
+is working; automatic startup waits until that work is idle.
 Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.
 

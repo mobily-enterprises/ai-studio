@@ -12,6 +12,7 @@ without leaving the coding workspace.
 - `packages/vibe64-terminals/src/server/launchPreviewProxy.js`
 - `src/components/studio/Vibe64LongRunningTerminal.vue`
 - `src/components/studio/Vibe64OutputControls.vue`
+- `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/composables/useVibe64OutputControls.js`
 - `src/composables/useVibe64OutputControlsSurface.js`
 
@@ -49,6 +50,10 @@ startup error. Late start failures from a previous project or session are ignore
 Status inspection never starts work. Logs, retry, stop, open, fresh restart,
 result history, and authenticated downloads remain available through the
 session-owned output controller and studio controls.
+An active assistant turn delays automatic startup, not status inspection or an
+explicit restart. Both restart controls send the forced-start command for
+running and exited targets. Session renewal still suspends source operations;
+launch preparation remains protected by the server's source-operation lock.
 
 A long-running target does not occupy the workspace with terminal output by
 default. When a run has output, its console action opens the complete terminal;

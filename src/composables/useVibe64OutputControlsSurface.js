@@ -948,15 +948,13 @@ function useVibe64OutputControlsSurface(props) {
   const previewToolbarRecoveryVisible = computed(() => Boolean(
     props.embeddedPreview &&
     launchToolbarDockVisible.value &&
-    previewCanRestart.value &&
-    previewState.value === "stale" &&
+    (previewCanRestart.value || terminalCanRestart.value || terminalCanRetry.value) &&
     embeddedStartTarget.value
   ));
   const previewTerminalRecoveryVisible = computed(() => Boolean(
     props.embeddedPreview &&
     terminalVisible.value &&
-    !terminalIsRunning.value &&
-    previewCanRestart.value &&
+    (previewCanRestart.value || terminalCanRestart.value || terminalCanRetry.value) &&
     embeddedStartTarget.value
   ));
   const previewActivityVisible = computed(() => Boolean(
@@ -1593,8 +1591,9 @@ function useVibe64OutputControlsSurface(props) {
       return false;
     }
     if (
-      embeddedStartTarget.value?.available !== false &&
-      (previewCanRestart.value || previewCanStart.value)
+      embeddedStartTarget.value &&
+      embeddedStartTarget.value.available !== false &&
+      (previewCanRestart.value || previewCanStart.value || terminalCanRestart.value || terminalCanRetry.value)
     ) {
       return forceStartEmbeddedPreview();
     }

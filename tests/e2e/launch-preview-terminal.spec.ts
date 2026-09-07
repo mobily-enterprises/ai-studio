@@ -1467,6 +1467,64 @@ for (const cancelHint of [false, true]) {
   });
 }
 
+for (const stopped of [false, true]) {
+  test(`@preview-active-restart keeps both restart controls usable with an active AI and ${stopped ? "stopped" : "running"} preview`, async ({ page }, testInfo) => {
+    await mockLaunchTerminalSocket(page, { terminalSocketNeverSettles: true });
+    const session = sessionPayload();
+    session.agentSession.turn.active = true;
+    const runningStatus = launchStatusPayload();
+    const launchSession = await mockLaunchSession(page, {
+      session,
+      initialLaunchStatus: stopped ? {
+        ...idleLaunchStatusPayload(runningStatus.outputTargets),
+        activeTerminal: {
+          ...runningStatus.activeTerminal as Record<string, unknown>,
+          exitCode: 0,
+          running: false,
+          status: "exited"
+        }
+      } : runningStatus
+    });
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    await expect.poll(() => launchSession.getLaunchStatusRequestCount()).toBeGreaterThan(0);
+    expect(launchSession.getLaunchStartPayloads()).toHaveLength(0);
+
+    if (stopped) {
+      await page.getByRole("button", { name: "Restart preview", exact: true }).click();
+      await expect.poll(() => launchSession.getLaunchStartPayloads()).toHaveLength(1);
+    }
+    await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+
+    const startsBeforeToolbar = launchSession.getLaunchStartPayloads().length;
+    await page.locator('button[title="Restart preview"]:visible').click();
+    await expect.poll(() => launchSession.getLaunchStartPayloads()).toHaveLength(startsBeforeToolbar + 1);
+    await page.getByRole("button", { name: "Show run output", exact: true }).click();
+    await page.locator(".vibe64-launch-controls__terminal--embedded")
+      .getByRole("button", { name: "Restart preview", exact: true }).click();
+    await expect.poll(() => launchSession.getLaunchStartPayloads()).toHaveLength(startsBeforeToolbar + 2);
+    for (const payload of launchSession.getLaunchStartPayloads()) {
+      expect(payload).toMatchObject({ forceRestart: true, outputTargetId: "dev" });
+    }
+
+    await page.locator(".vibe64-launch-controls__terminal--embedded")
+      .getByRole("button", { name: "Close", exact: true }).click();
+    await page.getByRole("tab", { name: "Dashboard", exact: true }).click();
+    await page.getByRole("tab", { name: "Preview", exact: true }).click();
+    await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+    await page.reload();
+    await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+    expect(launchSession.getLaunchStartPayloads()).toHaveLength(startsBeforeToolbar + 2);
+    for (const width of [390, 900, 1920]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (width === 390) {
+        await page.getByRole("button", { name: "Show project", exact: true }).click();
+      }
+      await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`active-ai-preview-reloaded-${width}.png`) });
+    }
+  });
+}
+
 test("@preview-lifecycle auto-starts without exposing passive actions", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {

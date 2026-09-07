@@ -280,7 +280,7 @@
               />
 
               <v-btn
-                v-if="terminalCanRetry"
+                v-if="terminalCanRetry && !previewToolbarRecoveryVisible"
                 :disabled="operationBusy"
                 :icon="mdiRefresh"
                 size="small"
@@ -290,7 +290,7 @@
               />
 
               <v-btn
-                v-if="terminalCanRestart"
+                v-if="terminalCanRestart && !previewToolbarRecoveryVisible"
                 :disabled="operationBusy"
                 :icon="mdiPowerCycle"
                 size="small"
