@@ -126,6 +126,7 @@ const renderer = createRenderer({
     return index >= 0 ? node.parent.children[index + 1] || null : null;
   },
   parentNode: (node) => node.parent,
+  querySelector: () => null,
   patchProp(element, key, _previous, value) {
     element.props[key] = value;
   },
@@ -278,6 +279,26 @@ describe("Vibe64 terminal lifecycle components", () => {
     await nextTick();
     expect(findNode(container, hasClass("vibe64-temporary-action-terminal__summary"))).toBeNull();
     app.unmount();
+  });
+
+  it("forwards the output loading overlay into expanded action details", async () => {
+    const { app, container } = mount(defineComponent({
+      render: () => h(Vibe64TemporaryActionTerminal, {
+        active: true, operationKey: "publish-1", title: "Publish"
+      }, {
+        overlay: () => h("div", { "aria-label": "Loading publish output" }, "Loading")
+      })
+    }));
+    try {
+      const details = findNode(container, (node) => node.props?.["aria-label"] === "Show Publish details");
+      details.props.onClick();
+      await nextTick();
+      const overlay = findNode(container, hasClass("vibe64-terminal-surface__overlay"));
+      expect(findNode(overlay, (node) => node.props?.["aria-label"] === "Loading publish output")).toBeTruthy();
+      expect(findNode(container, hasClass("vibe64-terminal-surface__log"))).toBeTruthy();
+    } finally {
+      app.unmount();
+    }
   });
 
   it("keeps error recovery actions directly available in the collapsed summary", async () => {

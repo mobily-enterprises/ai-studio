@@ -155,7 +155,8 @@ const forwardedSlots = [
   "actions-after",
   "actions-before",
   "error-actions",
-  "output"
+  "output",
+  "overlay"
 ];
 const visible = computed(() => !props.dismissed && Boolean(
   props.active || props.error || detailsViewed.value
