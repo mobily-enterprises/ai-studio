@@ -2676,6 +2676,83 @@ test("codex provider classifies invalid requests by JSON-RPC code and method", (
   }, "turn/steer"), false);
 });
 
+test("codex provider persists an empty paginated thread before publishing it", async () => {
+  const requests = [];
+  const provider = new CodexAppServerAgentProvider({});
+  let releaseHistory;
+  const historyReady = new Promise((resolve) => { releaseHistory = resolve; });
+  let historyRequested;
+  const historyStarted = new Promise((resolve) => { historyRequested = resolve; });
+  provider.activeClient = async () => ({
+    async request(method, params) {
+      requests.push({ method, params });
+      if (method === "thread/read") {
+        historyRequested();
+        await historyReady;
+      }
+      return { thread: { id: "thread-new", historyMode: "paginated", turns: [] } };
+    }
+  });
+
+  let published = false;
+  const starting = provider.startThread({ cwd: "/repo/worktree" }).then((thread) => {
+    published = true;
+    return thread;
+  });
+  await historyStarted;
+  assert.equal(published, false);
+  assert.deepEqual(requests.map(({ method }) => method), [
+    "thread/start", "thread/name/set", "thread/read"
+  ]);
+  assert.deepEqual(requests[1].params, { threadId: "thread-new", name: "thread-new" });
+  assert.deepEqual(requests[2].params, { threadId: "thread-new", includeTurns: true });
+  releaseHistory();
+  const thread = await starting;
+  assert.equal(thread.id, "thread-new");
+  assert.equal(thread.raw.historyMode, "paginated");
+
+  requests.length = 0;
+  await provider.resumeThread("thread-new");
+  assert.deepEqual(requests.map(({ method }) => method), ["thread/resume"]);
+  assert.equal(requests[0].params.excludeTurns, true);
+});
+
+for (const failedMethod of ["thread/name/set", "thread/read"]) {
+  test(`codex provider propagates paginated initialization failure at ${failedMethod}`, async () => {
+    const requests = [];
+    const failure = Object.assign(new Error("history initialization failed"), { code: -32603 });
+    const provider = new CodexAppServerAgentProvider({});
+    provider.activeClient = async () => ({
+      async request(method) {
+        requests.push(method);
+        if (method === failedMethod) throw failure;
+        return { thread: { id: "thread-new", historyMode: "paginated" } };
+      }
+    });
+    await assert.rejects(provider.startThread(), (error) => error === failure);
+    assert.equal(requests.at(-1), failedMethod);
+    assert.equal(requests.filter((method) => method === "thread/start").length, 1);
+  });
+}
+
+test("codex provider does not persist ephemeral or legacy thread history at startup", async () => {
+  for (const thread of [
+    { id: "thread-ephemeral", ephemeral: true, historyMode: "paginated" },
+    { id: "thread-legacy", historyMode: "legacy" }
+  ]) {
+    const requests = [];
+    const provider = new CodexAppServerAgentProvider({});
+    provider.activeClient = async () => ({
+      async request(method) {
+        requests.push(method);
+        return { thread };
+      }
+    });
+    assert.equal((await provider.startThread()).id, thread.id);
+    assert.deepEqual(requests, ["thread/start"]);
+  }
+});
+
 test("codex provider reads full thread turns for response recovery", async () => {
   const requests = [];
   const provider = new CodexAppServerAgentProvider({});

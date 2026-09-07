@@ -3545,6 +3545,16 @@ class CodexAppServerAgentProvider {
       () => client.request("thread/start", requestParams),
       "codex-app-server-thread-start"
     );
+    if (response?.thread?.historyMode === "paginated" && response.thread.ephemeral !== true) {
+      const threadId = normalizeAgentText(response.thread.id);
+      // A new paginated thread needs its metadata and empty rollout persisted
+      // before it can be resumed. This initializes only the just-created,
+      // empty thread; it never hydrates an existing conversation.
+      await this.runRequest(async () => {
+        await client.request("thread/name/set", { threadId, name: threadId });
+        await client.request("thread/read", { threadId, includeTurns: true });
+      }, "codex-app-server-thread-initialize-history");
+    }
     return {
       ...normalizeAgentThread({
         id: response?.thread?.id,

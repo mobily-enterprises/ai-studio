@@ -112,6 +112,13 @@ Each approval checks its current caller, including requests that arrive while
 an owner's delivery is already pending. Duplicate owner approvals share that
 delivery; a failed delivery remains retryable with the same provider message id.
 
+New paginated Codex conversations persist their native identity and empty
+history before Vibe64 publishes them as ready. Their initial native name is
+their conversation id. This one-time initialization reads only the newly
+created empty thread; it preserves pagination and does not hydrate an existing
+conversation. The first message can therefore resume the same conversation
+without requiring an earlier model turn to create its history records.
+
 Vibe64 expands the session's opening project request with Genesis guidance once.
 Ordinary follow-ups and active-turn steering remain ordinary conversation
 instead of regenerating that complete prompt. An explicit Deslop request uses
