@@ -1,5 +1,4 @@
 import { runCaptureCommand } from "@local/vibe64-execution/server";
-import { refreshGenesisCities } from "@local/vibe64-genesis/server";
 import {
   checkSessionUpdatesDirect,
   inspectSessionChangeDiffDirect,
@@ -15,11 +14,14 @@ const OPERATION_IMPLEMENTATIONS = {
   "change-diff": inspectSessionChangeDiffDirect,
   "changes": inspectSessionChangesDirect,
   "check-updates": checkSessionUpdatesDirect,
-  "save": (input) => saveSessionWorkDirect({
-    ...input,
-    deferCacheMaintenance: true,
-    refreshDerivedArtifacts: refreshGenesisCities
-  }),
+  "save": async (input) => {
+    const { refreshGenesisCities } = await import("@local/vibe64-genesis/server");
+    return saveSessionWorkDirect({
+      ...input,
+      deferCacheMaintenance: true,
+      refreshDerivedArtifacts: refreshGenesisCities
+    });
+  },
   "save-maintenance": refreshSessionWorkSaveCacheDirect,
   "save-message": prepareSessionWorkSaveMessageDirect,
   "work": inspectSessionWorkDirect

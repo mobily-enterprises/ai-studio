@@ -143,7 +143,8 @@ its own scrolling, so reaching a lower section does not shift the page content.
   publish-and-reconcile transaction under the project source lock.
   `sessionWorkOperationCommand.js` performs each operation's exact Git work
   inside its admitted child instead of paying managed-host admission cost for
-  every individual Git command.
+  every individual Git command. It loads the Genesis compiler only for Save,
+  so update checks and other inspections avoid that compiler startup cost.
 - `refreshWorkState(observedWork)` accepts the complete work-state snapshot
   already returned by Current Changes. The runtime host also projects Save and
   Update task events directly from the mounted realtime session, so visible
