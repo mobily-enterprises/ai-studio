@@ -9,11 +9,14 @@ import {
   projectExecutionEnvFromRecords
 } from "../../packages/vibe64-terminals/src/server/projectExecutionEnv.js";
 
-test("project execution environment comes from the project service", async () => {
+test("environment reads use inspection without preparing project resources", async () => {
   let request = null;
   const env = await loadProjectExecutionEnv({
     projectService: {
-      async projectExecutionEnvironment(input) {
+      async projectExecutionEnvironment() {
+        assert.fail("Reading environment must not provision resources or write files.");
+      },
+      async projectInspectionEnvironment(input) {
         request = input;
         return {
           DB_PORT: 3306,
@@ -40,6 +43,23 @@ test("project execution environment comes from the project service", async () =>
     EMPTY: "",
     NAME: "catalog"
   });
+});
+
+test("execution startup explicitly prepares the project environment", async () => {
+  const env = await loadProjectExecutionEnv({
+    prepare: true,
+    projectService: {
+      async projectInspectionEnvironment() {
+        assert.fail("Startup must prepare its environment.");
+      },
+      async projectExecutionEnvironment(input) {
+        assert.equal(input.sessionId, "session-1");
+        return { READY: "yes" };
+      }
+    },
+    session: { sessionId: "session-1" }
+  });
+  assert.deepEqual(env, { READY: "yes" });
 });
 
 test("project execution environment is empty when the project declares none", async () => {

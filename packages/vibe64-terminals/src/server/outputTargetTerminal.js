@@ -578,7 +578,8 @@ async function writeLaunchMetadata(store, sessionId, terminalSession = {}) {
 
 async function createLaunchContext(projectService, sessionId, {
   awaitWorkspacePrepared = false,
-  ensureWorkspacePrepared = null
+  ensureWorkspacePrepared = null,
+  prepareEnvironment = false
 } = {}) {
   const runtime = await projectService.createRuntime();
   let session = await runtime.getSession(sessionId);
@@ -595,6 +596,7 @@ async function createLaunchContext(projectService, sessionId, {
   }
   const sessionSourceRoot = sessionTerminalCwd(session);
   const projectEnvironment = await loadProjectExecutionEnv({
+    prepare: prepareEnvironment,
     projectService,
     session,
     target: "output-target"
@@ -2331,7 +2333,8 @@ function createOutputTargetTerminalController({
       return vibe64Result(async () => withLaunchStartLock(sessionId, async () => {
         const context = await createLaunchContext(projectService, sessionId, {
           awaitWorkspacePrepared: true,
-          ensureWorkspacePrepared
+          ensureWorkspacePrepared,
+          prepareEnvironment: true
         });
         const cwd = sessionTerminalCwd(context.session, projectService);
         let forceRestart = input.forceRestart === true;

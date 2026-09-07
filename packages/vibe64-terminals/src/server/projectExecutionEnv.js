@@ -16,17 +16,21 @@ function executionEnvFingerprint(env = {}) {
 }
 
 async function loadProjectExecutionEnvRecords({
+  prepare = false,
   projectService = {},
   session = {},
   target = ""
 } = {}) {
-  if (typeof projectService.projectExecutionEnvironment !== "function") {
+  const resolveEnvironment = prepare
+    ? projectService.projectExecutionEnvironment
+    : projectService.projectInspectionEnvironment;
+  if (typeof resolveEnvironment !== "function") {
     return {
       runtimeConfigEnv: {}
     };
   }
   const sessionId = String(session?.sessionId || session?.id || "").trim();
-  const env = await projectService.projectExecutionEnvironment({
+  const env = await resolveEnvironment.call(projectService, {
     ...(sessionId ? { sessionId } : {}),
     ...(sessionId ? { session } : {}),
     target: String(target || "").trim()

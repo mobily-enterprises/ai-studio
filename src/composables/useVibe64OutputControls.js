@@ -1134,6 +1134,9 @@ function useVibe64OutputControls({
       });
       return true;
     } catch (error) {
+      if (disposed || startedScopeKey !== launchScopeKey.value) {
+        return false;
+      }
       launchError.value = String(
         error?.message || startTerminalCommand.message || "Output target could not be started."
       ).trim();
@@ -1529,6 +1532,12 @@ function useVibe64OutputControls({
     void connectLaunchTerminal();
   }, {
     immediate: true
+  });
+
+  watch([previewState, terminalIndicatorState, launchError], ([state, indicator]) => {
+    if (state === "ready" && indicator === "running") {
+      launchError.value = "";
+    }
   });
 
   watch(terminalError, (message) => {

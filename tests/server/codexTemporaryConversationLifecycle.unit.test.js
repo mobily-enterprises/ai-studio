@@ -290,7 +290,7 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
         error.code = "thread_start_failed";
         throw error;
       }
-      return { id: "conversation-1" };
+      return { id: captures.uniqueThreadIds ? `conversation-${captures.threads.length}` : "conversation-1" };
     },
     async stopRuntime(options = {}) {
       calls.push(["stopRuntime"]);
@@ -771,8 +771,8 @@ for (const startFails of [false, true]) {
         assert.equal((await store.runSessionExclusive(
           session.sessionId,
           "agent-write-mode",
-          () => assert.fail("Follow-up B must retain the real agent-write lock while dispatch is pending.")
-        )).acquired, false);
+          () => "Source work can proceed while the follow-up is answering."
+        )).acquired, true);
 
         const stopping = sourceEditor.stopExplanation({
           // Observe ordinary input consumption after real context reads, returning the unchanged ID.
@@ -1480,7 +1480,7 @@ async function withConversationController(operation, {
     projectEnvironmentWait: null,
     resumes: [],
     runtimeInfo: null,
-    serverUserAgent: "vibe64/0.151.0 (unit test)",
+    serverUserAgent: "vibe64/0.153.4 (unit test)",
     threads: [],
     stopRuntimes: 0,
     stopRuntimeOptions: [],
@@ -1522,7 +1522,7 @@ async function withConversationController(operation, {
         stateRoot: projectRuntimeRoot
       };
     },
-    async projectExecutionEnvironment() {
+    async projectInspectionEnvironment() {
       captures.onProjectEnvironment?.();
       if (captures.projectEnvironmentWait) {
         await captures.projectEnvironmentWait;
@@ -1700,7 +1700,7 @@ async function withAgentMessageController(operation) {
     createSessionStore() {
       return store;
     },
-    async projectExecutionEnvironment() {
+    async projectInspectionEnvironment() {
       return {
         VIBE64_RUNTIME_NAMESPACE: "test",
         VIBE64_WORKSPACE: "test"
@@ -3381,7 +3381,7 @@ test("a changed session environment retires the previous provider for the same r
           stateRoot: projectRuntimeRoot
         };
       },
-      async projectExecutionEnvironment() {
+      async projectInspectionEnvironment() {
         return {
           PROVIDER_OWNERSHIP_VERSION: environmentVersion,
           VIBE64_RUNTIME_NAMESPACE: "test",
@@ -3501,7 +3501,7 @@ test("Codex sessions retain one shared runtime and concurrent final closes stop 
           stateRoot: projectRuntimeRoot
         };
       },
-      async projectExecutionEnvironment() {
+      async projectInspectionEnvironment() {
         return {
           VIBE64_RUNTIME_NAMESPACE: "test",
           VIBE64_WORKSPACE: "test"
@@ -3722,6 +3722,9 @@ test("an active chat keeps one composed session context while authored turns sta
         return store;
       },
       async projectExecutionEnvironment() {
+        return this.projectInspectionEnvironment();
+      },
+      async projectInspectionEnvironment() {
         return {
           PROVIDER_OWNERSHIP_VERSION: environmentVersion,
           VIBE64_RUNTIME_NAMESPACE: "test",
@@ -3904,7 +3907,7 @@ test("closing a session without recorded Codex ownership leaves the shared runti
           stateRoot: projectRuntimeRoot
         };
       },
-      async projectExecutionEnvironment() {
+      async projectInspectionEnvironment() {
         return providerEnv;
       }
     }
@@ -4292,6 +4295,45 @@ test("temporary conversations accept the final answer after the completion notif
     });
     assert.equal(completed.status, "completed");
     assert.equal(completed.message, "The answer arrived safely.");
+  });
+});
+
+test("helper discovery, overlapping turns and cleanup inspect the environment without preparing it", async () => {
+  await withConversationController(async ({ captures, controller, projectService, session, subscribers }) => {
+    captures.uniqueThreadIds = true;
+    projectService.projectExecutionEnvironment = () => {
+      assert.fail("Helper requests must not prepare project resources or environment files.");
+    };
+    await controller.executionProfileModelCatalog(session.sessionId);
+    const input = {
+      executionProfile: sourceExplanationEconomyProfile(),
+      outputSchema: sourceExplanationOutputSchema(),
+      prompt: "Explain this bounded excerpt."
+    };
+    const first = controller.runDetachedChatTurn(session.sessionId, input);
+    await waitForCapturedTurns(captures, 1);
+    const second = controller.runDetachedChatTurn(session.sessionId, input);
+    await waitForCapturedTurns(captures, 2);
+    const namespace = codexTerminalNamespace(session.sessionId);
+    assert.equal(freezeTerminalNamespaceAdmission(namespace, {
+      owner: "session-renewal:overlapping-helpers"
+    }).code, "terminal_admission_busy");
+    assert.equal(captures.providerOptions.length, 1);
+    completeDetachedTurn(subscribers, { text: JSON.stringify({ answer: "First." }) });
+    completeDetachedTurn(subscribers, {
+      text: JSON.stringify({ answer: "Second." }),
+      threadId: "conversation-2",
+      turnId: "turn-2"
+    });
+    const results = await Promise.all([first, second]);
+    assert.equal(results.every((result) => result.ok), true, JSON.stringify(results));
+    for (const result of results) {
+      const deleted = await controller.deleteDetachedChatThread(session.sessionId, {
+        executionProfile: input.executionProfile,
+        threadId: result.threadId
+      });
+      assert.equal(deleted.ok, true, JSON.stringify(deleted));
+    }
   });
 });
 
@@ -5102,7 +5144,7 @@ test("server shutdown serializes with an owned runtime before metadata is publis
           stateRoot: projectRuntimeRoot
         };
       },
-      async projectExecutionEnvironment() {
+      async projectInspectionEnvironment() {
         return {
           VIBE64_RUNTIME_NAMESPACE: process.env.VIBE64_RUNTIME_NAMESPACE,
           VIBE64_WORKSPACE: "test"
@@ -5242,7 +5284,7 @@ test("server shutdown proves exit of the exact owned detached runtime", async (t
           stateRoot: projectRuntimeRoot
         };
       },
-      async projectExecutionEnvironment() {
+      async projectInspectionEnvironment() {
         return {
           VIBE64_RUNTIME_NAMESPACE: process.env.VIBE64_RUNTIME_NAMESPACE,
           VIBE64_WORKSPACE: "test"

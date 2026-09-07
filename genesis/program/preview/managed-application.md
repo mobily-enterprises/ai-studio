@@ -41,6 +41,11 @@ republishes a missing or replaced socket. Finite runs snapshot only their
 declared regular files into bounded immutable result storage and expose
 downloads by generated result identity rather than a caller-supplied path.
 
+Status inspection resolves the environment without provisioning resources or
+writing project environment files. Confirmed preview readiness supersedes a
+failed overlapping start request, so a running preview is not covered by an old
+startup error. Late start failures from a previous project or session are ignored.
+
 Status inspection never starts work. Logs, retry, stop, open, fresh restart,
 result history, and authenticated downloads remain available through the
 session-owned output controller and studio controls.

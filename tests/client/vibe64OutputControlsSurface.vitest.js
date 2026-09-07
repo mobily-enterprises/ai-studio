@@ -249,6 +249,20 @@ describe("Vibe64 launch controls surface", () => {
     });
   });
 
+  it("shows a recovered preview after an overlapping start request failed", () => {
+    const launchError = "Another assistant operation is starting. Try again in a moment.";
+    expect(launchPreviewIssue({ launchError, state: "idle" })).toEqual({
+      message: launchError,
+      title: "Preview could not be started"
+    });
+    expect(launchPreviewIssue({ launchError, state: "ready" })).toBeNull();
+    expect(launchPreviewNotice({ launchError, state: "ready" })).toBeNull();
+    expect(launchPreviewIssue({ state: "failed", message: "Process exited" })).toEqual({
+      message: "Process exited",
+      title: "Preview could not be opened"
+    });
+  });
+
   it("routes stopped preview processes through toolbar attention", () => {
     expect(launchPreviewIssue({
       message: "The preview process exited with code 0.",

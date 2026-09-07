@@ -2148,6 +2148,10 @@ function launchPreviewIssue({
   message = "",
   state = "idle"
 } = {}) {
+  // Current readiness supersedes a failed, overlapping start request.
+  if (state === "ready") {
+    return null;
+  }
   const operationError = String(launchError || "").trim();
   const text = String(message || "").trim();
   if (operationError) {

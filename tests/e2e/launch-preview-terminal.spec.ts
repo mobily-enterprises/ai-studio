@@ -1324,6 +1324,149 @@ test("@preview-lifecycle loads launch targets from pathless session summaries", 
   await expect(page.frameLocator(".vibe64-launch-controls__preview-frame").getByText("Preview app")).toBeVisible();
 });
 
+for (const width of [1440, 390]) {
+  for (const readinessFirst of [false, true]) {
+    test(`@preview-race readiness ${readinessFirst ? "before" : "after"} a rejected start at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 1000 });
+      await mockLaunchTerminalSocket(page);
+      const session = { ...sessionPayload(), revision: 1 };
+      const launch = await mockLaunchSession(page, {
+        initialLaunchStatus: idleLaunchStatusPayload(launchStatusPayload().outputTargets),
+        session
+      });
+      let releaseStart = () => {};
+      const heldStart = new Promise<void>((resolve) => { releaseStart = resolve; });
+      let startRequested = false;
+      await page.route("**/output-runs", async (route) => {
+        startRequested = true;
+        await heldStart;
+        await fulfillJson(route, {
+          code: "vibe64_agent_write_mode_busy",
+          error: "Another assistant operation is starting. Try again in a moment.",
+          ok: false,
+          retryable: true
+        }, { status: 409 });
+      });
+      const rejectedStart = page.waitForResponse((response) => response.url().endsWith("/output-runs") && response.status() === 409);
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      if (width < 600) {
+        await page.getByRole("button", { name: "Show project" }).click();
+      }
+      await expect.poll(() => startRequested).toBe(true);
+      const failure = page.locator("strong").filter({ hasText: "Preview could not be started" });
+      if (!readinessFirst) {
+        releaseStart();
+        await expect(failure).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath("start-rejected.png") });
+      }
+      await launch.publishLaunchReady();
+      await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+      releaseStart();
+      await rejectedStart;
+      await expect(failure).toHaveCount(0);
+      await expect(page.locator(".vibe64-launch-controls__status-dot--running:visible")).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("preview-recovered.png") });
+    });
+  }
+}
+
+test("@preview-race repeated busy starts remain retryable and recover to the running app", async ({ page }, testInfo) => {
+  await mockLaunchTerminalSocket(page);
+  await mockLaunchSession(page, {
+    initialLaunchStatus: idleLaunchStatusPayload(launchStatusPayload().outputTargets)
+  });
+  let starts = 0;
+  await page.route("**/output-runs", async (route) => {
+    if (++starts > 3) {
+      await route.fallback();
+      return;
+    }
+    await fulfillJson(route, {
+      code: "vibe64_agent_write_mode_busy",
+      error: "Another assistant operation is starting. Try again in a moment.",
+      ok: false,
+      retryable: true
+    }, { status: 409 });
+  });
+  await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await expect(page.locator("strong").filter({ hasText: "Preview could not be started" })).toBeVisible();
+    await page.getByRole("button", { name: "Restart preview", exact: true }).click();
+  }
+  await expect(page.locator(".vibe64-launch-controls__preview-frame")).toBeVisible();
+  await expect(page.locator("strong").filter({ hasText: "Preview could not be started" })).toHaveCount(0);
+  expect(starts).toBe(4);
+  await page.screenshot({ path: testInfo.outputPath("repeated-retry-recovered.png") });
+});
+
+for (const cancelHint of [false, true]) {
+  test(`@preview-race preview stays usable while hints ${cancelHint ? "are cancelled by sending" : "finish"}`, async ({ page }, testInfo) => {
+    await mockLaunchTerminalSocket(page);
+    const requests: TemporaryAiRecoveryRequests = { mainMessages: [], temporaryStarts: [], temporaryTurns: [] };
+    await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+      conversationLog: [{
+        assistant: { at: "2026-09-07T00:00:00Z", role: "assistant", text: "The application is ready to preview." },
+        turnId: "completed-preview-work"
+      }],
+      initialLaunchStatus: idleLaunchStatusPayload(launchStatusPayload().outputTargets),
+      launchTerminalDelayMs: 1500,
+      temporaryAiRecoveryRequests: requests
+    });
+    await page.route("**/vibe64/settings", (route) => fulfillJson(route, {
+      ok: true,
+      promptHints: { canEdit: true, enabled: true }
+    }));
+    const hintGate = Promise.withResolvers<void>();
+    let hintStarted = false;
+    let hintCancelled = false;
+    await page.route("**/prompt-hints", async (route) => {
+      hintStarted = true;
+      await hintGate.promise;
+      await fulfillJson(route, {
+        ok: true,
+        status: "ready",
+        suggestions: ["Review the booking flow", "Check the appointment screen", "Improve the grooming form"]
+          .map((prompt, index) => ({
+            label: ["Review bookings", "Check appointments", "Improve grooming"][index],
+            prompt
+          }))
+      });
+    });
+    await page.route("**/prompt-hints/cancel", (route) => {
+      hintCancelled = true;
+      return fulfillJson(route, { ok: true });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await expect.poll(() => hintStarted).toBe(true);
+      await expect(page.getByText("Thinking of a few ideas", { exact: true })).toBeVisible();
+      const preview = page.locator(".vibe64-launch-controls__preview-frame");
+      await expect(preview).toBeVisible();
+      const previewSrc = await preview.getAttribute("src");
+      await expect(page.locator(".vibe64-launch-controls__status-dot--running:visible")).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("preview-with-pending-hints.png") });
+      if (cancelHint) {
+        await page.getByLabel("Message AI assistant").fill("Check the booking form");
+        await page.getByRole("button", { name: "Send message", exact: true }).click();
+        await expect.poll(() => requests.mainMessages.length).toBe(1);
+        await expect.poll(() => hintCancelled).toBe(true);
+      }
+      hintGate.resolve();
+      await expect(page.getByText("Thinking of a few ideas", { exact: true })).toHaveCount(0);
+      if (!cancelHint) {
+        await expect(page.getByRole("button", { name: "Use suggestion: Review the booking flow" })).toBeVisible();
+      }
+      await expect(preview).toBeVisible();
+      await expect(preview).toHaveAttribute("src", previewSrc!);
+      await expect(page.locator(".vibe64-launch-controls__preview-diagnostic")).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath("preview-after-hints.png") });
+    } finally {
+      hintGate.resolve();
+    }
+  });
+}
+
 test("@preview-lifecycle auto-starts without exposing passive actions", async ({ page }) => {
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {
@@ -3335,6 +3478,13 @@ async function mockLaunchSession(page: Page, {
     };
   }
   await mockProjectGateReady(page);
+  await page.route("**/vibe64/onboarding?*", async (route) => {
+    await fulfillJson(route, {
+      ok: true,
+      inspection: { state: "ready" },
+      templates: []
+    });
+  });
   await page.route(
     /\/api(?:\/app\/[^/]+)?\/vibe64\/assistants\/capabilities(?:\?.*)?$/u,
     async (route) => {
@@ -3721,6 +3871,25 @@ async function mockLaunchSession(page: Page, {
     },
     getLaunchStartPayloads() {
       return launchStartPayloads;
+    },
+    async publishLaunchReady() {
+      initialLaunchStatusActive = false;
+      launchStarted = true;
+      // Deliver the same Socket.IO event as a separate successful launch.
+      await page.evaluate((sessionId) => {
+        const app = (document.querySelector("#app") as unknown as {
+          __vue_app__: { _context: { provides: Record<string, {
+            onevent(packet: { data: unknown[] }): void;
+          }> } };
+        }).__vue_app__;
+        app._context.provides["jskit.realtime.runtime.client.socket"].onevent({
+          data: ["vibe64.session.changed", {
+            sessionId,
+            reason: "output-target-ready",
+            clientRefresh: { includeOutputs: true }
+          }]
+        });
+      }, session.sessionId);
     },
     getSessionCreationRequestCount() {
       return sessionCreationRequestCount;
@@ -4449,6 +4618,12 @@ function idleLaunchStatusPayload(outputTargets: unknown[] = []) {
     outputRuns: [],
     outputTargets,
     ok: true,
+    preview: {
+      state: "idle",
+      canStart: outputTargets.some((target) => (target as { available?: boolean }).available !== false),
+      canRestart: false,
+      canShowLog: false
+    },
     openTarget: {
       available: false,
       disabledReason: "Run an output target first.",

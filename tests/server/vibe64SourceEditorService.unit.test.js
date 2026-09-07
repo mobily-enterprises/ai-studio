@@ -730,7 +730,7 @@ test("source editor rejects explanation admission before provider inspection or 
 
     assert.equal(blocked.ok, false);
     assert.equal(blocked.statusCode, 409);
-    assert.equal(blocked.errors[0].code, "vibe64_agent_write_mode_busy");
+    assert.equal(blocked.errors[0].code, "vibe64_source_explanation_busy");
     assert.equal(providerInspections, 0);
     await assert.rejects(
       readFile(path.join(fixture.sourceEditorTempRoot, "source-editor-explanation-cleanup.json"), "utf8"),
@@ -744,7 +744,7 @@ test("source editor rejects explanation admission before provider inspection or 
   }
 });
 
-test("source editor keeps provider failure cleanup ownership inside session admission", async () => {
+test("source editor keeps provider failure cleanup ownership inside its conversation admission", async () => {
   let fixture = null;
   let lockHeld = false;
   let lockReleased = false;
@@ -797,7 +797,8 @@ test("source editor keeps provider failure cleanup ownership inside session admi
         throw error;
       }
     },
-    async writeExclusive(_sessionId, _operationName, operation) {
+    async writeExclusive(_sessionId, operationName, operation) {
+      assert.match(operationName, /^source-explanation-/u);
       assert.equal(lockHeld, false);
       lockHeld = true;
       try {
@@ -839,6 +840,70 @@ test("source editor keeps provider failure cleanup ownership inside session admi
       recursive: true
     });
   }
+});
+
+test("explanations overlap source work and exclude only a second turn in the same conversation", async (t) => {
+  const entered = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  let store;
+  const fixture = await createSourceEditorFixture({
+    writeExclusive(...args) {
+      return store.runSessionExclusive(...args);
+    },
+    terminalService: {
+      async streamDetachedAgentChatTurn(_sessionId, _input, options) {
+        options.onEvent({ threadId: "thread-concurrent", type: "thread" });
+        options.onEvent({ threadId: "thread-concurrent", turnId: "turn-concurrent", type: "turn" });
+        entered.resolve();
+        await finish.promise;
+        return {
+          executionProfile: resolvedSourceExplanationProfile(),
+          ok: true,
+          text: structuredExplanation("This logs one."),
+          threadId: "thread-concurrent",
+          turnId: "turn-concurrent"
+        };
+      }
+    }
+  });
+  t.after(async () => {
+    finish.resolve();
+    fixture.service.close();
+    await rm(fixture.root, { force: true, recursive: true });
+  });
+  store = createVibe64SessionStore({
+    projectContextRoot: fixture.sourceRoot,
+    projectRuntimeRoot: path.join(fixture.root, "session-runtime")
+  });
+  await store.createSession({ sessionId: "session-1" });
+  const input = {
+    explanationId: "exp_concurrent",
+    path: "src/app.js",
+    scope: "file",
+    sessionId: "session-1"
+  };
+  let explaining;
+  const foreground = await store.runSessionExclusive("session-1", "agent-write-mode", async () => {
+    explaining = fixture.service.streamExplanation(input);
+    await entered.promise;
+    return "foreground completed while explanation was answering";
+  });
+  assert.equal(foreground.acquired, true);
+  const duplicate = await fixture.service.addExplanationFollowup({
+    explanationId: input.explanationId,
+    message: "Another question",
+    sessionId: input.sessionId
+  });
+  assert.equal(duplicate.code, "vibe64_source_explanation_busy");
+  const current = await fixture.service.readFile(input);
+  const saved = await fixture.service.saveFile({
+    ...input,
+    baseHash: current.file.hash,
+    text: "console.log('two');\n"
+  });
+  assert.equal(saved.ok, true);
+  finish.resolve();
+  await explaining;
 });
 
 test("source editor resolves relative import targets inside the session source", async () => {

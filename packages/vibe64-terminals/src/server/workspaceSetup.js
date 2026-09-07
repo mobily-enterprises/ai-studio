@@ -232,6 +232,7 @@ function createWorkspaceSetupRunner({
     startedAt
   }) {
     const projectEnv = await loadProjectExecutionEnv({
+      prepare: true,
       projectService,
       session,
       target: "workspace-setup"
@@ -440,6 +441,7 @@ function createWorkspaceSetupRunner({
       let redactionSecrets = [];
       try {
         projectEnv = await loadProjectExecutionEnv({
+          prepare: true,
           projectService,
           session,
           target: "workspace-setup"

@@ -19,6 +19,11 @@ When Genesis declares an environment-file projection, Vibe64 writes it outside
 ordinary Git tracking with restrictive permissions and preserves a pre-existing
 user file before taking ownership.
 
+Execution startup explicitly prepares resources and environment files under the
+session source lock. Preview status, assistant profile discovery, and helper
+conversation cleanup resolve existing values through the inspection API; they
+do not provision resources or materialize project environment files.
+
 Stack declarations are inspected only from a real baseline checkout or an
 explicit session source. A hosted catalog project's metadata namespace is not
 source and is never passed to Genesis merely because no baseline checkout is

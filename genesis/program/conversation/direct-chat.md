@@ -239,6 +239,18 @@ running are attributed to the originating project session through their
 ordinary provider command boundaries, and closing that session drains those
 descendants.
 
+Tool-free economy turns run without the session source lock, while provider
+thread ownership and terminal admission still protect cleanup and renewal.
+Environment inspection retains the same provider identity as interactive chat
+without preparing the project again. Writable detached turns keep their source
+lock. The economy compatibility gate accepts audited Codex 0.151.0 and 0.153.4;
+unknown versions remain blocked. Its 0.153.4 audit uses the installed binary's
+generated protocol schema and isolated thread creation and deletion, with shell,
+hook, plugin, clock, sleep and context-budget features disabled. Model selection
+remains the provider-owned Luna-low profile. A turn sent to a local capture
+endpoint with the installed Luna catalog declared zero tools; no model inference
+was needed for that request-shape proof.
+
 Contextual prompt suggestions may preview their full text in an otherwise empty
 composer without modifying the draft. Showing or hiding that preview preserves
 the composer's geometry, while text the person actually enters still grows the

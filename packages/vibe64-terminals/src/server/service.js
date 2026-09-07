@@ -2012,13 +2012,27 @@ function createService({
       }, options);
     },
 
-    runDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
+    async runDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
+      if (input.executionProfile) {
+        return sessionAgent.runDetachedChatTurn(
+          sessionId,
+          input,
+          await assistantSessionOptions(sessionId, options)
+        );
+      }
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.runDetachedChatTurn(sessionId, input, context)
       ));
     },
 
-    streamDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
+    async streamDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
+      if (input.executionProfile) {
+        return sessionAgent.streamDetachedChatTurn(
+          sessionId,
+          input,
+          await assistantSessionOptions(sessionId, options)
+        );
+      }
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.streamDetachedChatTurn(sessionId, input, context)
       ));

@@ -131,7 +131,11 @@ its own scrolling, so reaching a lower section does not shift the page content.
   `Vibe64SourceExplanationPanel` presents the answer, follow-up, cancellation
   and recovery controls. An answered cache record does not need a thread id to
   enable its first follow-up.
-- Server interruption stays outside the streaming write lock. If a new message
+- Source explanations use a lock for their own conversation rather than holding
+  the session source lock while awaiting an answer. Source edits, previews and
+  other explanations can proceed; a second turn in the same explanation receives
+  an explanation-specific busy response. Session renewal admission still applies.
+- Server interruption stays outside the conversation lock. If a new message
   has not received its provider turn identity, Stop waits for that exact message's
   identity or startup failure; it never reuses the previous message's turn. After
   its provider acknowledgement, Stop compares the targeted assistant message and

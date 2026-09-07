@@ -746,6 +746,41 @@ function createService({
     return exclusive.value;
   }
 
+  async function runSourceEditorAgentOperation(input = {}, operation) {
+    const sessionId = normalizeText(input.sessionId);
+    if (!sessionId) {
+      throw sourceEditorError("Missing Vibe64 session id.", "vibe64_invalid_session_id");
+    }
+    const runtime = await projectService.createRuntime({ sessionId });
+    const run = async () => operation(await sourceEditorContext(sessionId, {
+      agentOperation: true,
+      runtime,
+      vibe64User: input.vibe64User
+    }));
+    if (typeof runtime?.store?.runSessionExclusive !== "function") {
+      return run();
+    }
+    // Only turns in the same explanation share mutable conversation state.
+    // The session store still checks renewal admission before starting work.
+    const conversationKey = crypto.createHash("sha256")
+      .update(normalizeText(input.explanationId) || crypto.randomUUID())
+      .digest("hex");
+    const exclusive = await runtime.store.runSessionExclusive(
+      sessionId,
+      `source-explanation-${conversationKey}`,
+      run
+    );
+    if (!exclusive.acquired) {
+      throw sourceEditorError(
+        "This explanation is already answering a question. Try again when it finishes.",
+        "vibe64_source_explanation_busy",
+        {},
+        409
+      );
+    }
+    return exclusive.value;
+  }
+
   return Object.freeze({
     async readTree(input = {}) {
       return runSourceEditorOperation(async () => {
@@ -841,7 +876,7 @@ function createService({
 
     async explainSelection(input = {}) {
       return runSourceEditorOperation(async () => {
-        return runSourceEditorWriteExclusive(input, async (context) => {
+        return runSourceEditorAgentOperation(input, async (context) => {
           const explanationInput = await sourceEditorExplanationInput(context, input);
           const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
           return {
@@ -871,15 +906,13 @@ function createService({
             }),
             ok: true
           };
-        }, {
-          agentOperation: true
         });
       });
     },
 
     async streamExplanation(input = {}, stream = {}) {
       await streamSourceEditorOperation(async () => {
-        await runSourceEditorWriteExclusive(input, async (context) => {
+        await runSourceEditorAgentOperation(input, async (context) => {
           const explanationInput = await sourceEditorExplanationInput(context, input);
           const cacheKey = sourceEditorExplanationCacheKey(context, explanationInput);
           await explanationCache.run(cacheKey, {
@@ -911,29 +944,25 @@ function createService({
               template
             )
           });
-        }, {
-          agentOperation: true
         });
       }, stream);
     },
 
     async addExplanationFollowup(input = {}) {
       return runSourceEditorOperation(async () => {
-        return runSourceEditorWriteExclusive(input, async (context) => ({
+        return runSourceEditorAgentOperation(input, async (context) => ({
           explanation: await addSourceEditorExplanationFollowup(context, input, {
             explanationChats,
             explanationFollowupGenerator: sourceExplanationFollowupGenerator
           }),
           ok: true
-        }), {
-          agentOperation: true
-        });
+        }));
       });
     },
 
     async streamExplanationFollowup(input = {}, stream = {}) {
       await streamSourceEditorOperation(async () => {
-        await runSourceEditorWriteExclusive(input, (context) => (
+        await runSourceEditorAgentOperation(input, (context) => (
           streamSourceEditorExplanationFollowup(context, input, {
             emit: stream.emit,
             explanationChats,
@@ -941,9 +970,7 @@ function createService({
             isClosed: stream.isClosed,
             terminalService
           })
-        ), {
-          agentOperation: true
-        });
+        ));
       }, stream);
     },
 

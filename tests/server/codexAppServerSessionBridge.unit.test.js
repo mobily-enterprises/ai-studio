@@ -169,7 +169,7 @@ function economyInventoryProvider({
   hooks = [],
   mcpServers = {},
   records = null,
-  userAgent = "vibe64/0.151.0 (unit test)"
+  userAgent = "vibe64/0.153.4 (unit test)"
 } = {}) {
   const calls = [];
   return {
@@ -385,6 +385,9 @@ test("Codex economy settings are Luna-low, bounded, tool-free, and never fall ba
   assert.equal(prepared.settings.config.features.multi_agent, false);
   assert.equal(prepared.settings.config.features.tool_suggest, false);
   assert.equal(prepared.settings.config.features.view_image, false);
+  assert.equal(prepared.settings.config.features.current_time_reminder, false);
+  assert.equal(prepared.settings.config.features.sleep_tool, false);
+  assert.equal(prepared.settings.config.features.token_budget, false);
   assert.deepEqual(prepared.settings.config.notify, []);
   assert.equal(prepared.settings.config.orchestrator.mcp.enabled, false);
   assert.equal(prepared.settings.config.orchestrator.skills.enabled, false);
@@ -426,6 +429,15 @@ test("Codex economy settings are Luna-low, bounded, tool-free, and never fall ba
   ]]);
 });
 
+test("Codex economy retains compatibility with the previously audited managed version", async () => {
+  const prepared = await prepareCodexAppServerEconomyThreadStartSettings({
+    executionProfile: sourceExplanationEconomyProfile(),
+    provider: economyInventoryProvider({ userAgent: "vibe64/0.151.0 (unit test)" })
+  });
+  assert.equal(prepared.settings.sandbox, "read-only");
+  assert.deepEqual(prepared.settings.environments, []);
+});
+
 test("Codex economy fails closed before inventory when app-server cannot enforce the policy", async () => {
   for (const [label, provider] of [
     ["missing version API", {
@@ -454,7 +466,7 @@ test("Codex economy fails closed before inventory when app-server cannot enforce
       userAgent: "vibe64/0.151.1 (unit test)"
     })],
     ["unaudited future version", economyInventoryProvider({
-      userAgent: "vibe64/0.152.0 (unit test)"
+      userAgent: "vibe64/0.153.5 (unit test)"
     })]
   ]) {
     await assert.rejects(prepareCodexAppServerEconomyThreadStartSettings({
@@ -466,7 +478,7 @@ test("Codex economy fails closed before inventory when app-server cannot enforce
         VIBE64_AGENT_EXECUTION_PROFILE_ERROR_CODES.POLICY_UNENFORCEABLE,
         label
       );
-      assert.match(error.message, /Update managed Codex and retry/u, label);
+      assert.match(error.message, /Update (?:managed Codex and retry|Vibe64 or use a supported managed Codex version)/u, label);
       return true;
     });
     assert.deepEqual(provider.calls, [], label);

@@ -259,6 +259,7 @@ test("launch start awaits preparation, publishes hosted ingress, and cannot reta
       finishPreparation = resolve;
     });
     let previewIdentityInput = null;
+    let environmentPreparations = 0;
     let blockProjectEnvironment = false;
     let capturedLaunchExecution = null;
     let capturedLaunchProject = null;
@@ -298,6 +299,10 @@ test("launch start awaits preparation, publishes hosted ingress, and cannot reta
         return projectContextRoot;
       },
       async projectExecutionEnvironment() {
+        environmentPreparations += 1;
+        return {};
+      },
+      async projectInspectionEnvironment() {
         if (blockProjectEnvironment) {
           projectEnvironmentStarted?.();
           await new Promise((resolve) => {
@@ -409,6 +414,7 @@ test("launch start awaits preparation, publishes hosted ingress, and cannot reta
       projectEnvironmentStarted = resolve;
     });
     blockProjectEnvironment = true;
+    const preparationsBeforeStatus = environmentPreparations;
     const status = controller.launchStatus(sessionId);
     await environmentStarted;
     const namespace = outputTargetTerminalNamespace(sessionId);
@@ -425,6 +431,7 @@ test("launch start awaits preparation, publishes hosted ingress, and cannot reta
     blockProjectEnvironment = false;
     releaseProjectEnvironment();
     assert.equal((await status).ok, true);
+    assert.equal(environmentPreparations, preparationsBeforeStatus);
     assert.equal(freezeTerminalNamespaceAdmission(namespace, {
       code: "vibe64_session_renewal_quiesced",
       error: "Session renewal has frozen preview access.",

@@ -94,6 +94,10 @@ Open sessions that choose the same coding-assistant application
 share one running assistant service, and that service stops when its final
 session is archived. Short-lived suggestions and focused helper tasks reuse the
 session's chosen service instead of keeping another assistant service running.
+Suggestions and tool-free helper conversations can run alongside preview and
+foreground work. Only operations that change shared source or prepare its
+environment require the source lock. A ready preview replaces any stale error
+from an overlapping start request.
 Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.
 

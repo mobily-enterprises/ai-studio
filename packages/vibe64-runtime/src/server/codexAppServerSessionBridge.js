@@ -53,7 +53,8 @@ const CODEX_SESSION_RENEWAL_THREAD_CLAIM_METADATA =
 const CODEX_SESSION_RENEWAL_THREAD_CLAIM_SCHEMA =
   "vibe64.codex-renewal-thread-claim.v1";
 const CODEX_APP_SERVER_ECONOMY_SANDBOX = "read-only";
-const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION = "0.151.0";
+const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION = "0.153.4";
+const CODEX_APP_SERVER_ECONOMY_AUDITED_VERSIONS = ["0.151.0", CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION];
 const CODEX_APP_SERVER_ECONOMY_USER_AGENT_MAX_LENGTH = 512;
 const CODEX_APP_SERVER_ECONOMY_MCP_SERVER_MAX_COUNT = 128;
 const CODEX_APP_SERVER_ECONOMY_MCP_SERVER_NAME_MAX_LENGTH = 256;
@@ -83,6 +84,7 @@ const CODEX_APP_SERVER_ECONOMY_TOOL_FEATURES = Object.freeze([
   "code_mode",
   "code_mode_host",
   "computer_use",
+  "current_time_reminder",
   "default_mode_request_user_input",
   "deferred_executor",
   "goals",
@@ -99,8 +101,10 @@ const CODEX_APP_SERVER_ECONOMY_TOOL_FEATURES = Object.freeze([
   "shell_tool",
   "skill_mcp_dependency_install",
   "skill_search",
+  "sleep_tool",
   "tool_call_mcp_elicitation",
   "tool_suggest",
+  "token_budget",
   "unified_exec",
   "unified_exec_zsh_fork",
   "view_image"
@@ -478,9 +482,9 @@ function assertCodexAppServerEconomyCompatibility(provider) {
     );
   }
   const actualVersion = actualParts.join(".");
-  if (actualVersion !== CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION) {
+  if (!CODEX_APP_SERVER_ECONOMY_AUDITED_VERSIONS.includes(actualVersion)) {
     throw codexAppServerEconomyPolicyError(
-      `Codex economy execution requires audited app-server ${CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION}; current version is ${actualVersion}. Update managed Codex and retry.`,
+      `Codex economy execution requires audited app-server ${CODEX_APP_SERVER_ECONOMY_AUDITED_VERSIONS.join(" or ")}; current version is ${actualVersion}. Update Vibe64 or use a supported managed Codex version.`,
       {
         actualVersion,
         auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION
@@ -488,7 +492,7 @@ function assertCodexAppServerEconomyCompatibility(provider) {
     );
   }
   return Object.freeze({
-    auditedVersion: CODEX_APP_SERVER_ECONOMY_AUDITED_VERSION,
+    auditedVersion: actualVersion,
     version: actualVersion
   });
 }

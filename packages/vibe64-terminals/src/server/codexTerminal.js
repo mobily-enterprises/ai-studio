@@ -1741,6 +1741,7 @@ function createCodexTerminalController({
     const terminalEnvForSession = async (currentSession = session) => {
       const projectEnvStartedAt = Date.now();
       const projectEnvPromise = loadProjectExecutionEnv({
+        prepare: true,
         projectService,
         runCommand,
         runtime,
@@ -2238,6 +2239,8 @@ function createCodexTerminalController({
   }
 
   async function codexAppServerEconomyRuntimeOptionsForSession(session = {}, options = {}) {
+    // Resolve without provisioning, retaining the shared provider identity used
+    // by interactive chat and durable helper-thread cleanup.
     return codexAppServerRuntimeOptionsForSession(session, options);
   }
 
@@ -7316,6 +7319,7 @@ function createCodexTerminalController({
       env: codexAttachmentEnv()
     });
     const terminalEnv = await loadProjectExecutionEnv({
+      prepare: true,
       projectService,
       runCommand,
       runtime,
@@ -11344,7 +11348,19 @@ function createCodexTerminalController({
     return detachedCodexAppServerChatTurn(sessionId, input, options);
   }
 
-  async function detachedCodexAppServerChatTurn(sessionId, input = {}, {
+  async function detachedCodexAppServerChatTurn(sessionId, input = {}, options = {}) {
+    const admission = beginTerminalNamespaceOperation(codexTerminalNamespace(sessionId));
+    if (admission.ok === false) {
+      return admission;
+    }
+    try {
+      return await admittedDetachedCodexAppServerChatTurn(sessionId, input, options);
+    } finally {
+      admission.release();
+    }
+  }
+
+  async function admittedDetachedCodexAppServerChatTurn(sessionId, input = {}, {
     onEvent = null,
     runtime: resolvedRuntime = null,
     session: resolvedSession = null
