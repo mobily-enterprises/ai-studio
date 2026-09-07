@@ -14,6 +14,8 @@ Chat responds to confirmed message acceptance and interruption immediately;
 background bookkeeping must not keep Send, Stop, or the saved-commit cleanup
 prompt busy after that confirmation.
 An interruption failure stays visible without covering the composer or its retry controls.
+Assistant status recovers automatically after a failed connection check, without
+requiring a page reload or interrupting the assistant's work.
 People can explore a project's database through a readable relationship diagram,
 starting with its keys and expanding detail when needed. Expanding fields keeps
 every table in place and preserves the current zoom. Connections identify

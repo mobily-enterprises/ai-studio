@@ -41,6 +41,7 @@ including follow-up guidance while a turn is active.
 - `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
 - `src/composables/useVibe64ConversationLog.js`
+- `src/composables/useVibe64MountedSessionData.js`
 - `src/composables/useVibe64SessionRuntimeHost.js`
 - `src/composables/useVibe64PromptHints.js`
 - `src/components/studio/Vibe64CodexSession.vue`
@@ -65,6 +66,18 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+Assistant verification waits up to ten seconds for a competing assistant
+operation to release its lock. The browser coalesces checks for the same
+connection and retries failures after one second, backing off to thirty seconds.
+Session detail reads have a twenty-second deadline and honor query cancellation,
+so a hung read cannot trap later recovery attempts. Each complete check has a
+forty-five-second deadline. Disconnecting or leaving the session cancels that
+browser's check and retries without stopping provider work;
+old responses cannot overwrite the new connection's status. Hidden browsers
+pause recovery retries and resume them when visible. A successful provider check
+requires an explicit success response and remains verified if a subsequent
+display refresh fails. Failed checks preserve the active conversation and log
+their error code for diagnosis.
 An empty conversation's welcome can use a host-provided reactive name for the
 current person. Without that presentation provider it uses the standalone
 personal profile. An explicitly empty host name stays generic instead of falling

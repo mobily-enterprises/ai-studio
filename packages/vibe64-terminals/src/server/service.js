@@ -2214,10 +2214,32 @@ function createService({
       }
     },
 
-    ensureAgentSession(sessionId, options = {}) {
-      return runMainAgentWrite(sessionId, options, (context) => (
-        sessionAgent.ensureSession(sessionId, context)
-      ));
+    async ensureAgentSession(sessionId, options = {}) {
+      const startedAt = Date.now();
+      const logFailure = (fields) => logOperationalEvent(logger, "warn", {
+        ...fields,
+        component: "vibe64.agent_session",
+        durationMs: Date.now() - startedAt,
+        event: "vibe64.agent_session.reconciliation_failed",
+        sessionId
+      }, "Vibe64 assistant status could not be verified.");
+
+      try {
+        const result = await runMainAgentWrite(sessionId, options, (context) => (
+          sessionAgent.ensureSession(sessionId, context)
+        ), { waitMs: 10_000 });
+        if (result?.ok === false) {
+          logFailure({
+            code: result.code,
+            error: result.error,
+            retryable: result.retryable
+          });
+        }
+        return result;
+      } catch (error) {
+        logFailure({ code: error?.code, error });
+        throw error;
+      }
     },
 
     async assertSessionRenewalIdle(sessionId, options = {}) {

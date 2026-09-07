@@ -105,6 +105,7 @@ function agentWriteLockHarness({ holdFirst = false, secondValue = null } = {}) {
 }
 
 async function terminalServiceFixture(t, lock, {
+  logger = null,
   publishSessionChanged = {}
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-session-work-admission-"));
@@ -136,7 +137,7 @@ async function terminalServiceFixture(t, lock, {
       return session;
     },
     projectContextRoot,
-    promptEnvironment: {},
+    async resolvePromptEnvironment() { return {}; },
     stateRoot: projectRuntimeRoot,
     store: {
       ...lock.store,
@@ -178,6 +179,7 @@ async function terminalServiceFixture(t, lock, {
     }
   };
   const service = createTerminalService({
+    logger,
     codexTerminalController: {
       codexToolHomeRequired: false
     },
@@ -294,6 +296,50 @@ test("foreground chat waits for workspace setup admission instead of failing", a
   ]);
 });
 
+test("assistant reconciliation waits for overlapping admission instead of reporting unknown status", async (t) => {
+  const lock = agentWriteLockHarness({
+    holdFirst: true,
+    secondValue: { ok: true }
+  });
+  const { service, session } = await terminalServiceFixture(t, lock);
+  const preparing = service.prepareWorkspaceSetup(session.sessionId, { retry: true });
+  await lock.firstEntered;
+  let settled = false;
+  const checking = service.ensureAgentSession(session.sessionId).finally(() => {
+    settled = true;
+  });
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+  } finally {
+    lock.releaseFirst();
+    await preparing;
+  }
+  assert.deepEqual(await checking, { ok: true });
+  assert.equal(lock.attempts[1].waitMs, 10_000);
+});
+
+test("assistant reconciliation retains structured failure diagnostics", async (t) => {
+  const warnings = [];
+  const lock = agentWriteLockHarness();
+  const { service, runtime, session } = await terminalServiceFixture(t, lock, {
+    logger: { warn(fields) { warnings.push(fields); } }
+  });
+  runtime.store.runSessionExclusive = async () => ({ acquired: false });
+  const busy = await service.ensureAgentSession(session.sessionId);
+  assert.equal(busy.code, "vibe64_agent_write_mode_busy");
+  assert.equal(warnings[0].event, "vibe64.agent_session.reconciliation_failed");
+  assert.equal(warnings[0].code, busy.code);
+  assert.equal(warnings[0].sessionId, session.sessionId);
+  assert.equal(typeof warnings[0].durationMs, "number");
+
+  const failure = Object.assign(new Error("Provider connection failed"), { code: "provider_unavailable" });
+  runtime.store.runSessionExclusive = async () => { throw failure; };
+  await assert.rejects(() => service.ensureAgentSession(session.sessionId), failure);
+  assert.equal(warnings[1].code, failure.code);
+  assert.equal(warnings[1].event, "vibe64.agent_session.reconciliation_failed");
+});
+
 test("workspace setup reuses an already-held session agent-write lock", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-workspace-nested-lock-"));
   const sourcePath = path.join(root, "managed", "session-1", "source");
@@ -323,7 +369,7 @@ test("workspace setup reuses an already-held session agent-write lock", async (t
       return store.readSession(sessionId);
     },
     projectContextRoot,
-    promptEnvironment: {},
+    async resolvePromptEnvironment() { return {}; },
     stateRoot: projectRuntimeRoot,
     store
   };
@@ -460,7 +506,7 @@ test("renewal workspace setup privately resumes a pending successor while public
       };
     },
     projectContextRoot,
-    promptEnvironment: {},
+    async resolvePromptEnvironment() { return {}; },
     stateRoot: projectRuntimeRoot,
     store
   };

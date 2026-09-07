@@ -89,6 +89,12 @@ function useVibe64MountedSessionData({
     path: detailPath,
     queryKey: detailQueryKey,
     queryOptions: {
+      queryFn: ({ signal }) => getHttpWebClient().request(detailPath.value, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+      }),
+      // The HTTP client already retries reads; reconciliation retries after
+      // the deadline. Keep the query layer from adding another retry loop.
+      retry: false,
       refetchOnMount: "always",
       refetchOnWindowFocus: false
     },
@@ -215,26 +221,62 @@ function useVibe64MountedSessionData({
   const realtimeSocket = useRealtimeSocket({ required: false });
   let connectionGeneration = realtimeSocket.connected ? 1 : 0;
   let reconciliationInFlight = null;
-  let reconciliationPending = false;
+  let reconciliationController = null;
+  let reconciliationRetryTimer = null;
+  let reconciliationRetryDelay = 1_000;
+  let disposed = false;
+
+  function clearReconciliationRetry() {
+    clearTimeout(reconciliationRetryTimer);
+    reconciliationRetryTimer = null;
+  }
+
+  function scheduleReconciliationRetry() {
+    clearReconciliationRetry();
+    if (disposed || !realtimeSocket.connected || globalThis.document?.hidden) {
+      return;
+    }
+    reconciliationRetryTimer = setTimeout(() => {
+      reconciliationRetryTimer = null;
+      if (!globalThis.document?.hidden) {
+        void reconcileMountedAgentSession("retry");
+      }
+    }, reconciliationRetryDelay);
+    reconciliationRetryDelay = Math.min(reconciliationRetryDelay * 2, 30_000);
+  }
 
   // Provider preparation belongs to the selected view and connection
   // lifecycle, never passive session reads or status polling. The selected
   // view starts its provider before the first message, while a reconnect also
   // resumes any provider thread that still has active work.
   async function reconcileMountedAgentSession(reason = "realtime-connect") {
-    if (!realtimeSocket.connected || !activeSessionId.value || !activeSessionsApiPath.value) {
+    if (disposed || !realtimeSocket.connected || !activeSessionId.value || !activeSessionsApiPath.value) {
       return null;
     }
     if (reconciliationInFlight) {
-      reconciliationPending = true;
       return reconciliationInFlight;
     }
+    clearReconciliationRetry();
     const generation = connectionGeneration;
+    const controller = new AbortController();
+    reconciliationController = controller;
+    const currentConnection = () => (
+      !disposed && realtimeSocket.connected && generation === connectionGeneration
+    );
+    const timeout = setTimeout(() => {
+      controller.abort(new Error("Assistant status check timed out."));
+    }, 45_000);
+    const cancelled = new Promise((_resolve, reject) => {
+      controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+    });
     agentConnectionStatus.value = "reconciling";
-    reconciliationInFlight = (async () => {
-      await refresh({ reason });
-      if (!realtimeSocket.connected || generation !== connectionGeneration) {
+    const checking = (async () => {
+      const refreshed = await refresh({ reason });
+      if (!currentConnection() || controller.signal.aborted) {
         return null;
+      }
+      if (refreshed?.isError) {
+        throw refreshed.error;
       }
       const recoveringActiveAgentWork = sessionRecordHasActiveAgentWork(session.value);
       if (mountedActive.value || recoveringActiveAgentWork) {
@@ -246,23 +288,37 @@ function useVibe64MountedSessionData({
           ),
           {
             body: {},
-            method: "POST"
+            method: "POST",
+            signal: controller.signal
           }
         );
-        if (result?.ok === false) {
-          throw new Error(result.error || "Assistant status could not be reconciled.");
-        }
-        if (recoveringActiveAgentWork) {
-          await refresh({ reason: "agent-session-reconciled" });
+        if (result?.ok !== true) {
+          throw Object.assign(new Error(result?.error || "Assistant status could not be reconciled."), {
+            code: result?.code
+          });
         }
       }
-      if (realtimeSocket.connected && generation === connectionGeneration) {
+      if (currentConnection() && !controller.signal.aborted) {
         agentConnectionStatus.value = "connected";
+        reconciliationRetryDelay = 1_000;
+        // Provider verification has succeeded. A failed display refresh must
+        // not turn that success into an unknown provider status.
+        if (recoveringActiveAgentWork) {
+          refreshInBackground("agent-session-reconciled");
+        }
       }
       return session.value;
-    })().catch((error) => {
-      if (realtimeSocket.connected && generation === connectionGeneration) {
+    })();
+    reconciliationInFlight = Promise.race([checking, cancelled]).catch((error) => {
+      if (currentConnection()) {
         agentConnectionStatus.value = "unknown";
+        scheduleReconciliationRetry();
+        console.warn("Vibe64 assistant status check failed; recovery will retry.", {
+          code: String(error?.code || ""),
+          message: String(error?.message || ""),
+          reason,
+          sessionId: activeSessionId.value
+        });
       }
       vibe64SessionDebugLog("client.mountedSession.agentConnection.error", {
         error: vibe64SessionDebugError(error),
@@ -271,9 +327,12 @@ function useVibe64MountedSessionData({
       });
       return null;
     }).finally(() => {
+      clearTimeout(timeout);
+      reconciliationController = null;
       reconciliationInFlight = null;
-      if (reconciliationPending) {
-        reconciliationPending = false;
+      // Calls from the same connection share this check. A reconnect during
+      // the check needs one replacement once its predecessor has settled.
+      if (!disposed && realtimeSocket.connected && generation !== connectionGeneration) {
         void reconcileMountedAgentSession("realtime-reconnected");
       }
     });
@@ -282,11 +341,21 @@ function useVibe64MountedSessionData({
 
   const reconcileAfterRealtimeConnect = () => {
     connectionGeneration += 1;
+    reconciliationRetryDelay = 1_000;
     void reconcileMountedAgentSession();
   };
   const markRealtimeDisconnected = () => {
+    connectionGeneration += 1;
+    clearReconciliationRetry();
+    reconciliationController?.abort();
     agentConnectionStatus.value = "disconnected";
   };
+  const reconcileAfterVisible = () => {
+    if (!globalThis.document?.hidden && agentConnectionStatus.value === "unknown") {
+      void reconcileMountedAgentSession("visible");
+    }
+  };
+  globalThis.document?.addEventListener("visibilitychange", reconcileAfterVisible);
   realtimeSocket.on("connect", reconcileAfterRealtimeConnect);
   realtimeSocket.on("connect_error", markRealtimeDisconnected);
   realtimeSocket.on("disconnect", markRealtimeDisconnected);
@@ -297,6 +366,10 @@ function useVibe64MountedSessionData({
     });
   }
   onScopeDispose(() => {
+    disposed = true;
+    clearReconciliationRetry();
+    reconciliationController?.abort();
+    globalThis.document?.removeEventListener("visibilitychange", reconcileAfterVisible);
     realtimeSocket.off("connect", reconcileAfterRealtimeConnect);
     realtimeSocket.off("connect_error", markRealtimeDisconnected);
     realtimeSocket.off("disconnect", markRealtimeDisconnected);
