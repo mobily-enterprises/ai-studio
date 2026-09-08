@@ -7,6 +7,8 @@ users without turning that convenience into a production sign-in mechanism.
 
 - `packages/vibe64-project/src/server/previewApplicationIdentities.js`
 - `packages/vibe64-terminals/src/server/previewIdentityCommand.js`
+- `packages/vibe64-terminals/src/server/agentPreviewCommand.js`
+- `packages/vibe64-execution/src/server/runtime/agentPlaywrightCommandSource.js`
 - `packages/vibe64-genesis/src/server/outputs.js`
 - `packages/vibe64-terminals/src/server/outputTargetTerminal.js`
 - `src/components/studio/PreviewIdentitySettings.vue`
@@ -22,3 +24,12 @@ managed browser session. The executable may select an existing application
 user by the declared email, login, or user-ID selector. Arbitrary caller
 identities are rejected, and Vibe64 never creates users or changes their roles
 or data.
+
+After a service restart, stale browser metadata may no longer match the current
+control token. Browser recovery uses the execution manager's durable ownership
+for the exact project and session, never an execution ID from invalid metadata.
+Only a proven empty browser service scope and a dead control socket permit
+replacement. Unproven cleanup or an unrelated live listener remains a visible
+failure, and a later request can retry recovery. Playwright preparation failures
+retain the underlying browser diagnostic rather than claiming authentication
+failed before application login was reached.

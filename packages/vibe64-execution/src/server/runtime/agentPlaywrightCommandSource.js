@@ -209,7 +209,7 @@ function managedPlaywrightStorageState(applicationRoot = "", identity = "default
       recursive: true
     });
     fail(
-      "Vibe64 could not authenticate managed Playwright for the selected application identity. " +
+      "Vibe64 could not prepare the managed browser and application identity for Playwright. " +
       "Project tests were not started." +
       (diagnostics ? "\\n" + diagnostics : "")
     );

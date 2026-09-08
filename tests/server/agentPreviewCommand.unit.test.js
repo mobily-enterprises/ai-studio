@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import crypto from "node:crypto";
+import http from "node:http";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -317,6 +318,7 @@ function createReadyPreviewCommandService({
   previewUrl,
   runManagedCommand,
   stopManagedExecution,
+  stopOwnedExecutions,
   terminalId = () => "launch-terminal"
 } = {}) {
   return createAgentPreviewCommandService({
@@ -356,7 +358,8 @@ function createReadyPreviewCommandService({
       }
     },
     ...(typeof runManagedCommand === "function" ? { runManagedCommand } : {}),
-    ...(typeof stopManagedExecution === "function" ? { stopManagedExecution } : {})
+    ...(typeof stopManagedExecution === "function" ? { stopManagedExecution } : {}),
+    ...(typeof stopOwnedExecutions === "function" ? { stopOwnedExecutions } : {})
   });
 }
 
@@ -1427,6 +1430,155 @@ test("managed preview browser inspects auxiliary localhost apps and recovers kil
       force: true,
       recursive: true
     });
+  }
+});
+
+test("managed preview browser recovers a stale ownership record through its session owner", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-browser-stale-owner-"));
+  const runtimeRoot = path.join(root, "runtime-packs");
+  const sessionId = "stale-browser-session";
+  const selectors = [];
+  const commandService = createReadyPreviewCommandService({
+    previewUrl: "https://preview.example.test/recovered",
+    async stopOwnedExecutions(selector) {
+      selectors.push(selector);
+      return { ok: true, scopeEmpty: true, supported: true };
+    }
+  });
+  try {
+    await createFakePlaywrightRuntime(runtimeRoot);
+    const prepared = await prepareAgentPreviewCommand({
+      commandService,
+      env: { VIBE64_RUNTIME_PACK_ROOT: runtimeRoot },
+      project: { slug: "browser-project" },
+      sessionId,
+      wrapperHostDir: root
+    });
+    await writeFile(prepared.hostBrowserMetadataPath, JSON.stringify({
+      executionId: "foreign-execution-must-not-be-stopped",
+      signature: "previous-service-token"
+    }));
+    const results = await Promise.all(Array.from({ length: 3 }, async () => {
+      const result = await execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], {
+        env: { ...process.env, ...prepared.env }
+      });
+      return JSON.parse(result.stdout);
+    }));
+    const [result] = results;
+    assert.equal(result.started, true);
+    assert.equal(new Set(results.map((entry) => entry.pid)).size, 1);
+    assert.deepEqual(selectors, [{
+      kind: "browser",
+      ownerId: sessionId,
+      projectSlug: "browser-project",
+      sessionId
+    }]);
+    const metadata = JSON.parse(await readFile(prepared.hostBrowserMetadataPath, "utf8"));
+    assert.equal(metadata.pid, result.pid);
+    assert.notEqual(metadata.executionId, "foreign-execution-must-not-be-stopped");
+  } finally {
+    await commandService.closeAllForSession(sessionId);
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("managed preview browser can retry recovery after cleanup fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-browser-retry-cleanup-"));
+  const runtimeRoot = path.join(root, "runtime-packs");
+  const sessionId = "retry-browser-session";
+  let scopeEmpty = false;
+  const commandService = createReadyPreviewCommandService({
+    previewUrl: "https://preview.example.test/retry",
+    async stopOwnedExecutions() {
+      return { supported: true, scopeEmpty };
+    }
+  });
+  try {
+    await createFakePlaywrightRuntime(runtimeRoot);
+    const prepared = await prepareAgentPreviewCommand({
+      commandService,
+      env: { VIBE64_RUNTIME_PACK_ROOT: runtimeRoot },
+      sessionId,
+      wrapperHostDir: root
+    });
+    await writeFile(prepared.hostBrowserMetadataPath, "stale state");
+    const env = { ...process.env, ...prepared.env };
+    await assert.rejects(
+      execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], { env }),
+      /no valid execution ownership record/u
+    );
+    scopeEmpty = true;
+    const result = await execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], { env });
+    assert.equal(JSON.parse(result.stdout).started, true);
+  } finally {
+    await commandService.closeAllForSession(sessionId);
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("managed preview browser preserves stale files when owner cleanup is unproven", async () => {
+  for (const proof of [{ supported: false, scopeEmpty: true }, { supported: true, scopeEmpty: false }]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-browser-unproven-"));
+    const sessionId = "unproven-browser-session";
+    let starts = 0;
+    const commandService = createReadyPreviewCommandService({
+      previewUrl: "https://preview.example.test/blocked",
+      async runManagedCommand() {
+        starts += 1;
+        throw new Error("Must not start a replacement.");
+      },
+      async stopOwnedExecutions() {
+        return proof;
+      }
+    });
+    try {
+      const prepared = await prepareAgentPreviewCommand({ commandService, sessionId, wrapperHostDir: root });
+      await writeFile(prepared.hostBrowserMetadataPath, "invalid metadata");
+      await assert.rejects(execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], {
+        env: { ...process.env, ...prepared.env }
+      }), /no valid execution ownership record/u);
+      assert.equal(starts, 0);
+      assert.equal(await readFile(prepared.hostBrowserMetadataPath, "utf8"), "invalid metadata");
+    } finally {
+      await commandService.closeAllForSession(sessionId);
+      await rm(root, { force: true, recursive: true });
+    }
+  }
+});
+
+test("managed preview browser does not replace an unrelated listener after owner cleanup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-browser-foreign-listener-"));
+  const sessionId = "foreign-listener-session";
+  const listener = http.createServer((request, response) => {
+    response.writeHead(403);
+    response.end("unrelated listener");
+  });
+  let starts = 0;
+  const commandService = createReadyPreviewCommandService({
+    previewUrl: "https://preview.example.test/blocked",
+    async runManagedCommand() {
+      starts += 1;
+      throw new Error("Must not start a replacement.");
+    },
+    async stopOwnedExecutions() {
+      return { supported: true, scopeEmpty: true };
+    }
+  });
+  try {
+    const prepared = await prepareAgentPreviewCommand({ commandService, sessionId, wrapperHostDir: root });
+    await new Promise((resolve) => listener.listen(prepared.hostBrowserSocketPath, resolve));
+    await writeFile(prepared.hostBrowserMetadataPath, "unrelated metadata");
+    await assert.rejects(execFileAsync(prepared.hostWrapperPath, ["browser", "ensure"], {
+      env: { ...process.env, ...prepared.env }
+    }), /unverified listener/u);
+    assert.equal(starts, 0);
+    assert.equal(listener.listening, true);
+    assert.equal((await stat(prepared.hostBrowserSocketPath)).isSocket(), true);
+    assert.equal(await readFile(prepared.hostBrowserMetadataPath, "utf8"), "unrelated metadata");
+  } finally {
+    await new Promise((resolve) => listener.close(resolve));
+    await commandService.closeAllForSession(sessionId);
+    await rm(root, { force: true, recursive: true });
   }
 });
 

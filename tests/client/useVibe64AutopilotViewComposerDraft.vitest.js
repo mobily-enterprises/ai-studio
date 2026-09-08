@@ -1,6 +1,8 @@
 import { createApp, effectScope, nextTick, reactive, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { sessionRepositoryWorkState } from "../../src/composables/useVibe64SessionPanel.js";
+
 const route = reactive({
   path: "/app/project/chat-test/dashboard/env"
 });
@@ -1959,6 +1961,40 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.saveWorkDisabled.value).toBe(false);
     expect(view.saveWorkActionLabel.value).toBe("Save work");
     expect(view.saveWorkTitle.value).toBe("Save this session's work to the project repository");
+  });
+
+  it.each([true, false])("preserves the Update requirement after failure (incoming: %s)", async (updateAvailable) => {
+    const workState = {
+      checkedAt: "2026-09-08T01:03:03.005Z",
+      unsaved: true,
+      updateAvailable,
+      updateOperation: {
+        code: "vibe64_session_update_conflict",
+        error: "The document conflicts with the latest saved version.",
+        operationId: "failed-update",
+        status: "failed"
+      }
+    };
+    const updateSessionWork = vi.fn(async () => ({ ok: true, status: "updated" }));
+    const view = await createView({
+      sessionToolbar: {
+        sessions: [{
+          repositoryWorkState: sessionRepositoryWorkState(workState),
+          sessionId: "session-1"
+        }]
+      },
+      updateSessionWork,
+      workState
+    });
+
+    expect(view.saveWorkRequiresUpdate.value).toBe(updateAvailable);
+    expect(view.saveWorkActionLabel.value).toBe(updateAvailable ? "Update this session (rebase)" : "Save work");
+    expect(view.saveWorkDisabled.value).toBe(false);
+    if (updateAvailable) {
+      await view.requestSaveWork();
+      expect(updateSessionWork).toHaveBeenCalledOnce();
+      expect(view.saveWorkConfirmOpen.value).toBe(false);
+    }
   });
 
   it("keeps failed Save work retryable when repository inspection is still healthy", async () => {

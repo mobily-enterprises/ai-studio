@@ -24,7 +24,8 @@ import {
   runVibe64Command,
   runtimePackBinPaths,
   runtimePackRoot,
-  stopVibe64Execution
+  stopVibe64Execution,
+  stopVibe64OwnedExecutions
 } from "@local/vibe64-execution/server";
 import {
   writeExecutableFileIfChanged
@@ -534,7 +535,8 @@ function createAgentPreviewCommandService({
   logger = null,
   readSessionUiState = readSessionUiSyncStateForSession,
   runManagedCommand = runVibe64Command,
-  stopManagedExecution = stopVibe64Execution
+  stopManagedExecution = stopVibe64Execution,
+  stopOwnedExecutions = stopVibe64OwnedExecutions
 } = {}) {
   const browserWorkers = new Map();
 
@@ -604,7 +606,8 @@ function createAgentPreviewCommandService({
     for (const descriptor of sessionWorkers.values()) {
       await stopRegisteredBrowserWorker(descriptor, {
         reason: "session-close",
-        stopExecution: stopManagedExecution
+        stopExecution: stopManagedExecution,
+        stopOwnedExecutions
       });
       closed += 1;
     }
@@ -621,7 +624,8 @@ function createAgentPreviewCommandService({
     for (const descriptor of sessionWorkers.values()) {
       await stopRegisteredBrowserWorker(descriptor, {
         reason: "control-release",
-        stopExecution: stopManagedExecution
+        stopExecution: stopManagedExecution,
+        stopOwnedExecutions
       });
     }
     await closeAgentPreviewCommandServersForSession(sessionId);
@@ -808,11 +812,13 @@ function createAgentPreviewCommandService({
     browserStart: (sessionId, input) => startRegisteredBrowserWorker(sessionId, input, {
       browserWorkers,
       runCommand: runManagedCommand,
-      stopExecution: stopManagedExecution
+      stopExecution: stopManagedExecution,
+      stopOwnedExecutions
     }),
     browserStop: (sessionId, input) => stopRegisteredBrowserWorkerForInput(sessionId, input, {
       browserWorkers,
-      stopExecution: stopManagedExecution
+      stopExecution: stopManagedExecution,
+      stopOwnedExecutions
     }),
     closeAllForSession,
     playwrightRun: (sessionId, input, options = {}) => runRegisteredPlaywrightCommand(sessionId, input, {
@@ -1032,7 +1038,8 @@ function browserCleanupFault(message = "The managed browser execution could not 
 async function stopRegisteredBrowserWorker(descriptor = {}, {
   reason = "browser-stop",
   skipStartWait = false,
-  stopExecution = stopVibe64Execution
+  stopExecution = stopVibe64Execution,
+  stopOwnedExecutions = stopVibe64OwnedExecutions
 } = {}) {
   if (!skipStartWait && descriptor.startPromise) {
     await descriptor.startPromise.catch(() => null);
@@ -1042,7 +1049,8 @@ async function stopRegisteredBrowserWorker(descriptor = {}, {
   for (const retired of retiredDescriptors) {
     const retiredResult = await stopRegisteredBrowserWorker(retired, {
       reason: "browser-generation-replaced",
-      stopExecution
+      stopExecution,
+      stopOwnedExecutions
     });
     if (retiredResult.ok !== true) {
       descriptor.retiredDescriptors.unshift(retired);
@@ -1065,9 +1073,24 @@ async function stopRegisteredBrowserWorker(descriptor = {}, {
     await unixCommandSocketIsPresent(descriptor.socketPath) ||
     await fileExists(descriptor.metadataPath)
   )) {
-    return browserCleanupFault(
-      "The managed browser has no valid execution ownership record; no replacement was started."
-    );
+    const cleanup = await stopOwnedExecutions({
+      kind: "browser",
+      ownerId: descriptor.sessionId,
+      projectSlug: normalizeText(descriptor.project?.slug),
+      sessionId: descriptor.sessionId
+    }, { reason });
+    if (cleanup?.supported !== true || cleanup?.scopeEmpty !== true) {
+      return browserCleanupFault(
+        cleanup?.error || "The managed browser has no valid execution ownership record; no replacement was started."
+      );
+    }
+    try {
+      await removeDeadUnixJsonCommandSocket(descriptor.socketPath);
+    } catch {
+      return browserCleanupFault(
+        "The managed browser socket still has an unverified listener; no replacement was started."
+      );
+    }
   }
   for (const executionId of executionIds) {
     const stopped = await stopExecution(executionId, { reason });
@@ -1277,7 +1300,8 @@ async function runRegisteredPlaywrightCommand(sessionId = "", input = {}, {
 async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
   browserWorkers = new Map(),
   runCommand = runVibe64Command,
-  stopExecution = stopVibe64Execution
+  stopExecution = stopVibe64Execution,
+  stopOwnedExecutions = stopVibe64OwnedExecutions
 } = {}) {
   const registered = registeredBrowserWorkerForInput(sessionId, input, browserWorkers);
   if (registered.error) {
@@ -1291,7 +1315,8 @@ async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
     for (const retired of descriptor.retiredDescriptors || []) {
       const retiredResult = await stopRegisteredBrowserWorker(retired, {
         reason: "browser-generation-replaced",
-        stopExecution
+        stopExecution,
+        stopOwnedExecutions
       });
       if (retiredResult.ok !== true) {
         return retiredResult;
@@ -1301,12 +1326,7 @@ async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
 
     const existingStatus = await registeredWorkerStatus(descriptor);
     const existingMetadata = await registeredWorkerMetadata(descriptor);
-    if (existingStatus) {
-      if (!existingMetadata) {
-        return browserCleanupFault(
-          "The running managed browser has no valid execution ownership record."
-        );
-      }
+    if (existingStatus && existingMetadata) {
       descriptor.executionId = existingMetadata.executionId;
       return {
         executionId: descriptor.executionId,
@@ -1314,22 +1334,20 @@ async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
         value: existingStatus
       };
     }
-    if (existingMetadata || normalizeText(descriptor.executionId)) {
+    if (
+      existingMetadata || normalizeText(descriptor.executionId) ||
+      await unixCommandSocketIsPresent(descriptor.socketPath) ||
+      await fileExists(descriptor.metadataPath)
+    ) {
       const drained = await stopRegisteredBrowserWorker(descriptor, {
         reason: "browser-restart",
         skipStartWait: true,
-        stopExecution
+        stopExecution,
+        stopOwnedExecutions
       });
       if (drained.ok !== true) {
         return drained;
       }
-    } else if (
-      await unixCommandSocketIsPresent(descriptor.socketPath) ||
-      await fileExists(descriptor.metadataPath)
-    ) {
-      return browserCleanupFault(
-        "Stale managed browser state has no valid execution owner; no replacement was started."
-      );
     }
 
     const result = await runCommand({
@@ -1389,7 +1407,8 @@ async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
     const drained = await stopRegisteredBrowserWorker(descriptor, {
       reason: "browser-readiness-timeout",
       skipStartWait: true,
-      stopExecution
+      stopExecution,
+      stopOwnedExecutions
     });
     if (drained.ok !== true) {
       return drained;
@@ -1411,7 +1430,8 @@ async function startRegisteredBrowserWorker(sessionId = "", input = {}, {
 
 async function stopRegisteredBrowserWorkerForInput(sessionId = "", input = {}, {
   browserWorkers = new Map(),
-  stopExecution = stopVibe64Execution
+  stopExecution = stopVibe64Execution,
+  stopOwnedExecutions = stopVibe64OwnedExecutions
 } = {}) {
   const normalizedSessionId = normalizeText(sessionId);
   const descriptor = browserWorkers
@@ -1425,7 +1445,8 @@ async function stopRegisteredBrowserWorkerForInput(sessionId = "", input = {}, {
   }
   return stopRegisteredBrowserWorker(descriptor, {
     reason: "browser-close",
-    stopExecution
+    stopExecution,
+    stopOwnedExecutions
   });
 }
 

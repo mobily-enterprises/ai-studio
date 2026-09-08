@@ -428,7 +428,8 @@ function sessionRepositoryWorkState(workState = null) {
   ) {
     return {
       checkedAt: String(source.checkedAt || ""),
-      state: "needs_help"
+      state: "needs_help",
+      updateAvailable: source.updateAvailable === true
     };
   }
   if (source.loading || source.unsaved === null || source.unsaved === undefined) {

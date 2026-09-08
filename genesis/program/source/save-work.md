@@ -38,7 +38,9 @@ is visible again. A successful Save disappears on
 completion; a failed Save remains visible with its recovery actions until
 dismissed. The selected session's icon-only Save or Update action stays in the
 chat header beside the session it will affect, rather than occupying the
-application-wide toolbar.
+application-wide toolbar. A failed Save or Update retains the current incoming-
+version requirement, so the header continues to offer Update until the session
+actually includes the latest saved version.
 
 Each Save or Update attempt starts a fresh visible transcript. Retrying after a
 failure does not mix the earlier attempt's errors into the new operation.

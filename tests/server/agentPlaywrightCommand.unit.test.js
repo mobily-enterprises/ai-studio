@@ -458,6 +458,39 @@ test("managed Playwright test command reports a managed-preview blocker before s
   }
 });
 
+test("managed Playwright preserves browser startup diagnostics without claiming an authentication failure", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-playwright-browser-blocker-"));
+  let fixture;
+  try {
+    fixture = await prepareFixture(root, "1.61.1");
+    await writeExecutable(fixture.prepared.hostWrapperPath, `#!/usr/bin/env node
+if (process.argv[2] === "ensure") {
+  console.log(JSON.stringify({
+    ready: true,
+    endpoints: { agent: { url: "http://127.0.0.1:4104/home" } },
+    identityTypes: ["email"]
+  }));
+} else {
+  console.error("The managed browser socket still has an unverified listener; no replacement was started.");
+  process.exit(1);
+}
+`);
+    await assert.rejects(execFileAsync(fixture.prepared.hostPlaywrightWrapperPath, ["test"], {
+      cwd: fixture.projectRoot,
+      env: { ...process.env, ...fixture.prepared.env }
+    }), (error) => {
+      assert.match(error.stderr, /could not prepare the managed browser and application identity/iu);
+      assert.match(error.stderr, /unverified listener/iu);
+      assert.doesNotMatch(error.stderr, /could not authenticate/iu);
+      return true;
+    });
+    assert.equal(fixture.managedCommands.length, 0);
+  } finally {
+    await fixture?.commandService.closeAllForSession("playwright-1.61.1");
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("managed Playwright test command refuses mismatched runtimes and browser installation", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-playwright-mismatch-"));
   let fixture;

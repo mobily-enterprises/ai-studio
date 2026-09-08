@@ -35,6 +35,49 @@ const PROXY_APP_URL = "http://127.0.0.1:49000/home";
 const TEST_ASSISTANT_CATALOG_REVISION = `sha256:${"a".repeat(64)}`;
 
 for (const width of [390, 1440]) {
+  test(`@update-icon failed Update retains Rebase until success at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockLaunchTerminalSocket(page);
+    await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS });
+    let behind = true;
+    let attempts = 0;
+    await page.route("**/sessions/*/work", (route) => fulfillJson(route, {
+      checkedAt: new Date().toISOString(),
+      ok: true,
+      unsaved: true,
+      updateAvailable: behind,
+      updateOperation: behind ? {
+        code: "vibe64_session_update_conflict",
+        error: "The document conflicts with the latest saved version.",
+        operationId: "failed-update",
+        status: "failed"
+      } : null
+    }));
+    await page.route("**/sessions/*/updates/apply", async (route) => {
+      attempts += 1;
+      behind = attempts < 2;
+      await fulfillJson(route, behind
+        ? { ok: false, code: "vibe64_session_update_conflict", error: "The document still conflicts." }
+        : { ok: true, status: "updated" });
+    });
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    const rebase = page.getByRole("button", { name: "Update selected session (rebase)", exact: true });
+    const save = page.getByRole("button", { name: "Save selected session work", exact: true });
+    await expect(rebase).toBeEnabled();
+    await expect(save).toHaveCount(0);
+    await page.reload();
+    await expect(rebase).toBeEnabled();
+    await rebase.click();
+    await expect.poll(() => attempts).toBe(1);
+    await expect(rebase).toBeEnabled();
+    await rebase.click();
+    await expect.poll(() => attempts).toBe(2);
+    await expect(save).toBeEnabled();
+    await expect(rebase).toHaveCount(0);
+  });
+}
+
+for (const width of [390, 1440]) {
   test(`@temporary-repair progress stays in the transcript and Update verifies the repair at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await mockLaunchTerminalSocket(page);
@@ -49,7 +92,7 @@ for (const width of [390, 1440]) {
       { id: "second", text: "Comparing the current and saved versions. ".repeat(60) }
     ];
     await page.route("**/sessions/*/work", (route) => fulfillJson(route, {
-      ok: true, unsaved: true, requiresUpdate: true,
+      ok: true, unsaved: true, updateAvailable: updateCount !== 2,
       updateOperation: updateCount === 2 ? null : {
         operationId: "failed-update", status: "failed", code: "vibe64_session_update_conflict",
         error: "Document conflicts with the saved version."
