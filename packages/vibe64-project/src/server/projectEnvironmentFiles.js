@@ -117,16 +117,18 @@ async function managedGitExcludeProjection(sourceRoot = "", relativePaths = []) 
 
   const infoDirectory = path.join(gitDirectory, "info");
   const excludePath = path.join(infoDirectory, "exclude");
-  const excludeEntry = await lstat(excludePath).catch((error) => {
-    if (["ENOENT", "ENOTDIR"].includes(error?.code)) {
-      return null;
+  for (const entryPath of [infoDirectory, excludePath]) {
+    const entry = await lstat(entryPath).catch((error) => {
+      if (["ENOENT", "ENOTDIR"].includes(error?.code)) {
+        return null;
+      }
+      throw error;
+    });
+    if (entry?.isSymbolicLink()) {
+      const error = new Error("The repository's local Git exclude path contains a symbolic link.");
+      error.code = "vibe64_environment_git_exclude_symlink";
+      throw error;
     }
-    throw error;
-  });
-  if (excludeEntry?.isSymbolicLink()) {
-    const error = new Error("The repository's local Git exclude file is a symbolic link.");
-    error.code = "vibe64_environment_git_exclude_symlink";
-    throw error;
   }
 
   const existing = await optionalFile(excludePath) || "";

@@ -19,6 +19,8 @@ and applies values to session preparation, checks, launches, and agent work.
 When Genesis declares an environment-file projection, Vibe64 writes it outside
 ordinary Git tracking with restrictive permissions and preserves a pre-existing
 user file before taking ownership.
+Both readiness inspection and materialization reject symbolic links in projected
+file paths and the local Git exclude path, including its `info` directory.
 
 The shared value table preserves readable value and action columns in narrow
 panes, scrolling within the table rather than collapsing a revealed value or

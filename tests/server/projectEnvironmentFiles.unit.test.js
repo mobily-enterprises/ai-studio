@@ -97,6 +97,18 @@ test("checking environment readiness does not create files or take ownership of 
   assert.equal(await readFile(path.join(sourceRoot, ".env"), "utf8"), "USER_CONTENT=yes\n");
 });
 
+test("environment inspection leaves missing Git info for materialization to create", async (t) => {
+  const sourceRoot = await temporarySource(t);
+  const infoDirectory = path.join(sourceRoot, ".git", "info");
+  await rm(infoDirectory, { recursive: true });
+  const input = { environment: { VALUE: "current" }, files: [{ format: "dotenv", path: ".env" }], sourceRoot };
+
+  assert.equal(await projectEnvironmentFilesAreCurrent(input), false);
+  await assert.rejects(() => lstat(infoDirectory), { code: "ENOENT" });
+  await materializeProjectEnvironmentFiles(input);
+  assert.equal(await projectEnvironmentFilesAreCurrent(input), true);
+});
+
 test("project environment files preserve an unmanaged file before taking ownership", async (t) => {
   const sourceRoot = await temporarySource(t);
   await writeFile(path.join(sourceRoot, ".env"), "PERSONAL=true\n");
@@ -173,3 +185,27 @@ test("project environment files refuse a symbolic-link Git exclude", async (t) =
     { code: "vibe64_environment_git_exclude_symlink" }
   );
 });
+
+for (const [operation, inspectOrWrite] of [
+  ["readiness inspection", projectEnvironmentFilesAreCurrent],
+  ["materialization", materializeProjectEnvironmentFiles]
+]) {
+  test(`environment ${operation} refuses a symbolic-link Git info directory`, async (t) => {
+    const sourceRoot = await temporarySource(t);
+    const outside = await temporarySource(t);
+    const externalExclude = path.join(outside, "exclude");
+    const original = "# This file is outside the project.\n";
+    await writeFile(externalExclude, original);
+    const infoDirectory = path.join(sourceRoot, ".git", "info");
+    await rm(infoDirectory, { recursive: true });
+    await symlink(outside, infoDirectory);
+
+    await assert.rejects(() => inspectOrWrite({
+      environment: { DB_PASSWORD: "secret" },
+      files: [{ format: "dotenv", path: ".env" }],
+      sourceRoot
+    }), { code: "vibe64_environment_git_exclude_symlink" });
+    assert.equal(await readFile(externalExclude, "utf8"), original);
+    await assert.rejects(() => readFile(path.join(sourceRoot, ".env")), { code: "ENOENT" });
+  });
+}
