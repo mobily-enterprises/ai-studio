@@ -12,6 +12,8 @@ confirms it, while the file-change details continue loading in the background.
 The chat header gives three session tabs room to show their labels, hides the
 new-session plus when all three slots are occupied, and groups Save beside the
 session actions.
+Hovering or keyboard-focusing a session tab shows its basic details. Touch users
+can tap its info button to read the same details without switching sessions.
 Files refreshes after the assistant finishes a turn without discarding the
 person's place or unsaved edits. People can download individual files and keep
 personal project-wide stars, reachable from chat and the file browser in any session.

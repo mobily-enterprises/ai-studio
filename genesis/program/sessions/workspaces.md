@@ -12,6 +12,7 @@ the canonical project and from other sessions.
 - `packages/vibe64-terminals/src/server/sessionSource.js`
 - `src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionToolbar.vue`
+- `src/lib/vibe64SessionInfo.js`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/composables/useArchivedVibe64Sessions.js`
 - `src/composables/useVibe64SessionRenewal.js`
@@ -31,6 +32,11 @@ The chat header shares its available width among up to three session tabs,
 reserving extra room for the selected tab's Archive action. The new-session
 plus is hidden when those visible slots are full and returns when a slot opens.
 Save sits directly beside the session actions so the tabs retain that space.
+Each tab shows a basic-info tooltip on hover or keyboard focus, including its
+full name, status, assistant and model when available, save state, identifier,
+branch, and creation time. A touch-visible info button opens the same tooltip
+without selecting or archiving the session. This uses the loaded session data
+and does not fetch or poll for details.
 
 Renewal creates a fresh native assistant conversation. Its review step defaults
 to the current session's AI but can select another connected engine, provider,

@@ -25,11 +25,21 @@
           />
           <span class="studio-ai-sessions__tab-label">{{ sessionTabLabel(sessionItem) }}</span>
           <v-icon
-            class="studio-ai-sessions__repository-state"
+            class="studio-ai-sessions__repository-state studio-ai-sessions__repository-state--desktop"
             :class="`studio-ai-sessions__repository-state--${repositoryState(sessionItem)}`"
             :icon="repositoryStateIcon(sessionItem)"
             size="14"
             :title="repositoryStateLabel(sessionItem)"
+          />
+          <v-btn
+            class="studio-ai-sessions__tab-info"
+            :aria-label="`Session info: ${sessionTabLabel(sessionItem)}`"
+            :aria-expanded="infoSessionId === sessionItem.sessionId"
+            :aria-describedby="`${infoId}-${sessionItem.sessionId}`"
+            :icon="mdiInformationOutline"
+            size="x-small"
+            variant="text"
+            @click.stop="setSessionInfo(sessionItem.sessionId, infoSessionId !== sessionItem.sessionId)"
           />
         </span>
         <span
@@ -48,6 +58,30 @@
             @click.stop="archive.request"
           />
         </span>
+        <v-tooltip
+          :id="`${infoId}-${sessionItem.sessionId}`"
+          activator="parent"
+          :model-value="infoSessionId === sessionItem.sessionId"
+          :open-delay="350"
+          :close-delay="150"
+          :open-on-click="false"
+          open-on-focus
+          interactive
+          color="surface-variant"
+          location="bottom"
+          :max-width="320"
+          @update:model-value="setSessionInfo(sessionItem.sessionId, $event)"
+        >
+          <div class="studio-ai-sessions__info">
+            <strong>{{ sessionTabLabel(sessionItem) }}</strong>
+            <dl class="studio-ai-sessions__info-facts">
+              <template v-for="fact in sessionInfoFacts(sessionItem)" :key="fact.key">
+                <dt>{{ fact.label }}</dt>
+                <dd>{{ fact.value }}</dd>
+              </template>
+            </dl>
+          </div>
+        </v-tooltip>
       </v-chip>
 
       <Vibe64CreateSessionButton
@@ -64,16 +98,20 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref, useId } from "vue";
 import {
   mdiAlertCircleOutline,
   mdiArchiveOutline,
   mdiCheckCircleOutline,
   mdiCloudDownloadOutline,
   mdiContentSaveAlertOutline,
-  mdiDotsHorizontalCircleOutline
+  mdiDotsHorizontalCircleOutline,
+  mdiInformationOutline
 } from "@mdi/js";
+import { VIBE64_AGENT_PROVIDERS } from "@local/vibe64-runtime/shared";
 import Vibe64CreateSessionButton from "@/components/studio/vibe64-session/Vibe64CreateSessionButton.vue";
+import { vibe64SessionInfoFacts } from "@/lib/vibe64SessionInfo.js";
+import { vibe64SessionStatusLabel } from "@/lib/vibe64SessionViewModel.js";
 import {
   visibleVibe64ToolbarSessions
 } from "@/lib/vibe64SessionToolbarVisibility.js";
@@ -114,8 +152,50 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["select-session"]);
+const infoSessionId = ref("");
+const infoId = useId();
+const createdAtFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short"
+});
+
+function setSessionInfo(sessionId, visible) {
+  if (visible || infoSessionId.value === sessionId) {
+    infoSessionId.value = visible ? sessionId : "";
+  }
+}
+
+function sessionInfoFacts(sessionItem) {
+  const selection = sessionItem.assistantSelection || {};
+  const assistant = VIBE64_AGENT_PROVIDERS.find((provider) => provider.id === selection.engineId);
+  const details = vibe64SessionInfoFacts(sessionItem)
+    .filter((fact) => ["session", "branch", "created-at"].includes(fact.key))
+    .map((fact) => {
+      const createdAt = fact.key === "created-at" ? Date.parse(fact.value) : NaN;
+      return {
+        ...fact,
+        value: Number.isFinite(createdAt) ? createdAtFormatter.format(createdAt) : fact.copyValue
+      };
+    });
+  return [
+    {
+      key: "status",
+      label: "Status",
+      value: sessionItem.agentThinking ? "Working" : vibe64SessionStatusLabel(sessionItem.status)
+    },
+    {
+      key: "assistant",
+      label: "Assistant",
+      value: assistant?.label || selection.engineId
+    },
+    { key: "model", label: "Model", value: selection.modelId },
+    { key: "saved-work", label: "Work", value: repositoryStateLabel(sessionItem) },
+    ...details
+  ].filter((fact) => fact.value);
+}
 
 function selectSession(sessionId = "") {
+  infoSessionId.value = "";
   emit("select-session", sessionId);
   props.toolbar.selectSession?.(sessionId);
 }
@@ -290,6 +370,33 @@ const visibleSessions = computed(() => {
   margin-inline-start: 0.42rem;
 }
 
+.studio-ai-sessions__tab-info {
+  color: inherit;
+  display: none;
+  flex-shrink: 0;
+}
+
+.studio-ai-sessions__info {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 0.25rem;
+}
+
+.studio-ai-sessions__info-facts {
+  display: grid;
+  gap: 0.3rem 0.75rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0.5rem 0 0;
+}
+
+.studio-ai-sessions__info-facts dt {
+  opacity: 0.75;
+}
+
+.studio-ai-sessions__info-facts dd {
+  margin: 0;
+}
+
 .studio-ai-sessions__repository-state--saved {
   color: rgb(var(--v-theme-success));
 }
@@ -442,6 +549,14 @@ const visibleSessions = computed(() => {
 }
 
 @media (hover: none), (pointer: coarse) {
+  .studio-ai-sessions__tab-info {
+    display: inline-flex;
+  }
+
+  .studio-ai-sessions__repository-state--desktop {
+    display: none;
+  }
+
   .studio-ai-sessions__tab .studio-ai-sessions__tab-archive {
     box-shadow: none;
     opacity: 1;
