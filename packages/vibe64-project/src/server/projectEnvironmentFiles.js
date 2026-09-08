@@ -239,17 +239,14 @@ async function writeGeneratedDotenv({
   };
 }
 
-function environmentFileDeclarations(files = []) {
+function environmentFilePaths(files = []) {
   return files.map((file) => {
     if (file?.format !== "dotenv") {
       const error = new Error(`Unsupported project environment file format: ${file?.format || "(empty)"}.`);
       error.code = "vibe64_environment_file_format_unsupported";
       throw error;
     }
-    return {
-      format: file.format,
-      path: String(file.path || "")
-    };
+    return String(file.path || "");
   });
 }
 
@@ -261,9 +258,9 @@ async function projectEnvironmentFilesAreCurrent({
   if (!sourceRoot || !Array.isArray(files) || files.length === 0) {
     return true;
   }
-  const declarations = environmentFileDeclarations(files);
-  const paths = await Promise.all(declarations.map((file) => assertProjectionPath(sourceRoot, file.path)));
-  const { existing, expected } = await managedGitExcludeProjection(sourceRoot, declarations.map((file) => file.path));
+  const relativePaths = environmentFilePaths(files);
+  const paths = await Promise.all(relativePaths.map((relativePath) => assertProjectionPath(sourceRoot, relativePath)));
+  const { existing, expected } = await managedGitExcludeProjection(sourceRoot, relativePaths);
   if (existing !== expected) {
     return false;
   }
@@ -285,15 +282,15 @@ async function materializeProjectEnvironmentFiles({
   if (!sourceRoot || !Array.isArray(files) || files.length === 0) {
     return [];
   }
-  const declarations = environmentFileDeclarations(files);
-  await Promise.all(declarations.map((file) => assertProjectionPath(sourceRoot, file.path)));
-  await writeManagedGitExcludes(sourceRoot, declarations.map((file) => file.path));
+  const relativePaths = environmentFilePaths(files);
+  await Promise.all(relativePaths.map((relativePath) => assertProjectionPath(sourceRoot, relativePath)));
+  await writeManagedGitExcludes(sourceRoot, relativePaths);
   const results = [];
-  for (const file of declarations) {
+  for (const relativePath of relativePaths) {
     results.push(await writeGeneratedDotenv({
       environment,
       now,
-      relativePath: file.path,
+      relativePath,
       sourceRoot
     }));
   }

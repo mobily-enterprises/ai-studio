@@ -13,7 +13,6 @@ import { createService as createTerminalService } from "../../packages/vibe64-te
 const execFileAsync = promisify(execFile);
 
 export async function createPreviewPreparationFixture({
-  terminalServiceFactory = createTerminalService,
   publishSessionChanged = {}
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "v64-preview-preparation-"));
@@ -88,7 +87,7 @@ require("node:http").createServer((_request, response) => {
     runtimeKind: "genesis",
     sessionId
   });
-  const terminals = terminalServiceFactory({
+  const terminals = createTerminalService({
     codexTerminalController: { codexToolHomeRequired: false },
     env: { VIBE64_RUNTIME_NAMESPACE: "preview-preparation-test" },
     projectService: project,
@@ -99,8 +98,9 @@ require("node:http").createServer((_request, response) => {
     project, root, runtime, sessionId, sourceRoot, stackPath, terminals,
     async prepare() {
       const setup = await terminals.prepareWorkspaceSetup(sessionId, { waitForCompletion: true });
-      if (setup.ok === false) throw new Error(JSON.stringify(setup));
-      await setup.completion;
+      if (setup.ok === false) {
+        throw new Error(JSON.stringify(setup));
+      }
       const session = await runtime.getSession(sessionId, { inspectSource: false });
       if (session.workspaceSetup.status !== "succeeded") {
         throw new Error(JSON.stringify(session.workspaceSetup));

@@ -667,10 +667,13 @@ function createWorkspaceSetupRunner({
         // Anything else still goes through start(), which owns diagnostics.
         return error?.code === "STACK_REQUIRED" && previous.status === "unconfigured";
       }
-      return setup.status === "unconfigured"
-        ? previous.status === "unconfigured"
-        : setup.status === "ready" && previous.status === "succeeded" &&
-          Boolean(setup.recipeHash) && previous.recipeHash === setup.recipeHash;
+      if (setup.status === "unconfigured") {
+        return previous.status === "unconfigured";
+      }
+      return setup.status === "ready" &&
+        previous.status === "succeeded" &&
+        Boolean(setup.recipeHash) &&
+        previous.recipeHash === setup.recipeHash;
     },
     isRunning(sessionId = "") {
       return activeRuns.has(workspaceSetupRunKey(normalizeText(sessionId)));
