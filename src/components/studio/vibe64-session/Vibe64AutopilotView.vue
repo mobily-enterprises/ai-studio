@@ -33,7 +33,6 @@
           :selected-session-id="sessionId"
           :selection-archived="sessionArchiveDisabled"
           :toolbar="props.sessionToolbar"
-          @select-session="activateRealSession"
         />
 
         <v-btn
@@ -1257,21 +1256,11 @@ async function finishTemporaryAiTask(task = {}) {
   return true;
 }
 
-function activateRealSession() {
-  temporaryAiWorkspace.value?.closeWorkspace?.();
-}
-
 async function showMainChat() {
-  activateRealSession();
+  temporaryAiWorkspace.value?.closeWorkspace?.();
   await nextTick();
   mainChat.value?.focus?.({ preventScroll: true });
 }
-
-watch(() => props.active, (active, wasActive) => {
-  if (active && !wasActive) {
-    activateRealSession();
-  }
-});
 
 watch(workspaceSetupStatus, () => {
   reportVerifiedWorkspaceRecovery();

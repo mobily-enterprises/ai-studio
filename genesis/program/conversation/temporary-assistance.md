@@ -26,6 +26,7 @@ session history.
 - `src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationProgress.vue`
 - `src/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue`
+- `src/components/studio/vibe64-session/Vibe64PromptHints.vue`
 - `src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue`
 - `src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue`
 
@@ -38,6 +39,17 @@ distinct from the durable project conversation. Closing a task stops its live
 turn, deletes its provider conversation and exact uploaded attachments, and
 removes its browser-local state. Tasks are not restored after reload and never
 appear in session History.
+Switching between project sessions preserves each session's selected temporary
+chat, progress, and reply draft. Selecting Main chat explicitly keeps Main chat
+selected when returning to that session.
+Closing an incomplete Update repair requires confirmation that partial edits
+will remain and may still need repair. Closing waits for Stop and provider
+deletion to succeed; a failure leaves the chat available for retry, and a failed
+Stop resumes progress polling. Startup and Update verification must finish
+before their task can be closed. Stop does not reset source files, HEAD, or the
+index, and a late response cannot turn a cancelled repair into an automatic
+Update. Partial application edits remain subject to review; cancellation does
+not claim the application is repaired.
 Task attachments use the shared upload queue, text references and preview/download
 dialog. They retain the temporary upload lease and exact-file cleanup when the
 task closes; they are not copied into the durable main conversation's artifacts.
@@ -48,9 +60,11 @@ including lists, bold text, code, and links. User-authored text stays literal.
 Raw HTML remains text, and executable or data-URL links are not made clickable.
 Main and temporary chats share the collapsible progress component. Temporary
 progress starts collapsed inside its assistant message; expanding it uses the
-scrollable transcript. The fixed status above the composer says “AI is working…”
-and never repeats reasoning paragraphs. Long progress cannot push Stop or the
-composer out of view.
+scrollable transcript. The fixed status above the composer uses normal chat's
+shared plain status component and says “AI is working…”. The transcript has no
+second working indicator and the status never repeats reasoning paragraphs.
+Long progress cannot push Stop or the composer out of view. The temporary
+workspace leaves the project session tabs available above it.
 
 Every product-owned repair entry uses the shared Fix it with AI control. It
 opens, selects, and focuses a separate Temporary AI task immediately. That task

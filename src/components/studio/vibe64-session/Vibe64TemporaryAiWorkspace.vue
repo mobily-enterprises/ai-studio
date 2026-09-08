@@ -40,6 +40,7 @@
         <v-btn
           :aria-label="`Close ${task.title}`"
           class="vibe64-temporary-ai__tab-close"
+          :disabled="task.recoveryOutcome === 'checking' || closingTask || stoppingTaskId === task.id"
           height="32"
           :icon="mdiClose"
           min-width="32"
@@ -47,7 +48,7 @@
           :title="`Close ${task.title}`"
           type="button"
           variant="text"
-          @click="temporary.closeTask(task.id)"
+          @click="requestCloseTask(task)"
         />
       </div>
       <v-btn
@@ -123,15 +124,11 @@
           </template>
           <template v-else>{{ activeTask.error }}</template>
         </div>
-        <div
+        <Vibe64PromptHints
           v-if="activeTask.busy || activeTaskRecoveryChecking"
           class="vibe64-temporary-ai__activity"
-          aria-live="polite"
-          role="status"
-        >
-          <span class="vibe64-temporary-ai__activity-mark" aria-hidden="true" />
-          <span>{{ activeTaskRecoveryChecking ? "Checking Update…" : "AI is working…" }}</span>
-        </div>
+          :assistant-label="activeTaskRecoveryChecking ? 'Checking Update…' : 'AI is working…'"
+        />
       </div>
 
       <Vibe64AutopilotPromptTextarea
@@ -177,7 +174,9 @@
               size="small"
               type="button"
               variant="tonal"
-              @click="temporary.stopTask(task.id)"
+              :disabled="task.status === 'starting'"
+              :loading="stoppingTaskId === task.id"
+              @click="stopTask(task.id)"
             >
               Stop
             </v-btn>
@@ -198,11 +197,38 @@
         </template>
       </Vibe64AutopilotPromptTextarea>
     </template>
+    <v-dialog
+      v-if="taskToClose"
+      :model-value="true"
+      :aria-labelledby="closeTitleId"
+      max-width="480"
+      persistent
+    >
+      <v-card>
+        <v-card-title :id="closeTitleId" class="text-wrap">
+          {{ taskToClose.busy ? 'Stop and close repair?' : 'Close incomplete repair?' }}
+        </v-card-title>
+        <v-card-text>
+          Partial edits will stay in this session and may still need repair.
+          Closing does not undo those edits or complete Update.
+        </v-card-text>
+        <v-card-actions class="flex-wrap">
+          <v-btn :disabled="closingTask" @click="closeTaskId = ''">Keep chat open</v-btn>
+          <v-btn
+            color="error"
+            :loading="closingTask"
+            @click="closeTask(taskToClose.id)"
+          >
+            {{ taskToClose.busy ? 'Stop and close' : 'Close repair' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </section>
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, useId, watch } from "vue";
 import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
   mdiArrowUp,
@@ -217,6 +243,7 @@ import {
 import Vibe64AgentSettingsMenu from "@/components/studio/vibe64-session/Vibe64AgentSettingsMenu.vue";
 import Vibe64AutopilotPromptTextarea from "@/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue";
 import Vibe64EphemeralConversationMessages from "@/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue";
+import Vibe64PromptHints from "@/components/studio/vibe64-session/Vibe64PromptHints.vue";
 import {
   TEMPORARY_AI_WORKSPACE_WRITE_POLICY,
   useVibe64TemporaryAi
@@ -270,6 +297,11 @@ const temporary = useVibe64TemporaryAi({
   sessionsApiPath: resolvedSessionsApiPath
 });
 const activeTask = temporary.activeTask;
+const closeTitleId = useId();
+const closeTaskId = ref("");
+const closingTask = ref(false);
+const stoppingTaskId = ref("");
+const taskToClose = computed(() => temporary.tasks.value.find((task) => task.id === closeTaskId.value));
 const activeTaskRecoveryChecking = computed(() => activeTask.value?.recoveryOutcome === "checking");
 const activeTaskRecoveryVerified = computed(() => (
   activeTask.value?.recoveryOutcome === "succeeded"
@@ -321,11 +353,44 @@ const activeTaskRecoveryStatus = computed(() => {
     return task.failureMessage || "Temporary AI stopped before it could confirm the repair. Review the error and progress below.";
   }
   if (status === "interrupted") {
-    return "You stopped this repair. You can continue in this temporary chat or return to Main chat.";
+    return task.recoveryOperation === "update"
+      ? "You stopped this repair. Partial edits remain and Update still needs to succeed. You can continue the repair here."
+      : "You stopped this repair. You can continue in this temporary chat or return to Main chat.";
   }
   return task.nextStepMessage || "Follow progress here and reply below if Temporary AI needs a decision.";
 });
 const workspaceWritePolicy = TEMPORARY_AI_WORKSPACE_WRITE_POLICY;
+
+function requestCloseTask(task) {
+  if (task.recoveryOperation === "update" && task.recoveryOutcome !== "succeeded" && (task.busy || task.messages.length)) {
+    closeTaskId.value = task.id;
+    return;
+  }
+  void closeTask(task.id);
+}
+
+async function closeTask(taskId) {
+  closingTask.value = true;
+  try {
+    await temporary.closeTask(taskId);
+    closeTaskId.value = "";
+  } catch (error) {
+    temporaryAiFeedback.error(error, "Temporary AI could not be closed. The chat is still open; try again.");
+  } finally {
+    closingTask.value = false;
+  }
+}
+
+async function stopTask(taskId) {
+  stoppingTaskId.value = taskId;
+  try {
+    await temporary.stopTask(taskId);
+  } catch (error) {
+    temporaryAiFeedback.error(error, "Temporary AI could not be stopped. Try again.");
+  } finally {
+    stoppingTaskId.value = "";
+  }
+}
 
 function taskInputDisabled(task) {
   return task.busy || task.recoveryOutcome === "checking";
@@ -476,13 +541,14 @@ defineExpose({
   bottom: 0.3rem;
   box-shadow: 0 14px 38px rgba(15, 23, 42, 0.22);
   display: grid;
+  grid-row: 2 / -1;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   left: 0.3rem;
   min-height: 0;
   overflow: hidden;
   position: absolute;
   right: 0.3rem;
-  top: 3.3rem;
+  top: 0;
   z-index: 12;
 }
 
@@ -604,27 +670,6 @@ defineExpose({
   color: rgba(var(--v-theme-on-surface), 0.66);
 }
 
-.vibe64-temporary-ai__activity {
-  align-items: center;
-  background: rgba(var(--v-theme-primary), 0.06);
-  color: rgb(var(--v-theme-primary));
-  display: flex;
-  font-size: 0.875rem;
-  font-weight: 600;
-  gap: 0.45rem;
-  min-height: 2rem;
-  padding: 0.15rem 0.55rem;
-}
-
-.vibe64-temporary-ai__activity-mark {
-  animation: vibe64-temporary-ai-pulse 1.2s ease-in-out infinite;
-  background: rgb(var(--v-theme-primary));
-  border-radius: 50%;
-  flex: 0 0 auto;
-  height: 0.42rem;
-  width: 0.42rem;
-}
-
 .vibe64-temporary-ai :deep(.studio-autopilot-prompt-textarea) {
   margin: 4px;
 }
@@ -638,29 +683,12 @@ defineExpose({
   flex: 1 1 auto;
 }
 
-@keyframes vibe64-temporary-ai-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
 @media (max-width: 720px) {
   .vibe64-temporary-ai {
     border: 0;
     border-radius: 0;
     inset: 0;
     z-index: 30;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vibe64-temporary-ai__activity-mark {
-    animation: none;
   }
 }
 

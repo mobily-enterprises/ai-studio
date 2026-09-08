@@ -141,7 +141,10 @@ Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.
 
 Temporary repair chats keep progress collapsible inside the conversation and
-show a clear working status above the composer. A completed Update repair is
+show one plain working status above the composer. Switching sessions preserves
+the selected temporary chat and its reply draft. Closing an incomplete Update
+repair warns that partial edits remain, waits for the AI to stop, and keeps the
+chat available when stopping or closing fails. A completed Update repair is
 verified by Vibe64 running Update, with the actual result shown in that chat.
 A request for a decision waits for the person's reply before verification.
 

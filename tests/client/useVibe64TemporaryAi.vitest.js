@@ -77,11 +77,82 @@ async function temporaryAiWithFinishedObserver(onTaskFinished, taskOptions = {})
   return { task, temporary };
 }
 
+async function runningTemporaryAi() {
+  const fixture = await temporaryAiWithDraft();
+  mocks.responses.push(
+    { ok: true, conversationId: "conversation-1" },
+    { ok: true, runId: "turn-1", status: "inProgress" },
+    { ok: true, status: "inProgress" }
+  );
+  await fixture.temporary.send(fixture.task.id);
+  await flushPromises();
+  return fixture;
+}
+
 describe("useVibe64TemporaryAi", () => {
   beforeEach(() => {
     mocks.requests.length = 0;
     mocks.responses.length = 0;
     vi.useFakeTimers();
+  });
+
+  it("keeps a repair visible and resumes progress when stopping it fails", async () => {
+    const { task, temporary } = await runningTemporaryAi();
+    mocks.responses.push({ ok: false, error: "Could not stop the AI." });
+    await expect(temporary.closeTask(task.id)).rejects.toThrow("Could not stop the AI.");
+    expect(temporary.activeTask.value).toMatchObject({ id: task.id, busy: true });
+    expect(temporary.open.value).toBe(true);
+    expect(mocks.requests.some(([, options]) => options.method === "DELETE")).toBe(false);
+    mocks.responses.push({ ok: true, status: "inProgress", progressUpdates: [{ id: "later", text: "Still working." }] });
+    await vi.advanceTimersByTimeAsync(650);
+    expect(temporary.activeTask.value.messages.at(-1).progressUpdates).toEqual([{ id: "later", text: "Still working." }]);
+  });
+
+  it("keeps a stopped repair visible when deletion fails and allows retry", async () => {
+    const { task, temporary } = await runningTemporaryAi();
+    mocks.responses.push({ ok: true }, { ok: false, error: "Could not close the conversation." });
+    await expect(temporary.closeTask(task.id)).rejects.toThrow("Could not close the conversation.");
+    expect(temporary.activeTask.value).toMatchObject({ id: task.id, busy: false, status: "interrupted" });
+    expect(temporary.open.value).toBe(true);
+    mocks.responses.push({ ok: true });
+    await temporary.closeTask(task.id);
+    expect(temporary.tasks.value).toEqual([]);
+    expect(temporary.open.value).toBe(false);
+  });
+
+  it("ignores a late completion after Stop instead of applying Update", async () => {
+    const observer = vi.fn();
+    const { task, temporary } = await temporaryAiWithFinishedObserver(observer, { recoveryOperation: "update" });
+    const poll = deferredPromise();
+    mocks.responses.push(
+      { ok: true, conversationId: "conversation-1" },
+      { ok: true, runId: "turn-1", status: "inProgress" },
+      () => poll.promise
+    );
+    await temporary.send(task.id);
+    mocks.responses.push({ ok: true });
+    await temporary.stopTask(task.id);
+    poll.resolve({ ok: true, status: "completed", outcome: { kind: "complete" }, message: "Repaired." });
+    await flushPromises();
+    expect(temporary.activeTask.value).toMatchObject({ busy: false, status: "interrupted" });
+    expect(observer).not.toHaveBeenCalled();
+  });
+
+  it("does not discard a repair while its start request is pending", async () => {
+    const { task, temporary } = await temporaryAiWithDraft();
+    const start = deferredPromise();
+    mocks.responses.push(() => start.promise);
+    const sending = temporary.send(task.id);
+    await expect(temporary.closeTask(task.id)).rejects.toThrow("still starting");
+    expect(temporary.activeTask.value.id).toBe(task.id);
+    mocks.responses.push(
+      { ok: true, runId: "turn-1", status: "inProgress" },
+      { ok: true, status: "inProgress" }
+    );
+    start.resolve({ ok: true, conversationId: "conversation-1" });
+    await sending;
+    await flushPromises();
+    expect(temporary.activeTask.value).toMatchObject({ busy: true, runId: "turn-1" });
   });
 
   it("carries repair completion identity and blocks new AI edits while Update is checking", async () => {

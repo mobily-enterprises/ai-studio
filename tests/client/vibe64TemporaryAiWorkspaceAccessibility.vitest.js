@@ -37,6 +37,21 @@ vi.mock("vuetify/components/VBtn", () => ({
   })
 }));
 
+vi.mock("vuetify/components/VIcon", () => ({
+  VIcon: defineComponent({ render: () => null })
+}));
+
+vi.mock("vuetify/components/VDialog", () => ({
+  VDialog: defineComponent({ render: () => null })
+}));
+
+vi.mock("vuetify/components/VCard", () => ({
+  VCard: defineComponent({ render: () => null }),
+  VCardTitle: defineComponent({ render: () => null }),
+  VCardText: defineComponent({ render: () => null }),
+  VCardActions: defineComponent({ render: () => null })
+}));
+
 vi.mock("vuetify/components/VAlert", () => ({
   VAlert: defineComponent({
     inheritAttrs: false,
@@ -71,9 +86,11 @@ import Vibe64TemporaryAiWorkspace from "../../src/components/studio/vibe64-sessi
 import Vibe64EphemeralConversationMessages from "../../src/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue";
 
 import Vibe64ConversationProgress from "../../src/components/studio/vibe64-session/Vibe64ConversationProgress.vue";
+import Vibe64PromptHints from "../../src/components/studio/vibe64-session/Vibe64PromptHints.vue";
 
 for (const [name, component] of [
   ["Vibe64ConversationProgress", Vibe64ConversationProgress],
+  ["Vibe64PromptHints", Vibe64PromptHints],
   ["Vibe64TemporaryAiWorkspace", Vibe64TemporaryAiWorkspace],
   ["Vibe64EphemeralConversationMessages", Vibe64EphemeralConversationMessages]
 ]) {
@@ -403,10 +420,13 @@ describe("Temporary AI recovery workspace accessibility", () => {
       await nextTick();
       expect(nodeText(progress)).toBe("Hide progress updates Inspecting the conflict. Checking the repair.");
       const activity = findNode(container, (node) => (
-        node.props?.class === "vibe64-temporary-ai__activity"
+        node.props?.class === "vibe64-prompt-hints__assistant-status"
       ));
-      expect(activity.props.role).toBe("status");
       expect(nodeText(activity)).toBe("AI is working…");
+      expect(findNode(container, (node) => (
+        node.props?.role === "status" && nodeText(node) === "AI is working…"
+      ))).toBeTruthy();
+      expect(findNode(container, (node) => node.type === "span" && nodeText(node) === "Working…")).toBeNull();
 
       const userMessage = findNode(container, (node) => (
         node.type === "article" && nodeText(node).includes("Check this repair.")

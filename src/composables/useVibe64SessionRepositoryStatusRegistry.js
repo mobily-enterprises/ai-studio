@@ -36,7 +36,7 @@ function createVibe64SessionRepositoryStatusQueue({
   const records = new Map();
   const pending = new Map();
   const activeSessions = new Set();
-  const canonicalUpdatePending = new Set();
+  const canonicalUpdatePending = new Map();
   const refreshAfterActive = new Set();
   const waiters = new Set();
   let active = 0;
@@ -58,33 +58,31 @@ function createVibe64SessionRepositoryStatusQueue({
       return;
     }
     const state = workState && typeof workState === "object" ? { ...workState } : {};
+    if (canonicalUpdatePending.has(id)) {
+      const expectedCommit = canonicalUpdatePending.get(id);
+      if (expectedCommit && state.canonicalCommit === expectedCommit) {
+        canonicalUpdatePending.delete(id);
+      } else {
+        state.updateAvailable = true;
+        state.updateStatusPending = true;
+      }
+    }
     const checkedAt = String(state.checkedAt || "").trim();
     records.set(id, {
       checkedAtMs: checkedAt ? Date.parse(checkedAt) || now() : now(),
       workState: state
     });
+    onState({ sessionId: id, workState: state });
   }
 
-  function emit(sessionId, workState) {
-    const state = canonicalUpdatePending.has(sessionId)
-      ? {
-          ...workState,
-          updateAvailable: true,
-          updateStatusPending: true
-        }
-      : workState;
-    observe(sessionId, state);
-    onState({ sessionId, workState: state });
-  }
-
-  function markUpdatePending(sessionId = "") {
+  function markUpdatePending(sessionId = "", canonicalCommit = "") {
     const id = String(sessionId || "").trim();
     if (!id) {
       return;
     }
     const prior = records.get(id)?.workState || {};
-    canonicalUpdatePending.add(id);
-    emit(id, {
+    canonicalUpdatePending.set(id, String(canonicalCommit || "").trim());
+    observe(id, {
       ...prior,
       checkedAt: "",
       error: "",
@@ -94,8 +92,11 @@ function createVibe64SessionRepositoryStatusQueue({
     });
   }
 
-  function clearUpdatePending(sessionId = "") {
-    canonicalUpdatePending.delete(String(sessionId || "").trim());
+  function confirmCanonical(sessionId = "", canonicalCommit = "") {
+    const id = String(sessionId || "").trim();
+    if (canonicalUpdatePending.get(id) === "") {
+      canonicalUpdatePending.set(id, String(canonicalCommit || "").trim());
+    }
   }
 
   function markCanonicalCheckUnavailable(sessionId = "", error = "") {
@@ -104,7 +105,7 @@ function createVibe64SessionRepositoryStatusQueue({
       return;
     }
     const prior = records.get(id)?.workState || {};
-    emit(id, {
+    observe(id, {
       ...prior,
       checkedAt: new Date(now()).toISOString(),
       error: String(error || "Repository update status is unavailable."),
@@ -122,7 +123,7 @@ function createVibe64SessionRepositoryStatusQueue({
     activeSessions.add(sessionId);
     const prior = records.get(sessionId)?.workState || null;
     if (!prior) {
-      emit(sessionId, {
+      observe(sessionId, {
         checkedAt: "",
         error: "",
         loading: true,
@@ -138,7 +139,7 @@ function createVibe64SessionRepositoryStatusQueue({
       if (result?.ok === false) {
         throw new Error(String(result?.message || result?.error || "Session work could not be inspected."));
       }
-      emit(sessionId, {
+      observe(sessionId, {
         ...result,
         checkedAt: new Date(now()).toISOString(),
         error: "",
@@ -148,7 +149,7 @@ function createVibe64SessionRepositoryStatusQueue({
       if (disposed) {
         return;
       }
-      emit(sessionId, {
+      observe(sessionId, {
         checkedAt: new Date(now()).toISOString(),
         error: error instanceof Error ? error.message : String(error || "Session work could not be inspected."),
         loading: false,
@@ -225,7 +226,7 @@ function createVibe64SessionRepositoryStatusQueue({
 
   return {
     dispose,
-    clearUpdatePending,
+    confirmCanonical,
     enqueue,
     markCanonicalCheckUnavailable,
     markUpdatePending,
@@ -311,7 +312,7 @@ function useVibe64SessionRepositoryStatusRegistry({
     if (canonicalChecks.has(id)) {
       const active = canonicalChecks.get(id);
       if (active.accessRevision === accessRevision) {
-        if (force && active.force !== true) {
+        if (force) {
           forcedCanonicalFollowups.add(id);
         }
         return active.promise;
@@ -339,7 +340,7 @@ function useVibe64SessionRepositoryStatusRegistry({
           result?.message || result?.error || "Repository update status is unavailable."
         ));
       }
-      queue.clearUpdatePending(id);
+      queue.confirmCanonical(id, result.canonicalCommit);
       inspectVisible({ force: true, includeSelected: true, sessionId: id });
       return result;
     }).catch((error) => {
@@ -362,7 +363,7 @@ function useVibe64SessionRepositoryStatusRegistry({
         void checkCanonical(id, { force: true });
       }
     });
-    canonicalChecks.set(id, { accessRevision, force, promise: request });
+    canonicalChecks.set(id, { accessRevision, promise: request });
     return request;
   }
 
@@ -415,7 +416,7 @@ function useVibe64SessionRepositoryStatusRegistry({
         sessionId
       });
       if (repositoryStatusRealtimeNeedsCanonicalCheck(payload)) {
-        queue.markUpdatePending(sessionId);
+        queue.markUpdatePending(sessionId, payload.canonicalCommit);
         void checkCanonical(sessionId, { force: true });
       }
     }

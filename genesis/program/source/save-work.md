@@ -12,6 +12,8 @@ Git commands.
 - `src/components/studio/Vibe64TemporaryActionTerminal.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/composables/useVibe64AutopilotView.js`
+- `src/composables/useVibe64SessionPanel.js`
+- `src/composables/useVibe64SessionRepositoryStatusRegistry.js`
 
 ## Public contract
 
@@ -41,6 +43,11 @@ chat header beside the session it will affect, rather than occupying the
 application-wide toolbar. A failed Save or Update retains the current incoming-
 version requirement, so the header continues to offer Update until the session
 actually includes the latest saved version.
+After another session saves, its canonical-change notification immediately
+switches sibling tabs and their header action to Update. The pending incoming
+version survives older work inspections and canonical-check responses until an
+inspection confirms the announced version. The header observes the same
+pending state as the session tabs, including while follow-up checks run.
 
 Each Save or Update attempt starts a fresh visible transcript. Retrying after a
 failure does not mix the earlier attempt's errors into the new operation.

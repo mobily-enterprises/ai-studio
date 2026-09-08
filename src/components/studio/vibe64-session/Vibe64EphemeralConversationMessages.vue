@@ -25,7 +25,6 @@
       :blocks="parseLongTextReviewBlocks(message.text)"
     />
     <p v-else-if="message.text">{{ message.text }}</p>
-    <span v-else-if="['starting', 'inProgress'].includes(message.status)">Working…</span>
     <span v-else-if="message.status === 'interrupted'">Stopped.</span>
     <span v-else-if="message.status === 'failed'">{{ assistantLabel }} stopped with an error.</span>
     <Vibe64ConversationAttachments

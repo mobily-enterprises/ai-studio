@@ -2,6 +2,7 @@ import { createApp, effectScope, nextTick, reactive, ref } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sessionRepositoryWorkState } from "../../src/composables/useVibe64SessionPanel.js";
+import { createVibe64SessionRepositoryStatusQueue } from "../../src/composables/useVibe64SessionRepositoryStatusRegistry.js";
 
 const route = reactive({
   path: "/app/project/chat-test/dashboard/env"
@@ -1975,6 +1976,58 @@ describe("useVibe64AutopilotView direct chat", () => {
     );
     await expect(view.requestSaveWork()).resolves.toEqual({ ok: true, status: "updated" });
     expect(updateSessionWork).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the header on Update from canonical notification until the new version is inspected", async () => {
+    const oldWork = {
+      canonicalCommit: "old-version",
+      checkedAt: "2026-09-08T02:26:00.000Z",
+      unsaved: true,
+      updateAvailable: false
+    };
+    const { view, props } = await createViewWithProps({
+      sessionToolbar: { sessions: [{ sessionId: "session-1" }] },
+      workState: oldWork
+    });
+    const queue = createVibe64SessionRepositoryStatusQueue({
+      onState: ({ workState }) => {
+        props.sessionToolbar.sessions[0].repositoryWorkState = sessionRepositoryWorkState(workState);
+      },
+      requestWork: async () => oldWork
+    });
+    try {
+      queue.observe("session-1", oldWork);
+      expect(view.saveWorkRequiresUpdate.value).toBe(false);
+      queue.markUpdatePending("session-1", "new-version");
+      expect(view.saveWorkHeaderAriaLabel.value).toBe("Update selected session (rebase)");
+
+      // A runtime inspection already in flight finishes after the notification.
+      props.workState = { ...oldWork, checkedAt: "2026-09-08T02:26:05.000Z" };
+      queue.observe("session-1", props.workState);
+      expect(view.saveWorkHeaderAriaLabel.value).toBe("Update selected session (rebase)");
+
+      queue.enqueue(["session-1"], { force: true });
+      await queue.waitForIdle();
+      expect(view.saveWorkRequiresUpdate.value).toBe(true);
+
+      queue.observe("session-1", {
+        ...props.workState,
+        canonicalCommit: "new-version",
+        checkedAt: "2026-09-08T02:26:06.000Z",
+        updateAvailable: true
+      });
+      expect(view.saveWorkRequiresUpdate.value).toBe(true);
+
+      // After a successful Update, the current inspection can offer Save again.
+      queue.observe("session-1", {
+        ...props.workState,
+        canonicalCommit: "new-version",
+        checkedAt: "2026-09-08T02:26:07.000Z"
+      });
+      expect(view.saveWorkHeaderAriaLabel.value).toBe("Save selected session work");
+    } finally {
+      queue.dispose();
+    }
   });
 
   it("enables Save when the newer toolbar inspection finds unsaved work", async () => {

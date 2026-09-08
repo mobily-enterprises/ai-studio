@@ -190,6 +190,40 @@ describe("session repository status registry", () => {
     queue.dispose();
   });
 
+  it("keeps a newer Save notification when an older canonical check finishes", () => {
+    const states = [];
+    const queue = createVibe64SessionRepositoryStatusQueue({
+      onState: ({ workState }) => states.push(workState),
+      requestWork: async () => ({ ok: true })
+    });
+    queue.observe("session-a", { canonicalCommit: "old-version", unsaved: true });
+    queue.markUpdatePending("session-a", "first-save");
+    queue.markUpdatePending("session-a", "second-save");
+    queue.confirmCanonical("session-a", "first-save");
+    queue.observe("session-a", { canonicalCommit: "first-save", unsaved: true, updateAvailable: false });
+    expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
+    queue.observe("session-a", { canonicalCommit: "second-save", unsaved: true, updateAvailable: false });
+    expect(states.at(-1)).toMatchObject({ updateAvailable: false });
+    expect(states.at(-1).updateStatusPending).not.toBe(true);
+    queue.dispose();
+  });
+
+  it("settles a pending recheck without an announced version only after inspecting its confirmed version", () => {
+    const states = [];
+    const queue = createVibe64SessionRepositoryStatusQueue({
+      onState: ({ workState }) => states.push(workState),
+      requestWork: async () => ({ ok: true })
+    });
+    queue.markUpdatePending("session-a");
+    queue.confirmCanonical("session-a", "current-version");
+    queue.observe("session-a", { canonicalCommit: "old-version", unsaved: true, updateAvailable: false });
+    expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
+    queue.observe("session-a", { canonicalCommit: "current-version", unsaved: true, updateAvailable: false });
+    expect(states.at(-1)).toMatchObject({ updateAvailable: false });
+    expect(states.at(-1).updateStatusPending).not.toBe(true);
+    queue.dispose();
+  });
+
   it("fails closed when canonical freshness cannot be checked", () => {
     const states = [];
     const queue = createVibe64SessionRepositoryStatusQueue({

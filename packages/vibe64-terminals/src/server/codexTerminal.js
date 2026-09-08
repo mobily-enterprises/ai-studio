@@ -11251,7 +11251,7 @@ function createCodexTerminalController({
       threadId: input.conversationId,
       turnId: input.runId
     }, options);
-    if (ephemeralConversation) {
+    if (result.ok !== false && ephemeralConversation) {
       ephemeralConversation.status = "interrupted";
       ephemeralConversation.watcher?.failNow(new Error("Temporary AI turn was stopped."));
       ephemeralConversation.watcher = null;
@@ -11277,6 +11277,9 @@ function createCodexTerminalController({
       result = await deleteDetachedCodexAppServerChatThread(sessionId, {
         threadId: input.conversationId
       }, options);
+      if (result.ok === false) {
+        return { ...result, conversationId };
+      }
       conversations?.get(conversationId)?.watcher?.failNow(new Error("Temporary AI conversation was closed."));
       conversations?.delete(conversationId);
       if (conversations?.size === 0) {

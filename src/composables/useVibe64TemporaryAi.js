@@ -68,6 +68,7 @@ function useVibe64TemporaryAi({
   const open = ref(false);
   const pollTimers = new Map();
   const closingTaskIds = new Set();
+  const stoppingTaskIds = new Set();
   let nextTaskNumber = 1;
 
   const activeTask = computed(() => (
@@ -323,7 +324,12 @@ function useVibe64TemporaryAi({
   async function pollTask(taskId = "") {
     stopPolling(taskId);
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task?.conversationId || !task.runId || closingTaskIds.has(taskId)) {
+    const canApplyResponse = () => {
+      const current = tasks.value.find((candidate) => candidate.id === taskId);
+      return current?.busy && current.runId === task.runId &&
+        !closingTaskIds.has(taskId) && !stoppingTaskIds.has(taskId);
+    };
+    if (!task?.conversationId || !task.runId || !canApplyResponse()) {
       return;
     }
     try {
@@ -335,6 +341,7 @@ function useVibe64TemporaryAi({
         ),
         { method: "GET" }
       );
+      if (!canApplyResponse()) return;
       const text = temporaryAiText(response.text || response.message || response.rawText);
       const status = temporaryAiText(response.status) || "completed";
       const messages = temporaryAiTurnMessages(task.messages, task.runId, {
@@ -358,6 +365,7 @@ function useVibe64TemporaryAi({
         reportTaskFinished(taskId);
       }
     } catch (error) {
+      if (!canApplyResponse()) return;
       const message = temporaryAiText(error?.message || error) || "Temporary AI response could not be read.";
       updateTask(taskId, {
         busy: false,
@@ -462,41 +470,55 @@ function useVibe64TemporaryAi({
 
   async function stopTask(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task?.conversationId || !task.runId || !task.busy) {
+    if (!task?.busy || stoppingTaskIds.has(taskId)) {
       return false;
     }
+    if (task.status === "starting" || !task.conversationId || !task.runId) {
+      throw new Error("Temporary AI is still starting. Wait for it to start, then stop it.");
+    }
+    stoppingTaskIds.add(taskId);
     stopPolling(taskId);
-    await request(
-      vibe64TemporaryConversationStopPath(
-        currentSessionsApiPath(),
-        currentSessionId(),
-        task.conversationId
-      ),
-      {
-        body: { runId: task.runId },
-        method: "POST"
-      }
-    );
-    updateTask(taskId, {
-      busy: false,
-      messages: temporaryAiTurnMessages(task.messages, task.runId, {
+    try {
+      await request(
+        vibe64TemporaryConversationStopPath(
+          currentSessionsApiPath(),
+          currentSessionId(),
+          task.conversationId
+        ),
+        {
+          body: { runId: task.runId },
+          method: "POST"
+        }
+      );
+      updateTask(taskId, {
+        busy: false,
+        messages: temporaryAiTurnMessages(task.messages, task.runId, {
+          status: "interrupted"
+        }),
         status: "interrupted"
-      }),
-      status: "interrupted"
-    });
-    return true;
+      });
+      return true;
+    } catch (error) {
+      pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
+      throw error;
+    } finally {
+      stoppingTaskIds.delete(taskId);
+    }
   }
 
   async function closeTask(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task || closingTaskIds.has(taskId)) {
+    if (!task || closingTaskIds.has(taskId) || stoppingTaskIds.has(taskId)) {
       return;
+    }
+    if (task.recoveryOutcome === "checking") {
+      throw new Error("Wait for Update to finish before closing this repair.");
     }
     closingTaskIds.add(taskId);
     stopPolling(taskId);
     try {
-      if (task.busy && task.conversationId && task.runId) {
-        await stopTask(taskId).catch(() => null);
+      if (task.busy) {
+        await stopTask(taskId);
       }
       if (task.conversationId) {
         await request(
@@ -506,10 +528,8 @@ function useVibe64TemporaryAi({
             task.conversationId
           ),
           { method: "DELETE" }
-        ).catch(() => null);
+        );
       }
-    } finally {
-      closingTaskIds.delete(taskId);
       tasks.value = tasks.value.filter((candidate) => candidate.id !== taskId);
       if (activeTaskId.value === taskId) {
         activeTaskId.value = tasks.value[0]?.id || "";
@@ -517,6 +537,8 @@ function useVibe64TemporaryAi({
       if (tasks.value.length === 0) {
         open.value = false;
       }
+    } finally {
+      closingTaskIds.delete(taskId);
     }
   }
 

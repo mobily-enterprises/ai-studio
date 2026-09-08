@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -233,6 +233,8 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
         captures.failInterrupts -= 1;
         throw new Error("thread interruption failed");
       }
+      captures.interruptHold?.enter();
+      await captures.interruptHold?.wait;
       if (captures.interruptCompletesTurns) {
         emitCodexNotification(subscribers, turnCompleted({
           status: "completed",
@@ -4556,6 +4558,98 @@ for (const failure of ["disconnect", "replacement"]) {
     } finally {
       t.mock.timers.reset();
     }
+  });
+}
+
+async function startTemporaryRepair(controller) {
+  const conversation = await controller.createConversation("session-1", { ephemeral: true });
+  const turn = await controller.startConversationTurn("session-1", {
+    conversationId: conversation.conversationId,
+    ephemeral: true,
+    message: "Repair this conflict.",
+    policy: "workspace_write"
+  });
+  return { conversationId: conversation.conversationId, runId: turn.runId, ephemeral: true };
+}
+
+test("temporary repair remains active until Codex confirms the interrupt", async () => {
+  await withConversationController(async ({ captures, controller }) => {
+    const input = await startTemporaryRepair(controller);
+    const hold = createDeterministicHold();
+    captures.interruptHold = hold;
+    let settled = false;
+    const stopping = controller.stopConversation("session-1", input).then((result) => {
+      settled = true;
+      return result;
+    });
+    try {
+      await hold.entered;
+      assert.equal(settled, false);
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), true);
+      assert.equal((await controller.readConversation("session-1", input)).status, "inProgress");
+      const blocked = await controller.startConversationTurn("session-1", {
+        conversationId: input.conversationId, ephemeral: true, message: "Start another repair."
+      });
+      assert.equal(blocked.ok, false);
+      assert.equal(blocked.code, "vibe64_temporary_conversation_turn_active");
+      hold.release();
+      assert.equal((await stopping).ok, true);
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+      assert.equal((await controller.readConversation("session-1", input)).status, "interrupted");
+    } finally {
+      hold.release();
+      await stopping;
+    }
+  });
+});
+
+test("stopping and closing a partial repair preserves the Git index, HEAD, and existing local work", async () => {
+  await withConversationController(async ({ controller, session }) => {
+    const sourcePath = session.metadata.source_path;
+    const git = (...args) => execFileSync("git", args, { cwd: sourcePath, encoding: "utf8" });
+    git("init", "--quiet");
+    const document = path.join(sourcePath, "document.md");
+    await writeFile(document, "Saved document.\n");
+    git("add", "document.md");
+    git("-c", "user.name=Repair test", "-c", "user.email=repair@example.test", "commit", "--quiet", "-m", "Initial document");
+    await writeFile(document, "Earlier staged work.\n");
+    git("add", "document.md");
+    await writeFile(document, "Earlier staged work.\nEarlier unstaged work.\n");
+    await writeFile(path.join(sourcePath, "notes.txt"), "Earlier untracked work.\n");
+    const headBefore = git("rev-parse", "HEAD");
+    const indexBefore = await readFile(path.join(sourcePath, ".git", "index"));
+    const input = await startTemporaryRepair(controller);
+    const partial = "Earlier staged work.\nEarlier unstaged work.\nPartial repair still needs review.\n";
+    await writeFile(document, partial);
+    assert.equal((await controller.stopConversation("session-1", input)).ok, true);
+    assert.equal((await controller.deleteConversation("session-1", input)).ok, true);
+    assert.equal(git("rev-parse", "HEAD"), headBefore);
+    assert.deepEqual(await readFile(path.join(sourcePath, ".git", "index")), indexBefore);
+    assert.equal(await readFile(document, "utf8"), partial);
+    assert.equal(await readFile(path.join(sourcePath, "notes.txt"), "utf8"), "Earlier untracked work.\n");
+    assert.equal(git("ls-files", "--unmerged"), "");
+    assert.equal(git("show", "HEAD:document.md"), "Saved document.\n");
+  });
+});
+
+for (const operation of ["stop", "delete"]) {
+  test(`failed temporary ${operation} retains the active repair for retry`, async () => {
+    await withConversationController(async ({ captures, controller, subscribers }) => {
+      const input = await startTemporaryRepair(controller);
+      captures[operation === "stop" ? "failInterrupts" : "failDeletes"] = 1;
+      const failed = await controller[`${operation}Conversation`]("session-1", input);
+      assert.equal(failed.ok, false, JSON.stringify(failed));
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), true);
+      emitCodexNotification(subscribers, codexEvent({ message: "Still inspecting the conflict." }));
+      await flushPromises();
+      const working = await controller.readConversation("session-1", input);
+      assert.equal(working.status, "inProgress", JSON.stringify(working));
+      assert.equal(working.conversationExpired, undefined);
+      assert.ok(working.progressUpdates.some((update) => update.text === "Still inspecting the conflict."));
+      const retried = await controller[`${operation}Conversation`]("session-1", input);
+      assert.equal(retried.ok, true, JSON.stringify(retried));
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+    });
   });
 }
 

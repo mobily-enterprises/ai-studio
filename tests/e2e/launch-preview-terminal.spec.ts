@@ -79,15 +79,87 @@ for (const width of [390, 1440]) {
 }
 
 for (const width of [390, 1440]) {
+  test(`@save-realtime sibling tabs and header show Update before rechecking finishes at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockLaunchTerminalSocket(page);
+    const sessions = ["Alpha", "Beta", "Gamma"].map((sessionName, index) => sessionPayload({
+      sessionId: index ? `session-${sessionName}` : SESSION_ID,
+      sessionName
+    }));
+    await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+      session: sessions[0],
+      sessionList: sessions
+    });
+    let notified = false;
+    let checked = false;
+    let releaseCheck: () => void = () => {};
+    const checkGate = new Promise<void>((resolve) => { releaseCheck = resolve; });
+    await page.route("**/sessions/*/work", (route) => fulfillJson(route, {
+      canonicalCommit: checked ? "new-version" : "old-version",
+      checkedAt: new Date().toISOString(),
+      changedPaths: ["app.js"],
+      ok: true,
+      unsaved: true,
+      updateAvailable: checked
+    }));
+    await page.route("**/sessions/*/updates/check", async (route) => {
+      if (notified) await checkGate;
+      await fulfillJson(route, {
+        canonicalCommit: checked ? "new-version" : "old-version",
+        ok: true,
+        updateAvailable: checked
+      });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      const chat = page.locator(".studio-autopilot:visible");
+      const save = chat.getByRole("button", { name: "Save selected session work", exact: true });
+      const update = chat.getByRole("button", { name: "Update selected session (rebase)", exact: true });
+      for (const session of sessions.slice(1)) {
+        await page.locator(`[data-vibe64-session-id='${session.sessionId}']:visible`).click();
+        await expect(save).toBeEnabled();
+      }
+      notified = true;
+      for (const session of sessions.slice(1)) {
+        await publishChatSessionChange(page, {
+          canonicalCommit: "new-version",
+          reason: "repository-canonical-changed",
+          sessionId: session.sessionId,
+          sourceSessionId: SESSION_ID
+        });
+      }
+      for (const session of sessions.slice(1)) {
+        await page.locator(`[data-vibe64-session-id='${session.sessionId}']:visible`).click();
+        await expect(update).toBeVisible({ timeout: 1000 });
+        await expect(save).toHaveCount(0);
+      }
+      await page.screenshot({ path: testInfo.outputPath("update-before-check.png"), animations: "disabled" });
+      checked = true;
+      releaseCheck();
+      await expect(update).toBeEnabled();
+      await expect(save).toHaveCount(0);
+    } finally {
+      releaseCheck();
+    }
+  });
+}
+
+for (const width of [390, 1440]) {
   test(`@temporary-repair progress stays in the transcript and Update verifies the repair at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await mockLaunchTerminalSocket(page);
     const requests: TemporaryAiRecoveryRequests = { mainMessages: [], temporaryStarts: [], temporaryTurns: [] };
-    await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, temporaryAiRecoveryRequests: requests });
+    await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+      sessionList: [sessionPayload(), sessionPayload({ sessionId: "session-other", sessionName: "Other" })],
+      temporaryAiRecoveryRequests: requests
+    });
     let updateCount = 0;
     let releaseUpdate: (() => void) | undefined;
     let resultKind = "";
     let run = 0;
+    let progressReads = 0;
     const progressUpdates = [
       { id: "first", text: "Inspecting the conflicting document. ".repeat(60) },
       { id: "second", text: "Comparing the current and saved versions. ".repeat(60) }
@@ -107,6 +179,7 @@ for (const width of [390, 1440]) {
     });
     await page.route("**/temporary-conversations/temporary-preview-identity", async (route) => {
       if (route.request().method() !== "GET") { await route.fallback(); return; }
+      progressReads += 1;
       await fulfillJson(route, {
         ok: true, runId: `repair-${run}`, status: resultKind ? "completed" : "inProgress",
         progressUpdates,
@@ -122,12 +195,28 @@ for (const width of [390, 1440]) {
         : { ok: true, status: "updated" });
     });
     await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    await page.locator(`[data-vibe64-session-id='${SESSION_ID}']:visible`).click();
     await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
     const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
-    const activity = workspace.locator(".vibe64-temporary-ai__activity");
+    const activity = workspace.locator(".vibe64-prompt-hints__assistant-status");
     const transcript = workspace.locator(".vibe64-temporary-ai__messages");
     const composer = workspace.getByRole("textbox", { name: "Message temporary AI", exact: true });
     await expect(activity).toHaveText("AI is working…");
+    await page.locator('[data-vibe64-session-id="session-other"]:visible').click();
+    await expect(workspace).not.toBeVisible();
+    const readsWhileHidden = progressReads;
+    await expect.poll(() => progressReads).toBeGreaterThan(readsWhileHidden);
+    await page.locator(`[data-vibe64-session-id='${SESSION_ID}']:visible`).click();
+    await expect(workspace).toBeVisible();
+    await expect(activity).toHaveText("AI is working…");
+    expect(requests.temporaryTurns).toHaveLength(1);
+    await expect(transcript.getByText("Working…", { exact: true })).toHaveCount(0);
+    await expect(activity).toHaveCount(1);
+    const statusStyle = await activity.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { weight: style.fontWeight, background: style.backgroundColor };
+    });
+    expect(statusStyle).toEqual({ weight: "400", background: "rgba(0, 0, 0, 0)" });
     await expect(workspace.getByText("This is a separate temporary chat", { exact: false })).toHaveCount(0);
     const progress = workspace.getByLabel("Temporary AI progress", { exact: true }).last();
     const toggle = progress.getByRole("button");
@@ -151,11 +240,17 @@ for (const width of [390, 1440]) {
     await expect(workspace.getByText("Waiting for your reply", { exact: true })).toBeVisible();
     expect(updateCount).toBe(0);
     await composer.fill("Keep both changes.");
+    await page.locator('[data-vibe64-session-id="session-other"]:visible').click();
+    await expect(workspace).not.toBeVisible();
+    await page.locator(`[data-vibe64-session-id='${SESSION_ID}']:visible`).click();
+    await expect(composer).toHaveValue("Keep both changes.");
+    await expect(workspace.getByText("Waiting for your reply", { exact: true })).toBeVisible();
     await workspace.getByRole("button", { name: "Send to temporary AI", exact: true }).click();
     await expect(activity).toHaveText("AI is working…");
     resultKind = "complete";
     await expect(activity).toHaveText("Checking Update…");
     await expect(composer).toBeDisabled();
+    await expect(workspace.getByRole("button", { name: "Close Resolve Update", exact: true })).toBeDisabled();
     expect(updateCount).toBe(1);
     releaseUpdate?.();
     await expect(workspace.getByText("Update needs attention", { exact: true })).toBeVisible();
@@ -173,6 +268,113 @@ for (const width of [390, 1440]) {
     await expect(activity).toHaveCount(0);
     expect(requests.mainMessages).toHaveLength(0);
     await page.screenshot({ path: testInfo.outputPath(`repair-verified-${width}.png`) });
+    await page.locator('[data-vibe64-session-id="session-other"]:visible').click();
+    await page.locator(`[data-vibe64-session-id='${SESSION_ID}']:visible`).click();
+    await expect(workspace.getByText("Repair verified", { exact: true })).toBeVisible();
+    await workspace.getByRole("button", { name: "Main chat", exact: true }).click();
+    await expect(workspace).not.toBeVisible();
+    await page.locator('[data-vibe64-session-id="session-other"]:visible').click();
+    await page.locator(`[data-vibe64-session-id='${SESSION_ID}']:visible`).click();
+    await expect(workspace).not.toBeVisible();
+  });
+}
+
+for (const width of [390, 1440]) {
+  test(`@temporary-cancel closing a repair warns, waits for Stop, and keeps failed cleanup retryable at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockLaunchTerminalSocket(page);
+    await mockLaunchSession(page, {
+      assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+      temporaryAiRecoveryRequests: { mainMessages: [], temporaryStarts: [], temporaryTurns: [] }
+    });
+    let stopCount = 0;
+    let deleteCount = 0;
+    let updateCount = 0;
+    let stopped = false;
+    let releaseStop: () => void;
+    const stopGate = new Promise<void>((resolve) => { releaseStop = resolve; });
+    await page.route("**/sessions/*/work", (route) => fulfillJson(route, {
+      ok: true, unsaved: true, updateAvailable: true,
+      updateOperation: { operationId: "failed-update", status: "failed", code: "vibe64_session_update_conflict", error: "Document conflicts with the saved version." }
+    }));
+    await page.route("**/temporary-conversations/*/turns", (route) => fulfillJson(route, {
+      ok: true, status: "inProgress", runId: "repair-1"
+    }));
+    await page.route("**/temporary-conversations/temporary-preview-identity", async (route) => {
+      if (route.request().method() === "DELETE") {
+        deleteCount += 1;
+        await fulfillJson(route, deleteCount === 1
+          ? { ok: false, error: "Conversation deletion failed." }
+          : { ok: true });
+        return;
+      }
+      await fulfillJson(route, {
+        ok: true, runId: "repair-1", status: stopped ? "interrupted" : "inProgress",
+        progressUpdates: [{ id: "first", text: "Inspecting the conflicting document." }]
+      });
+    });
+    await page.route("**/temporary-conversations/*/stop", async (route) => {
+      stopCount += 1;
+      if (stopCount === 1) {
+        await fulfillJson(route, { ok: false, error: "Stopping the AI failed." });
+        return;
+      }
+      await stopGate;
+      stopped = true;
+      await fulfillJson(route, { ok: true });
+    });
+    await page.route("**/sessions/*/updates/apply", (route) => {
+      updateCount += 1;
+      return fulfillJson(route, { ok: true });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+      await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
+      const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+      const activity = workspace.locator(".vibe64-prompt-hints__assistant-status");
+      const close = workspace.getByRole("button", { name: "Close Resolve Update", exact: true });
+      await expect(activity).toHaveText("AI is working…");
+      await close.click();
+      const dialog = page.getByRole("dialog", { name: "Stop and close repair?", exact: true });
+      await expect(dialog).toBeInViewport();
+      await expect(dialog.getByText("Partial edits will stay in this session", { exact: false })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("repair-close-warning.png"), animations: "disabled" });
+      await dialog.getByRole("button", { name: "Keep chat open", exact: true }).click();
+      await expect(dialog).not.toBeVisible();
+      expect(stopCount).toBe(0);
+      expect(deleteCount).toBe(0);
+      await expect(activity).toHaveText("AI is working…");
+      await close.click();
+      await dialog.getByRole("button", { name: "Stop and close", exact: true }).click();
+      await expect(page.getByText("Stopping the AI failed.", { exact: true })).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Stop and close", exact: true })).toBeEnabled();
+      expect(deleteCount).toBe(0);
+      await dialog.getByRole("button", { name: "Keep chat open", exact: true }).click();
+      await expect(activity).toHaveText("AI is working…");
+      await close.click();
+      await dialog.getByRole("button", { name: "Stop and close", exact: true }).click();
+      await expect.poll(() => stopCount).toBe(2);
+      expect(deleteCount).toBe(0);
+      await expect(dialog.getByRole("button", { name: "Keep chat open", exact: true })).toBeDisabled();
+      releaseStop!();
+      const incompleteDialog = page.getByRole("dialog", { name: "Close incomplete repair?", exact: true });
+      await expect(page.getByText("Conversation deletion failed.", { exact: true })).toBeVisible();
+      await incompleteDialog.getByRole("button", { name: "Keep chat open", exact: true }).click();
+      await expect(workspace.getByText("AI repair stopped", { exact: true })).toBeVisible();
+      await expect(workspace.getByText("Partial edits remain and Update still needs to succeed.", { exact: false })).toBeVisible();
+      await expect(activity).toHaveCount(0);
+      await expect(workspace.getByRole("textbox", { name: "Message temporary AI", exact: true })).toBeEnabled();
+      expect(updateCount).toBe(0);
+      await close.click();
+      await incompleteDialog.getByRole("button", { name: "Close repair", exact: true }).click();
+      await expect(workspace).not.toBeVisible();
+      expect(stopCount).toBe(2);
+      expect(deleteCount).toBe(2);
+      expect(updateCount).toBe(0);
+      await expect(page.getByRole("button", { name: "Update selected session (rebase)", exact: true })).toBeVisible();
+    } finally {
+      releaseStop!();
+    }
   });
 }
 

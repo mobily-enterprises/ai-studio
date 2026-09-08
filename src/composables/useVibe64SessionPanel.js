@@ -390,7 +390,6 @@ function useVibe64SessionPanel(props, emit) {
     sessionId = "",
     workState = null
   } = {}) {
-    applyRuntimeWorkState({ sessionId, workState });
     repositoryStatusRegistry.observe(sessionId, workState);
   }
 
@@ -407,18 +406,22 @@ function useVibe64SessionPanel(props, emit) {
 
 function sessionRepositoryWorkState(workState = null) {
   const source = workState && typeof workState === "object" ? workState : {};
+  const freshness = {
+    checkedAt: String(source.checkedAt || ""),
+    ...(source.updateStatusPending === true ? { updateStatusPending: true } : {})
+  };
   const operationStatus = String(source.operation?.status || "").trim();
   const operationCode = String(source.operation?.code || "").trim();
   const updateStatus = String(source.updateOperation?.status || "").trim();
   if (operationStatus === "running") {
     return {
-      checkedAt: String(source.checkedAt || ""),
+      ...freshness,
       state: "saving"
     };
   }
   if (updateStatus === "running") {
     return {
-      checkedAt: String(source.checkedAt || ""),
+      ...freshness,
       state: "updating"
     };
   }
@@ -427,14 +430,14 @@ function sessionRepositoryWorkState(workState = null) {
     updateStatus === "failed"
   ) {
     return {
-      checkedAt: String(source.checkedAt || ""),
+      ...freshness,
       state: "needs_help",
       updateAvailable: source.updateAvailable === true
     };
   }
   if (source.loading || source.unsaved === null || source.unsaved === undefined) {
     return {
-      checkedAt: String(source.checkedAt || ""),
+      ...freshness,
       state: source.error ? "unavailable" : "checking"
     };
   }
@@ -442,13 +445,13 @@ function sessionRepositoryWorkState(workState = null) {
   if (source.unsaved === true) {
     return {
       changedCount,
-      checkedAt: String(source.checkedAt || ""),
+      ...freshness,
       state: "unsaved",
       updateAvailable: source.updateAvailable === true
     };
   }
   return {
-    checkedAt: String(source.checkedAt || ""),
+    ...freshness,
     state: source.error
       ? "unavailable"
       : (source.updateAvailable === true ? "update_available" : "saved")

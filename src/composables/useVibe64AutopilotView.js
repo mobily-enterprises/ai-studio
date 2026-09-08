@@ -1201,7 +1201,7 @@ function useVibe64AutopilotView(props, emit, {
     const inspectedAt = Date.parse(String(inspected.checkedAt || "")) || 0;
     const monitoredAt = Date.parse(String(monitored?.checkedAt || "")) || 0;
     const monitoredState = String(monitored?.state || "");
-    if (!monitored || monitoredAt < inspectedAt) {
+    if (!monitored || (monitored.updateStatusPending !== true && monitoredAt < inspectedAt)) {
       return inspected;
     }
     const monitoredUnsaved = monitoredState === "unsaved"
@@ -1219,7 +1219,7 @@ function useVibe64AutopilotView(props, emit, {
       unsaved: monitoredUnsaved,
       updateAvailable: monitored.updateAvailable === true ||
         ["update_available", "updating"].includes(monitoredState),
-      updateStatusPending: monitoredState === "updating"
+      updateStatusPending: monitored.updateStatusPending === true || monitoredState === "updating"
     };
   });
   const saveWorkUnsaved = computed(() => saveWorkRepositoryState.value?.unsaved === true);
