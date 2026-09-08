@@ -136,7 +136,7 @@ describe("temporary AI mounted lifetime", () => {
     expect(temporary.activeTask.value).toBe(stateBefore);
   });
 
-  it("does not restart polling when an in-flight Stop fails after unmount", async () => {
+  it.each(["stopTask", "closeTask"])("retires an in-flight %s failure after unmount", async (operation) => {
     const stopping = Promise.withResolvers();
     const { onTaskFinished, task, temporary, unmount } = mountTemporaryAi();
     http.request
@@ -145,15 +145,42 @@ describe("temporary AI mounted lifetime", () => {
     await temporary.send(task.id);
     await vi.advanceTimersByTimeAsync(0);
     http.request.mockReturnValueOnce(stopping.promise);
-    const stop = temporary.stopTask(task.id);
-    const rejected = expect(stop).rejects.toThrow("Could not stop the AI.");
+    const stop = temporary[operation](task.id);
+    const retired = expect(stop).resolves.toBe(operation === "stopTask" ? false : undefined);
     unmount();
+    const stateBefore = temporary.activeTask.value;
     stopping.resolve({ ok: false, error: "Could not stop the AI." });
-    await rejected;
+    await retired;
     await vi.advanceTimersByTimeAsync(1950);
     expect(http.request).toHaveBeenCalledTimes(4);
     expect(onTaskFinished).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+    expect(temporary.activeTask.value).toBe(stateBefore);
+  });
+
+  it.each([
+    { ok: true },
+    { ok: false, error: "Could not delete the conversation." }
+  ])("retires an in-flight deletion after its view is removed: $ok", async (response) => {
+    const deletion = Promise.withResolvers();
+    const { onTaskFinished, task, temporary, unmount } = mountTemporaryAi();
+    http.request
+      .mockResolvedValueOnce({ ok: true, conversationId: "conversation-1" })
+      .mockResolvedValueOnce({ ok: true, runId: "turn-1", status: "inProgress" });
+    await temporary.send(task.id);
+    await vi.advanceTimersByTimeAsync(0);
+    await temporary.stopTask(task.id);
+    http.request.mockReturnValueOnce(deletion.promise);
+    const closing = temporary.closeTask(task.id);
+    const retired = expect(closing).resolves.toBeUndefined();
+    unmount();
+    const stateBefore = temporary.activeTask.value;
+    deletion.resolve(response);
+    await retired;
+    expect(http.request).toHaveBeenCalledTimes(5);
+    expect(onTaskFinished).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(temporary.activeTask.value).toBe(stateBefore);
   });
 
   it.each(["stopTask", "closeTask"])("retires a successful in-flight %s on unmount", async (operation) => {

@@ -146,7 +146,7 @@ for (const width of [390, 1440]) {
 }
 
 test.describe("temporary workspace lifetime", () => {
-  for (const pending of ["creation", "poll"]) {
+  for (const pending of ["creation", "poll", "stop"]) {
     test(`@temporary-unmount archiving a session retires pending ${pending}`, async ({ page }, testInfo) => {
       await mockLaunchTerminalSocket(page);
       const requests: TemporaryAiRecoveryRequests = { mainMessages: [], temporaryStarts: [], temporaryTurns: [] };
@@ -191,23 +191,40 @@ test.describe("temporary workspace lifetime", () => {
         updates += 1;
         return fulfillJson(route, { ok: true });
       });
+      await page.route("**/temporary-conversations/*/stop", async (route) => {
+        if (pending !== "stop") { await route.fallback(); return; }
+        held = true;
+        await gate.promise;
+        await fulfillJson(route, { ok: false, error: "This Stop reply arrived after the session was archived." });
+      });
       try {
         await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
         await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
+        if (pending === "stop") {
+          await page.getByRole("region", { name: "Temporary AI workspace" })
+            .getByRole("button", { name: "Stop", exact: true }).click();
+        }
         await expect.poll(() => held).toBe(true);
         await expect(page.getByRole("region", { name: "Temporary AI workspace" })).toBeVisible();
+        const readsBeforeArchive = reads;
         await page.screenshot({ path: testInfo.outputPath("repair-before-leaving.png") });
         await page.getByRole("button", { name: "Archive session", exact: true }).click();
         await page.getByRole("dialog").getByRole("button", { name: "Archive session", exact: true }).click();
         await expect(page.getByRole("region", { name: "Temporary AI workspace" })).toHaveCount(0);
+        if (pending === "stop") {
+          // Finish the archive feedback before releasing the obsolete Stop reply.
+          await expect(page.getByText("Vibe64 session archived.", { exact: true })).toBeVisible();
+          await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+        }
         gate.resolve();
         await expect.poll(() => deletes).toBe(1);
         // Observe more than two 650ms poll intervals after the held reply settles.
         await page.waitForTimeout(1600);
-        expect(reads).toBe(pending === "poll" ? 1 : 0);
-        expect(requests.temporaryTurns).toHaveLength(pending === "poll" ? 1 : 0);
+        expect(reads).toBe(readsBeforeArchive);
+        expect(requests.temporaryTurns).toHaveLength(pending === "creation" ? 0 : 1);
         expect(updates).toBe(0);
         expect(errors).toEqual([]);
+        expect(await page.getByText("This Stop reply arrived after the session was archived.").count()).toBe(0);
         await page.screenshot({ path: testInfo.outputPath("session-archived-no-task-work.png") });
       } finally {
         gate.resolve();

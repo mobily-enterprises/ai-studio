@@ -43,8 +43,10 @@ Switching between project sessions preserves each session's selected temporary
 chat, progress, and reply draft. Selecting Main chat explicitly keeps Main chat
 selected when returning to that session.
 Removing the project view retires its pending sends and progress readers. Late
-replies cannot restart polling or report a repair completion. If conversation
-creation finishes after departure, the browser requests deletion of that exact
+replies cannot restart polling, report a repair completion, or show obsolete
+Stop or Close errors. Failures remain visible and retryable while the view is
+still mounted. If conversation creation finishes after departure, the browser
+requests deletion of that exact
 conversation without starting a turn. Departure cleanup is best-effort; it does
 not provide the confirmed Stop and deletion guarantee of explicitly closing a
 task. Hiding a retained session or selecting Main chat does not retire its work.

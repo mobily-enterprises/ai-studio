@@ -501,9 +501,8 @@ function useVibe64TemporaryAi({
       });
       return true;
     } catch (error) {
-      if (!disposed) {
-        pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
-      }
+      if (disposed) return false;
+      pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
       throw error;
     } finally {
       stoppingTaskIds.delete(taskId);
@@ -535,6 +534,7 @@ function useVibe64TemporaryAi({
           { method: "DELETE" }
         );
       }
+      if (disposed) return;
       tasks.value = tasks.value.filter((candidate) => candidate.id !== taskId);
       if (activeTaskId.value === taskId) {
         activeTaskId.value = tasks.value[0]?.id || "";
@@ -542,6 +542,9 @@ function useVibe64TemporaryAi({
       if (tasks.value.length === 0) {
         open.value = false;
       }
+    } catch (error) {
+      if (disposed) return;
+      throw error;
     } finally {
       closingTaskIds.delete(taskId);
     }
