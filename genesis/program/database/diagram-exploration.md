@@ -54,15 +54,20 @@ Reset positions uses port-aware orthogonal layout within automatic relationship
 neighbourhoods or user-named groups, packs those groups with space between them,
 and separates disconnected tables. Named membership takes precedence over
 automatic membership. Pinned tables cannot be dragged and retain their exact
-positions on Reset; other cards are placed outside occupied bounds. The router
-avoids cards and penalizes shared horizontal/vertical runs and crossings. It
-does not promise a crossing-free graph or clear routes through overlapping
+positions on Reset; other cards are placed outside occupied bounds. Connection
+routing also runs in the worker, keeping typing and navigation responsive while dense schemas are arranged. It checks clear corridors before
+a bounded obstacle-grid search, avoids cards and penalizes shared
+horizontal/vertical runs and crossings. A route that exhausts the search budget
+remains visible with the same notice as an obstructed route. Enclosed endpoints
+are detected without searching for an impossible path. The router does not promise a crossing-free graph or clear routes through overlapping
 pinned cards. An obstructed-route notice explains how to recover. Worker
 failures use an announced basic arrangement where available, or show an error
 with Retry; they do not silently claim the recommended layout succeeded.
 
-During dragging, incident paths update on animation frames while unchanged
-unrelated routes remain stable. Drop reroutes paths obstructed by the moved
+During dragging, incident paths use inexpensive temporary corridors while
+unchanged unrelated routes remain stable. Pending worker updates are coalesced;
+only the latest graph can be applied. Acknowledging an unchanged saved graph
+does not reroute it or disable its controls. Drop reroutes paths obstructed by the moved
 card and persists positions. Undo/Redo retains up to 30 diagram snapshots for
 the mounted view, including moves, Reset, display/focus/group changes and
 loading a saved view; it does not undo saving or deleting named views.

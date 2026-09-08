@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import ELK from "elkjs/lib/elk.bundled.js";
+import { denseErdSchema } from "../fixtures/denseErdSchema.js";
+import { createErdRelationshipRoutes } from "../../packages/vibe64-database-tools/src/client/erdRelationships.js";
+import { erdColumns, erdNodeHeight, erdLayoutGroups, placeErdNodes } from "../../packages/vibe64-database-tools/src/client/erdModel.js";
 
 import {
   createErdLayoutGraph,
@@ -19,6 +22,25 @@ const edges = [
 ];
 
 describe("Database ERD layout", () => {
+  it("finishes a dense 130-table schema without dropping any relationship", async () => {
+    const schema = denseErdSchema();
+    const nodes = schema.tables.map((table) => {
+      const columns = erdColumns(table, schema.relationships);
+      return { id: table.qualifiedName, data: { table, columns }, position: { x: 0, y: 0 }, dimensions: { width: 296, height: erdNodeHeight(columns) } };
+    });
+    const graph = createErdRelationshipRoutes(nodes, schema.relationships, { fixedSides: true, calculatePaths: false });
+    const layout = await layoutErdGroups(new ELK(), nodes.map((node) => ({ id: node.id, ...node.dimensions, ports: graph.portsByNode.get(node.id) })), graph.routes, erdLayoutGroups(nodes, schema.relationships));
+    const placed = placeErdNodes(nodes, layout.nodes);
+    const result = createErdRelationshipRoutes(placed, schema.relationships, { fixedSides: true, layoutPaths: new Map(layout.paths.map((path) => [path.id, path.points])) });
+    expect(layout.nodes).toHaveLength(130);
+    expect(result.routes).toHaveLength(479);
+    for (const route of result.routes) {
+      expect(route.points[0]).toEqual(route.start);
+      expect(route.points.at(-1)).toEqual(route.end);
+      expect(route.points.slice(1).every((point, index) => Math.abs(point.x - route.points[index].x) < 1e-6 || Math.abs(point.y - route.points[index].y) < 1e-6), JSON.stringify(route.points)).toBe(true);
+    }
+  }, 10_000);
+
   it("builds a relationship graph along the column port direction", () => {
     const graph = createErdLayoutGraph(nodes, [
       ...edges,

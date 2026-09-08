@@ -85,6 +85,14 @@ describe("Database ERD relationships", () => {
     expect(route.points.slice(1).every((point, i) => point.x === route.points[i].x || point.y === route.points[i].y)).toBe(true);
   });
 
+  it("reports enclosed column ports without searching for an impossible escape", () => {
+    const nodes = [tableNode("parent", 0, ["id"]), tableNode("child", 800, ["parent_id"]), tableNode("blocker", 750, ["id"])];
+    const { routes } = createErdRelationshipRoutes(nodes, relationships.slice(0, 1));
+    expect(routes[0].obstructed).toBe(true);
+    expect(routes[0].points[0]).toEqual(routes[0].start);
+    expect(routes[0].points.at(-1)).toEqual(routes[0].end);
+  });
+
   it("represents every composite column pair as one selectable relationship", () => {
     const relation = { ...relationships[0], columns: ["parent_id", "tenant_id"], referencedColumns: ["id", "tenant_id"] };
     const { routes } = createErdRelationshipRoutes([tableNode("parent", 0, ["id", "tenant_id"]), tableNode("child", 600, ["parent_id", "tenant_id"])], [relation]);

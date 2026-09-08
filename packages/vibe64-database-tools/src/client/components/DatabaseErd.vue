@@ -89,7 +89,7 @@
       </VueFlow>
       <div v-if="layoutPending && nodes.length" class="database-erd__notice" role="status">Arranging tables…</div>
       <div v-else-if="layoutError" class="database-erd__notice" role="alert">{{ layoutError }} <v-btn size="x-small" variant="text" @click="rebuild()">Retry</v-btn></div>
-      <div v-else-if="obstructedCount" class="database-erd__notice" role="status">Some connections are blocked by overlapping tables. Move or unpin those tables, then reset positions.</div>
+      <div v-else-if="obstructedCount" class="database-erd__notice" role="status">Some connections could not be routed around tables. Move tables or focus on a smaller group, then reset positions.</div>
       <v-sheet v-if="selectedRelationship || selectedNode" class="database-erd__inspector" rounded="lg" elevation="2">
         <div class="database-erd__inspector-heading">
           <strong>{{ selectedRelationship ? 'Relationship' : selectedNode.data.table.name }}</strong>
@@ -211,6 +211,8 @@ let flow = null;
 let layoutWorker = null;
 let layoutRequestId = 0;
 let rebuildId = 0;
+let graphRefreshId = 0;
+let routingPromise = null;
 let relationshipDragFrame = null;
 let routes = [];
 let storedNodes = props.layout.nodes || [];
@@ -291,8 +293,35 @@ function emphasize() {
   });
 }
 async function refreshGraph({ dragging = false, reset = false, layoutPaths = new Map() } = {}) {
+  const request = ++graphRefreshId;
   applyVisibility();
-  const graph = createErdRelationshipRoutes(nodes.value.filter((node) => !node.hidden), relationships.value, { previousRoutes: reset ? [] : routes, dragging, fixedSides: reset, layoutPaths });
+  // Coalesce drag/visibility updates while the worker is routing. Only the most
+  // recent graph may replace the current one, including after a remote restore.
+  if (routingPromise) await routingPromise.catch(() => {});
+  if (disposed || request !== graphRefreshId) return false;
+  const operation = requestWorker({
+    kind: "routes",
+    nodes: JSON.parse(JSON.stringify(nodes.value.filter((node) => !node.hidden).map((node) => ({
+      id: node.id, position: node.position, dimensions: node.dimensions,
+      data: { table: node.data.table, columns: node.data.columns, collapsed: node.data.collapsed }
+    })))),
+    relationships: JSON.parse(JSON.stringify(relationships.value)),
+    options: {
+      previousRoutes: reset ? [] : routes, dragging, fixedSides: reset, layoutPaths: [...layoutPaths]
+    }
+  });
+  routingPromise = operation;
+  let graph;
+  try {
+    graph = await operation;
+  } catch (error) {
+    if (!disposed && request === graphRefreshId) layoutError.value = error.message || "The ERD connections could not be drawn.";
+    return false;
+  } finally {
+    if (routingPromise === operation) routingPromise = null;
+  }
+  if (disposed || request !== graphRefreshId) return false;
+  layoutError.value = "";
   routes = graph.routes;
   nodes.value = nodes.value.map((node) => ({ ...node, data: { ...node.data, relationshipPorts: graph.portsByNode.get(node.id) || [] } }));
   edges.value = routes.map((route) => ({
@@ -305,23 +334,20 @@ async function refreshGraph({ dragging = false, reset = false, layoutPaths = new
   emphasize();
   await nextTick();
   if (!disposed) flow?.updateNodeInternals?.(nodes.value.filter((node) => !node.hidden).map((node) => node.id));
+  return true;
 }
-function workerLayout(sourceNodes, graph) {
+function requestWorker(payload) {
   const id = ++layoutRequestId;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { layoutResolvers.delete(id); reject(new Error("The layout worker timed out.")); }, 15000);
     layoutResolvers.set(id, { resolve, reject, timeout });
-    layoutWorker.postMessage({
-      id,
-      nodes: sourceNodes.map((node) => ({ id: node.id, ...node.dimensions, ports: graph.portsByNode.get(node.id) })),
-      edges: graph.routes.map((route) => ({ id: route.id, source: route.source, target: route.target, sourceHandle: route.sourceHandle, targetHandle: route.targetHandle })),
-      groups: erdLayoutGroups(sourceNodes, relationships.value)
-    });
+    layoutWorker.postMessage({ ...payload, id });
   });
 }
 async function rebuild({ force = false } = {}) {
   if (!layoutWorker) return;
   const request = ++rebuildId;
+  graphRefreshId += 1;
   layoutPending.value = true;
   layoutError.value = "";
   const saved = nodes.value.length ? snapshot().nodes : storedNodes;
@@ -331,10 +357,14 @@ async function rebuild({ force = false } = {}) {
     const savedTables = new Set(saved.map((node) => node.table));
     const needsSave = force || sourceNodes.some((node) => !savedTables.has(node.id));
     const graph = createErdRelationshipRoutes(sourceNodes, relationships.value, { fixedSides: true, calculatePaths: false });
-    const layout = await workerLayout(sourceNodes, graph);
+    const layout = await requestWorker({
+      nodes: sourceNodes.map((node) => ({ id: node.id, ...node.dimensions, ports: graph.portsByNode.get(node.id) })),
+      edges: graph.routes.map((route) => ({ id: route.id, source: route.source, target: route.target, sourceHandle: route.sourceHandle, targetHandle: route.targetHandle })),
+      groups: erdLayoutGroups(sourceNodes, relationships.value)
+    });
     if (disposed || request !== rebuildId) return;
     nodes.value = placeErdNodes(sourceNodes, layout.nodes, saved, force);
-    await refreshGraph({ reset: true, layoutPaths: new Map(layout.paths.map((path) => [path.id, path.points])) });
+    if (!await refreshGraph({ reset: true, layoutPaths: new Map(layout.paths.map((path) => [path.id, path.points])) })) return;
     await updateViewport(initialViewport);
     if (needsSave) persistPositions();
     if (layout.fallback) feedback.error(new Error("The recommended layout was unavailable; a basic arrangement was used."), "Layout needs attention.");
@@ -540,6 +570,17 @@ watch(() => props.schema, () => { if (layoutWorker) void rebuild(); });
 watch(() => props.layout, (layout) => {
   if (!layout.revision || layout.revision <= appliedLayoutRevision) return;
   appliedLayoutRevision = layout.revision;
+  const current = snapshot();
+  // Acknowledging our own save (or changing only named views) does not change
+  // the graph. Rebuilding it would disable controls and repeat dense routing.
+  if (["columnMode", "focusTable", "activeGroup"].every((key) => layout[key] === current[key]) &&
+      JSON.stringify(layout.groups) === JSON.stringify(current.groups) &&
+      layout.nodes.length === current.nodes.length && layout.nodes.every((node, index) =>
+        Object.entries(current.nodes[index]).every(([key, value]) => node[key] === value))) {
+    views.value = JSON.parse(JSON.stringify(layout.views || []));
+    pendingRemoteLayout = null;
+    return;
+  }
   if (draggingSnapshot) {
     pendingRemoteLayout = layout;
   } else if (layoutWorker) {
@@ -567,6 +608,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   rebuildId += 1;
+  graphRefreshId += 1;
   if (relationshipDragFrame !== null) globalThis.cancelAnimationFrame(relationshipDragFrame);
   document.removeEventListener("fullscreenchange", onFullscreenChange);
   for (const resolver of layoutResolvers.values()) { clearTimeout(resolver.timeout); resolver.reject(new Error("ERD closed.")); }

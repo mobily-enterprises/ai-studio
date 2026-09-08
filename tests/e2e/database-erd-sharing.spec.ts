@@ -1,3 +1,4 @@
+import { denseErdSchema } from "../fixtures/denseErdSchema.js";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { expect, test, type Page } from "@playwright/test";
@@ -13,8 +14,8 @@ import { fulfillJson, routeApiEndpoint } from "./support/base-shell/http";
 
 // Real database service, shared artifact operations, event provider and sockets.
 // Only the schema/SQL data and unrelated Studio shell are controlled fixtures.
-async function sharedDiagramServer(frontend: string, { largeTable = false } = {}) {
-  const schema = {
+async function sharedDiagramServer(frontend: string, { largeTable = false, schemaOverride = null, savedLayout = null } = {}) {
+  const schema = schemaOverride || {
     engine: "postgresql", database: "erd_test", refreshedAt: "2026-09-07T00:00:00Z",
     schemas: [{ name: "public" }], relationships: largeTable ? [{
       id: "orders_jobs", constraintName: "orders_jobs_fk", columns: ["job_id"],
@@ -39,7 +40,7 @@ async function sharedDiagramServer(frontend: string, { largeTable = false } = {}
       artifacts.set(`${sessionId}:${path}`, JSON.stringify(value));
     }
   };
-  await saveErdLayout(store, directChatSessionId, {
+  await saveErdLayout(store, directChatSessionId, savedLayout || {
     nodes: [
       { table: "public.customers", x: 50, y: largeTable ? 350 : 50 }, { table: "public.orders", x: 450, y: 50 },
       ...(largeTable ? [{ table: "public.Jobs", x: 50, y: 50 }] : [])
@@ -97,9 +98,9 @@ async function sharedDiagramServer(frontend: string, { largeTable = false } = {}
           projectService: {
             createSessionStore: async () => store,
             sessionDatabaseEnvironment: async () => ({ databaseToolEnvironment: {
-              contract: "vibe64.database-tool-environment.v1", kind: "postgresql",
-              read: { host: "127.0.0.1", port: 5432, database: "erd_test", username: "reader" },
-              write: { host: "127.0.0.1", port: 5432, database: "erd_test", username: "writer" }
+              contract: "vibe64.database-tool-environment.v1", kind: schema.engine,
+              read: { host: "127.0.0.1", port: 5432, database: schema.database, username: "reader" },
+              write: { host: "127.0.0.1", port: 5432, database: schema.database, username: "writer" }
             } })
           },
           publishLayoutChanged: createDatabaseLayoutChangedPublisher(values.events),
@@ -120,7 +121,7 @@ async function sharedDiagramServer(frontend: string, { largeTable = false } = {}
   };
 }
 
-async function openDiagram(page: Page, url: string) {
+async function openDiagram(page: Page, url: string, { waitForReady = true } = {}) {
   await mockDirectChatSession(page);
   const sourcePath = `/workspace/managed/example-target-app/sessions/active/${directChatSessionId}/source`;
   const session = { ...directChatSessionPayload, sourcePath, metadata: {
@@ -132,6 +133,7 @@ async function openDiagram(page: Page, url: string) {
   await routeApiEndpoint(page, "/vibe64/sessions/current", (route) => fulfillJson(route, { ok: true, sessionId: directChatSessionId }));
   await page.goto(`${url}${DASHBOARD_PATH}/database?sessionId=${directChatSessionId}`);
   await page.getByRole("button", { name: "ERD", exact: true }).click({ timeout: 15_000 });
+  if (!waitForReady) return;
   await expect(page.locator('.vue-flow__node[data-id="public.customers"]')).toBeVisible();
   await expect(page.getByText("Arranging tables…", { exact: true })).toHaveCount(0);
 }
@@ -258,3 +260,100 @@ for (const width of [390, 960, 1600]) {
     }
   });
 }
+
+
+for (const saved of [false, true]) {
+  test(`@erd-dense 130 tables and 479 links remain usable with ${saved ? "saved" : "new"} positions`, async ({ browser, baseURL }) => {
+    const schema = denseErdSchema();
+    const savedNodes = saved ? schema.tables.slice(0, 126).map((table, index) => ({
+      table: table.qualifiedName, x: index % 10 * 420, y: Math.floor(index / 10) * 360
+    })) : [];
+    const server = await sharedDiagramServer(baseURL!, { schemaOverride: schema, savedLayout: {
+      nodes: savedNodes, viewport: { x: 20, y: 20, zoom: 0.3 }
+    } });
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", error => errors.push(error.message));
+      await page.addInitScript(() => {
+        const NativeWorker = window.Worker;
+        (window as any).erdRoutingRequests = 0;
+        window.Worker = class extends NativeWorker {
+          postMessage(message: any, ...args: any[]) {
+            if (message?.kind === "routes") (window as any).erdRoutingRequests += 1;
+            super.postMessage(message, ...args);
+          }
+        };
+      });
+      await openDiagram(page, server.url, { waitForReady: false });
+      await expect.poll(() => page.evaluate(() => (window as any).erdRoutingRequests)).toBeGreaterThan(0);
+      const started = Date.now();
+      const search = page.getByRole("combobox", { name: "Find table or column" });
+      await search.fill("table_1");
+      expect(Date.now() - started).toBeLessThan(1500);
+      await search.press("Escape");
+      await expect(page.locator(".vue-flow__node")).toHaveCount(130, { timeout: 15_000 });
+      await expect(page.locator(".vue-flow__edge")).toHaveCount(479, { timeout: 15_000 });
+      const reset = page.getByRole("button", { name: "Reset positions", exact: true });
+      await expect(reset).toBeEnabled({ timeout: 15_000 });
+      await expect.poll(() => server.saves.length).toBe(1);
+      const positions = () => page.locator(".vue-flow__node").evaluateAll((nodes: HTMLElement[]) => nodes.map(node => ({ id: node.dataset.id, position: node.style.transform })));
+      const initial = await positions();
+      if (saved) {
+        const persisted = new Map((server.saves[0].layout as any).nodes.map(node => [node.table, node]));
+        for (const node of savedNodes) expect(persisted.get(node.table)).toMatchObject({ x: node.x, y: node.y });
+      }
+      await page.getByRole("button", { name: "All columns", exact: true }).click();
+      await expect.poll(() => server.saves.length).toBe(2);
+      expect(await positions()).toEqual(initial);
+      await expect(page.locator(".vue-flow__edge")).toHaveCount(479);
+      await page.getByRole("button", { name: "Keys only", exact: true }).first().click();
+      await expect.poll(() => server.saves.length).toBe(3);
+      await reset.click();
+      // Leave while the worker is active, then return using the warm workspace.
+      await page.getByRole("button", { name: "Data", exact: true }).click();
+      await page.getByRole("button", { name: "ERD", exact: true }).click();
+      await expect(reset).toBeEnabled({ timeout: 15_000 });
+      await expect(page.locator(".vue-flow__edge")).toHaveCount(479);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+      await server.close();
+    }
+  });
+}
+
+test("@erd-dense routing worker errors leave an actionable retry and recover", async ({ browser, baseURL }) => {
+  const server = await sharedDiagramServer(baseURL!);
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  try {
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(() => {
+      const NativeWorker = window.Worker;
+      let failed = false;
+      window.Worker = class extends NativeWorker {
+        postMessage(message: any, ...args: any[]) {
+          if (message?.kind === "routes" && !failed) {
+            failed = true;
+            setTimeout(() => this.dispatchEvent(new MessageEvent("message", { data: { id: message.id, ok: false, error: "Routing worker unavailable" } })), 30);
+            return;
+          }
+          super.postMessage(message, ...args);
+        }
+      };
+    });
+    await openDiagram(page, server.url, { waitForReady: false });
+    await expect(page.locator('.database-erd__notice[role="alert"]')).toContainText("Routing worker unavailable");
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(page.locator('.database-erd__notice[role="alert"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reset positions", exact: true })).toBeEnabled();
+    await expect(page.locator(".vue-flow__node")).toHaveCount(2);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+    await server.close();
+  }
+});

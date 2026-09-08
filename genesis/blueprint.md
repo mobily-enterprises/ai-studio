@@ -24,8 +24,10 @@ Confirmed Stop releases chat controls without requiring a final provider message
 Assistant status recovers automatically after a failed connection check, without
 requiring a page reload or interrupting the assistant's work.
 People can explore a project's database through a readable relationship diagram,
-starting with its keys and expanding detail when needed. Expanding fields keeps
-every table in place and preserves the current zoom. Connections identify
+starting with its keys and expanding detail when needed. Large diagrams load
+without blocking typing or navigation while their connections are calculated.
+Expanding fields keeps every table in place and preserves the current zoom.
+Connections identify
 the linked fields and their relationship, remain traceable while tables move,
 and avoid covering tables where space permits. People can search fields, focus
 on a table's neighbours, arrange or group tables, pin important positions, undo

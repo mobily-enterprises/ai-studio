@@ -90,14 +90,43 @@ function pop(queue) {
   return first;
 }
 
-export function routeErdConnection(route, obstacles, occupied = [], index = 0) {
+export function routeErdConnection(route, obstacles, occupied = [], index = 0, dragging = false) {
   const start = route.start;
   const end = route.end;
   const from = { x: start.x + (route.sourcePosition === "left" ? -STUB : STUB), y: start.y };
   const to = { x: end.x + (route.targetPosition === "left" ? -STUB : STUB), y: end.y };
+  const basic = compact([start, from, { x: route.laneX, y: from.y }, { x: route.laneX, y: to.y }, to, end]);
+  if (dragging) return { points: basic, obstructed: !erdPathClear(basic, obstacles, route.source, route.target) };
+  // Expanded or overlapping cards can enclose an endpoint. No grid search can
+  // escape that obstacle, regardless of how many corridors it explores.
+  if (obstacles.some((box) => [from, to].some((point) => point.x > box.left && point.x < box.right && point.y > box.top && point.y < box.bottom)) ||
+      segmentBlocked(start, from, obstacles.filter((box) => box.id !== route.source)) ||
+      segmentBlocked(to, end, obstacles.filter((box) => box.id !== route.target))) {
+    return { points: basic, obstructed: true };
+  }
   const gap = 4 + (index % 7) * 8;
   const xs = [...new Set([from.x, to.x, route.laneX, ...obstacles.flatMap((box) => [box.left - gap, box.right + gap])])].sort((a, b) => a - b);
   const ys = [...new Set([from.y, to.y, ...obstacles.flatMap((box) => [box.top - gap, box.bottom + gap])])].sort((a, b) => a - b);
+  // Most links need only one clear horizontal or vertical corridor. Check those
+  // before searching the full obstacle grid; dense schemas otherwise make the
+  // crossing penalties explore tens of thousands of points for each link.
+  const candidates = [
+    ...xs.map((x) => compact([start, from, { x, y: from.y }, { x, y: to.y }, to, end])),
+    ...ys.map((y) => compact([start, from, { x: from.x, y }, { x: to.x, y }, to, end]))
+  ].filter((points) => erdPathClear(points, obstacles, route.source, route.target));
+  if (candidates.length) {
+    const score = (points) => points.slice(1).reduce((sum, b, i) => {
+      const a = points[i];
+      return sum + Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + BEND_COST + segmentPenalty(a, b, occupied);
+    }, 0);
+    let best = candidates[0];
+    let bestScore = score(best);
+    for (const candidate of candidates.slice(1)) {
+      const candidateScore = score(candidate);
+      if (candidateScore < bestScore) { best = candidate; bestScore = candidateScore; }
+    }
+    return { points: best, obstructed: false };
+  }
   const width = xs.length;
   const startId = ys.indexOf(from.y) * width + xs.indexOf(from.x);
   const endId = ys.indexOf(to.y) * width + xs.indexOf(to.x);
@@ -108,7 +137,10 @@ export function routeErdConnection(route, obstacles, occupied = [], index = 0) {
   const queue = [];
   push(queue, { key: startId * 2, cost: 0, score: distance(from, to) });
   let finish = null;
-  while (queue.length) {
+  // Crowded or overlapping cards must never cause an unbounded route search.
+  let explored = 0;
+  while (queue.length && explored < 2000) {
+    explored += 1;
     const current = pop(queue);
     if (costs.get(current.key) !== current.cost) continue;
     const id = Math.floor(current.key / 2);
@@ -132,7 +164,7 @@ export function routeErdConnection(route, obstacles, occupied = [], index = 0) {
     }
   }
   if (finish === null) {
-    return { points: compact([start, from, { x: route.laneX, y: from.y }, { x: route.laneX, y: to.y }, to, end]), obstructed: true };
+    return { points: basic, obstructed: true };
   }
   const middle = [];
   for (let key = finish; key !== undefined; key = previous.get(key)) middle.push(point(Math.floor(key / 2)));

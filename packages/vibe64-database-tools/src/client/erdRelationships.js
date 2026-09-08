@@ -74,7 +74,7 @@ export function createErdRelationshipRoutes(nodes = [], relationships = [], { pr
       route.points = old.points;
       route.obstructed = old.obstructed;
     } else {
-      Object.assign(route, routeErdConnection(route, obstacles, occupied, index));
+      Object.assign(route, routeErdConnection(route, obstacles, occupied, index, dragging));
     }
     route.points.slice(1).forEach((point, i) => occupied.push([route.points[i], point]));
   }
