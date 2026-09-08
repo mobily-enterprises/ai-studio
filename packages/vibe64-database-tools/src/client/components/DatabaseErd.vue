@@ -299,16 +299,16 @@ async function refreshGraph({ dragging = false, reset = false, layoutPaths = new
   // recent graph may replace the current one, including after a remote restore.
   if (routingPromise) await routingPromise.catch(() => {});
   if (disposed || request !== graphRefreshId) return false;
+  // Keep component callbacks and Vue's reactive proxies out of the worker payload.
+  const routingNodes = nodes.value.filter((node) => !node.hidden).map((node) => ({
+    id: node.id, position: node.position, dimensions: node.dimensions,
+    data: { table: node.data.table, columns: node.data.columns, collapsed: node.data.collapsed }
+  }));
   const operation = requestWorker({
     kind: "routes",
-    nodes: JSON.parse(JSON.stringify(nodes.value.filter((node) => !node.hidden).map((node) => ({
-      id: node.id, position: node.position, dimensions: node.dimensions,
-      data: { table: node.data.table, columns: node.data.columns, collapsed: node.data.collapsed }
-    })))),
+    nodes: JSON.parse(JSON.stringify(routingNodes)),
     relationships: JSON.parse(JSON.stringify(relationships.value)),
-    options: {
-      previousRoutes: reset ? [] : routes, dragging, fixedSides: reset, layoutPaths: [...layoutPaths]
-    }
+    options: { previousRoutes: reset ? [] : routes, dragging, fixedSides: reset, layoutPaths }
   });
   routingPromise = operation;
   let graph;

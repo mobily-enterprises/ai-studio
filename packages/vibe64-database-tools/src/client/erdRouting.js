@@ -113,20 +113,21 @@ export function routeErdConnection(route, obstacles, occupied = [], index = 0, d
   const candidates = [
     ...xs.map((x) => compact([start, from, { x, y: from.y }, { x, y: to.y }, to, end])),
     ...ys.map((y) => compact([start, from, { x: from.x, y }, { x: to.x, y }, to, end]))
-  ].filter((points) => erdPathClear(points, obstacles, route.source, route.target));
-  if (candidates.length) {
-    const score = (points) => points.slice(1).reduce((sum, b, i) => {
+  ];
+  let best = null;
+  let bestScore = Infinity;
+  for (const points of candidates) {
+    if (!erdPathClear(points, obstacles, route.source, route.target)) continue;
+    const score = points.slice(1).reduce((sum, b, i) => {
       const a = points[i];
       return sum + Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + BEND_COST + segmentPenalty(a, b, occupied);
     }, 0);
-    let best = candidates[0];
-    let bestScore = score(best);
-    for (const candidate of candidates.slice(1)) {
-      const candidateScore = score(candidate);
-      if (candidateScore < bestScore) { best = candidate; bestScore = candidateScore; }
+    if (!best || score < bestScore) {
+      best = points;
+      bestScore = score;
     }
-    return { points: best, obstructed: false };
   }
+  if (best) return { points: best, obstructed: false };
   const width = xs.length;
   const startId = ys.indexOf(from.y) * width + xs.indexOf(from.x);
   const endId = ys.indexOf(to.y) * width + xs.indexOf(to.x);

@@ -11,9 +11,7 @@ self.addEventListener("message", async (event) => {
   try {
     const nodes = Array.isArray(request.nodes) ? request.nodes : [];
     if (request.kind === "routes") {
-      const graph = createErdRelationshipRoutes(nodes, request.relationships, {
-        ...request.options, layoutPaths: new Map(request.options.layoutPaths)
-      });
+      const graph = createErdRelationshipRoutes(nodes, request.relationships, request.options);
       self.postMessage({
         id: request.id, ok: true, portsByNode: graph.portsByNode,
         routes: graph.routes.map((route) => ({ ...route, sourceNode: undefined, targetNode: undefined }))
