@@ -4,7 +4,7 @@ import { BASE_URL, DASHBOARD_PATH, directChatSessionId, directChatSessionPayload
 import { mockDirectChatSession } from "./support/base-shell-mocks";
 import { fulfillJson, routeApiEndpoint } from "./support/base-shell/http";
 
-async function mockFiles(page) {
+async function mockFiles(page, { initialStars = ["src/app.js", "deleted.md"], additionalFiles = {} } = {}) {
   const messages: object[] = [];
   await mockDirectChatSession(page);
   const session = {
@@ -29,8 +29,8 @@ async function mockFiles(page) {
     return fulfillJson(route, { ok: true, delivered: true, messageId: body.messageId, sessionId: directChatSessionId });
   });
   const base = `/vibe64/sessions/${directChatSessionId}/source-editor`;
-  const files = { "README.md": "# Hello\n", "notes.bin": Buffer.from([0, 255, 3]), "src/app.js": "export const ready = true;\n" };
-  let stars = ["src/app.js", "deleted.md"];
+  const files = { "README.md": "# Hello\n", "notes.bin": Buffer.from([0, 255, 3]), "src/app.js": "export const ready = true;\n", ...additionalFiles };
+  let stars = [...initialStars];
   await routeApiEndpoint(page, base, async (route) => {
     const url = new URL(route.request().url());
     const operation = url.pathname.split("/").at(-1);
@@ -44,10 +44,17 @@ async function mockFiles(page) {
     }
     if (operation === "tree") {
       const directory = url.searchParams.get("path") || "";
-      const entries = directory === "src" ? ["src/app.js"] : ["README.md", "notes.bin"];
-      const children: object[] = entries.map((path) => ({ type: "file", name: path.split("/").at(-1), path }));
-      if (!directory) children.push({ type: "directory", name: "src", path: "src", loaded: false, children: [] });
-      return fulfillJson(route, { ok: true, policy: {}, tree: { type: "directory", name: directory, path: directory, loaded: true, children } });
+      const prefix = directory ? `${directory}/` : "";
+      const children = new Map();
+      for (const file of Object.keys(files)) {
+        if (!file.startsWith(prefix)) continue;
+        const [name, ...descendants] = file.slice(prefix.length).split("/");
+        const path = `${prefix}${name}`;
+        children.set(path, descendants.length
+          ? { type: "directory", name, path, loaded: false, children: [] }
+          : { type: "file", name, path });
+      }
+      return fulfillJson(route, { ok: true, policy: {}, tree: { type: "directory", name: directory, path: directory, loaded: true, children: [...children.values()] } });
     }
     if (operation === "file") {
       const path = url.searchParams.get("path") || "";
@@ -97,6 +104,71 @@ test("download offers an explicit save choice and waits for that save", async ({
 });
 
 for (const width of [390, 900, 1600]) {
+  test(`@compact-stars long and duplicate filenames remain usable at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const longPath = `src/${"long-filename-".repeat(12)}.js`;
+    await mockFiles(page, {
+      initialStars: ["src/app.js", "lib/app.js", longPath, "deleted.md", "README.md", "notes.bin"],
+      additionalFiles: { "lib/app.js": "export const library = true;\n", [longPath]: "export const long = true;\n" }
+    });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    let starReads = 0;
+    page.on("request", (request) => {
+      if (request.method() === "GET" && new URL(request.url()).pathname.endsWith("/source-editor/stars")) starReads += 1;
+    });
+    await page.goto(`${BASE_URL}${DASHBOARD_PATH}/files`);
+    const editor = page.getByLabel("Session source editor");
+    const starred = editor.locator(".vibe64-source-editor__starred");
+    await expect(starred.locator("summary")).toHaveText("Starred 6");
+    await expect(starred).toHaveJSProperty("open", false);
+    await starred.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    await expect(starred).toHaveJSProperty("open", true);
+    await expect(starred.getByRole("listitem")).toHaveCount(6);
+    await expect(starred.locator(".starred-files-list__open").filter({ hasText: /^app\.js$/ })).toHaveCount(2);
+    const first = starred.locator('.starred-files-list__open[title="src/app.js"]');
+    const second = starred.locator('.starred-files-list__open[title="lib/app.js"]');
+    await expect(first).toHaveAccessibleName("src/app.js");
+    await expect(second).toHaveAccessibleName("lib/app.js");
+    const missing = starred.locator('.starred-files-list__open[title^="deleted.md:"]');
+    await expect(missing).toBeDisabled();
+    await expect(missing).toHaveAccessibleDescription("deleted.md: Not found in this session");
+    const long = starred.getByTitle(longPath, { exact: true }).locator("strong");
+    await expect(long).toHaveCSS("white-space", "nowrap");
+    await expect(long).toHaveCSS("text-overflow", "ellipsis");
+    expect(await long.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`compact-stars-${width}.png`), animations: "disabled" });
+    await second.click();
+    await expect(editor.locator(".cm-content")).toContainText("export const library = true;");
+    await first.click();
+    await expect(editor.locator(".cm-content")).toContainText("export const ready = true;");
+    await expect(starred).toHaveJSProperty("open", true);
+    const beforeTyping = starReads;
+    await editor.locator(".cm-content").fill("export const ready = false;\n");
+    await expect(starred).toHaveJSProperty("open", true);
+    expect(starReads).toBe(beforeTyping);
+
+    const showChat = page.getByRole("button", { name: "Show chat", exact: true });
+    if (await showChat.isVisible()) await showChat.click();
+    const beforePicker = starReads;
+    await page.getByRole("button", { name: "Starred files (6)", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Find a starred file", exact: true })).toBeFocused();
+    await expect.poll(() => starReads).toBe(beforePicker + 1);
+    await page.getByRole("textbox", { name: "Find a starred file", exact: true }).fill("src/app.js");
+    await page.keyboard.press("Enter");
+    await expect(editor).toBeVisible();
+    await expect(editor.locator(".cm-content")).toContainText("export const ready = false;");
+    await expect(starred).toHaveJSProperty("open", true);
+    await starred.locator("summary").click();
+    await expect(starred).toHaveJSProperty("open", false);
+    await page.reload();
+    await expect(starred.locator("summary")).toHaveText("Starred 6");
+    await expect(starred).toHaveJSProperty("open", false);
+    expect(errors).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
   test(`starred files open from chat and downloads preserve bytes at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const { messages } = await mockFiles(page);
@@ -146,5 +218,51 @@ for (const width of [390, 900, 1600]) {
     await page.reload();
     await expect(editor).toBeVisible();
     await expect(editor.locator(".vibe64-source-editor__starred").getByRole("button", { name: "Unstar README.md", exact: true })).toBeVisible();
+  });
+}
+
+for (const width of [390, 1600]) {
+  test(`@star-failure overlapping failed removals preserve order without an inline error at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await mockFiles(page, { initialStars: ["src/app.js", "README.md", "deleted.md"] });
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    let writes = 0;
+    let reads = 0;
+    await routeApiEndpoint(page, `/vibe64/sessions/${directChatSessionId}/source-editor/stars`, async (route) => {
+      if (route.request().method() === "GET") {
+        reads += 1;
+        return route.fallback();
+      }
+      const { path } = route.request().postDataJSON();
+      writes += 1;
+      await (path === "src/app.js" ? first.promise : second.promise);
+      return fulfillJson(route, { ok: false, error: `Could not remove ${path}` });
+    });
+    try {
+      await page.goto(`${BASE_URL}${DASHBOARD_PATH}/files`);
+      const starred = page.getByLabel("Session source editor").locator(".vibe64-source-editor__starred");
+      await expect(starred.locator("summary")).toHaveText("Starred 3");
+      const list = starred.getByRole("list", { name: "Starred files", exact: true });
+      const listTop = (await list.boundingBox())!.y;
+      const beforeWrites = reads;
+      await starred.getByRole("button", { name: "Unstar src/app.js", exact: true }).click();
+      await starred.getByRole("button", { name: "Unstar README.md", exact: true }).click();
+      await expect.poll(() => writes).toBe(2);
+      first.resolve();
+      await expect(starred.getByRole("button", { name: "Unstar src/app.js", exact: true })).toBeVisible();
+      await expect(starred.locator(".v-alert")).toHaveCount(0);
+      expect((await list.boundingBox())!.y).toBe(listTop);
+      await expect(page.getByText("Could not remove src/app.js", { exact: true })).toBeVisible();
+      expect(reads).toBe(beforeWrites);
+      second.resolve();
+      await expect(starred.locator(".starred-files-list__open strong")).toHaveText(["app.js", "README.md", "deleted.md"]);
+      await expect.poll(() => reads).toBe(beforeWrites + 1);
+      await expect(page.getByText("Could not remove README.md", { exact: true })).toBeVisible();
+      await expect(starred.locator(".v-alert")).toHaveCount(0);
+    } finally {
+      first.resolve();
+      second.resolve();
+    }
   });
 }

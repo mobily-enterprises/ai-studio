@@ -13,6 +13,7 @@
       <li v-for="file in displayedFiles" :key="file.path">
         <button
           class="starred-files-list__open"
+          :aria-label="compact ? file.path : undefined"
           :disabled="!file.available"
           :title="file.available ? file.path : `${file.path}: ${file.reason}`"
           type="button"

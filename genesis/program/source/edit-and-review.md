@@ -63,12 +63,17 @@ remain listed as unavailable in the selected session until unstarred. Availabili
 checks touch only the bounded starred paths, never the whole source tree.
 The collapsible Starred section and chat's searchable star picker share one
 client state. The file browser shows one filename per row, with an ellipsis for
-long names and the full path on hover. More than four stars start collapsed.
+long names and the full path on hover and in each button's accessible name.
+More than four stars start collapsed.
 The picker is a popover on larger screens and a bottom sheet on
 compact screens, with a compact search field and Close on one row and no
 redundant heading. Opening a star uses normal Dashboard Files navigation without
 clearing the chat draft. Toggle failures roll back only the affected star and
-show an error; successful toggles do not generate toasts. Opening the picker
+show action feedback without shifting the list. Once pending changes settle,
+a failed batch rereads saved stars to restore authoritative ordering without
+losing successful changes. Newer edits supersede an in-flight reread; reconciliation
+remains pending until a current read succeeds. Successful toggles alone do not
+add a read or generate toasts. Opening the picker
 reloads saved stars, so other-device changes appear without background polling.
 Selected-file observation follows the active session and editor pane.
 Retaining an inactive session does not retain its file connection; returning to the
