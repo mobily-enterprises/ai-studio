@@ -26,21 +26,21 @@
     </template>
     <v-card ref="panel" class="starred-files-menu" rounded="lg" @keydown.esc.stop.prevent="dismiss">
       <div class="starred-files-menu__header">
-        <h2>Starred files</h2>
+        <v-text-field
+          ref="searchField"
+          v-model="query"
+          aria-label="Find a starred file"
+          autofocus
+          clearable
+          density="compact"
+          hide-details
+          placeholder="Search"
+          :prepend-inner-icon="mdiMagnify"
+          variant="outlined"
+          @keydown.enter.prevent="openFirstMatch"
+        />
         <v-btn aria-label="Close starred files" :icon="mdiClose" size="small" variant="text" @click="dismiss" />
       </div>
-      <v-text-field
-        ref="searchField"
-        v-model="query"
-        autofocus
-        clearable
-        density="compact"
-        hide-details
-        label="Find a starred file"
-        :prepend-inner-icon="mdiMagnify"
-        variant="outlined"
-        @keydown.enter.prevent="openFirstMatch"
-      />
       <div class="starred-files-menu__list">
         <Vibe64StarredFilesList :bookmarks="bookmarks" :files="matchingFiles" @open-file="openFile" />
       </div>
@@ -121,14 +121,10 @@ function openFirstMatch() {
 }
 
 .starred-files-menu__header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-}
-
-.starred-files-menu__header h2 {
-  font-size: 1rem;
-  font-weight: 500;
+  gap: 0.5rem;
 }
 
 .starred-files-menu__list {

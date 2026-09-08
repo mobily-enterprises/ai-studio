@@ -12,6 +12,7 @@ import {
   pathExists
 } from "@local/vibe64-core/server/core";
 import { deepFreeze } from "@local/vibe64-core/server/deepFreeze";
+import { logOperationalEvent } from "@local/vibe64-core/server/logging";
 import {
   runVibe64Command
 } from "@local/vibe64-execution/server";
@@ -692,6 +693,8 @@ async function quarantineAbandonedSessionLock(lockPath = "") {
 }
 
 async function acquireSessionLock(sessionPaths, lockName = "", {
+  logger = null,
+  operation = "",
   processPlatform = process.platform,
   waitMs = 0
 } = {}) {
@@ -699,7 +702,30 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
   const lockRoot = path.dirname(lockPath);
   const processIdentity = await currentSessionLockProcessIdentity(processPlatform);
   const token = randomUUID();
+  const attemptId = randomUUID();
   const startedAtMs = Date.now();
+  let contentionLogged = false;
+  function logLockEvent(event, fields = {}) {
+    if (!operation) {
+      return;
+    }
+    try {
+      logOperationalEvent(logger, ["contended", "rejected"].includes(event) ? "warn" : "info", {
+        component: "vibe64.session_lock",
+        event: `vibe64.session_lock.${event}`,
+        projectRoot: sessionPaths.projectContextRoot,
+        sessionId: sessionPaths.sessionId,
+        lockName,
+        operation,
+        attemptId,
+        pid: process.pid,
+        waitMs,
+        ...fields
+      }, `Session lock ${event}.`);
+    } catch {
+      // Diagnostics must never affect lock ownership or operation admission.
+    }
+  }
   await mkdir(lockRoot, {
     recursive: true
   });
@@ -708,9 +734,12 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
       await mkdir(lockPath, {
         mode: 0o700
       });
+      const acquiredAtMs = Date.now();
       try {
         await writeJsonFile(path.join(lockPath, "owner.json"), {
-          createdAt: new Date().toISOString(),
+          createdAt: new Date(acquiredAtMs).toISOString(),
+          operation: operation || lockName,
+          attemptId,
           pid: process.pid,
           processIdentity,
           schemaVersion: SESSION_LOCK_OWNER_SCHEMA_VERSION,
@@ -723,6 +752,7 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
         });
         throw error;
       }
+      logLockEvent("acquired", { waitedMs: Date.now() - startedAtMs });
       return async () => {
         const owner = await readSessionLockOwner(lockPath);
         if (normalizeText(owner?.token) !== token) {
@@ -741,6 +771,7 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
           force: true,
           recursive: true
         });
+        logLockEvent("released", { heldMs: Date.now() - acquiredAtMs });
       };
     } catch (error) {
       if (error?.code !== "EEXIST") {
@@ -749,7 +780,25 @@ async function acquireSessionLock(sessionPaths, lockName = "", {
       if (await quarantineAbandonedSessionLock(lockPath)) {
         continue;
       }
-      if (Date.now() - startedAtMs >= waitMs) {
+      const waitedMs = Date.now() - startedAtMs;
+      const rejected = waitedMs >= waitMs;
+      if (operation && (rejected || !contentionLogged)) {
+        const owner = await readSessionLockOwner(lockPath);
+        const acquiredAtMs = Date.parse(owner?.createdAt);
+        logLockEvent(rejected ? "rejected" : "contended", {
+          waitedMs,
+          owner: owner ? {
+            operation: normalizeText(owner.operation) || "unknown",
+            attemptId: normalizeText(owner.attemptId),
+            pid: owner.pid,
+            createdAt: owner.createdAt,
+            heldMs: Number.isFinite(acquiredAtMs) ? Math.max(0, Date.now() - acquiredAtMs) : null,
+            processStatus: await sessionLockOwnerProcessStatus(owner)
+          } : null
+        });
+        contentionLogged = true;
+      }
+      if (rejected) {
         return null;
       }
       await delay(Math.min(SESSION_LOCK_POLL_MS, Math.max(1, waitMs - (Date.now() - startedAtMs))));
@@ -1074,6 +1123,7 @@ function conversationTurnHasMessages(turn = {}) {
 
 function createVibe64SessionStore({
   clock = undefined,
+  logger = null,
   onRenewalArchiveCommitStep = null,
   onRenewalQuiesceStep = null,
   projectContextRoot = process.cwd(),
@@ -1098,6 +1148,7 @@ function createVibe64SessionStore({
   function acquireStoreSessionLock(sessionPaths, lockName = "", options = {}) {
     return acquireSessionLock(sessionPaths, lockName, {
       ...options,
+      logger,
       processPlatform: sessionLockProcessPlatform
     });
   }
@@ -1696,6 +1747,7 @@ function createVibe64SessionStore({
   }
 
   async function runSessionExclusiveRecord(sessionId, operationName, operation, {
+    operation: diagnosticOperation = "",
     renewal = false,
     waitMs = 0
   } = {}) {
@@ -1723,6 +1775,7 @@ function createVibe64SessionStore({
       }
     }
     const release = await acquireStoreSessionLock(sessionPaths, operationName, {
+      operation: diagnosticOperation,
       waitMs
     });
     if (!release) {

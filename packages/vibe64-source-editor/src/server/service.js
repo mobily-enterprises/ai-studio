@@ -735,7 +735,8 @@ function createService({
         agentOperation,
         runtime,
         vibe64User: input.vibe64User
-      }))
+      })),
+      { operation: "source-editor-write" }
     );
     if (!exclusive.acquired) {
       throw sourceEditorError(

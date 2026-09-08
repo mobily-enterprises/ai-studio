@@ -1889,7 +1889,7 @@ function createSessionRenewalController({
             renewalId: current.renewalId,
             sourceSessionId: sessionId
           });
-        });
+        }, { operation: "quiesce-renewal-source" });
         assertRenewalAgentWriteAcquired(exclusive);
       } else {
         assertWorkflowAdmissionOpen();
@@ -2475,7 +2475,7 @@ function createSessionRenewalController({
           }
           throw error;
         }
-      });
+      }, { operation: "confirm-session-renewal" });
       const confirmed = assertRenewalAgentWriteAcquired(exclusive);
       await schedule(confirmed, input);
       await publish(sessionId, "session-renewal-confirmed", input.originId);
@@ -2713,7 +2713,7 @@ function createSessionRenewalController({
           }
           throw error;
         }
-      });
+      }, { operation: "retry-session-renewal" });
       if (!exclusive.acquired) {
         throw renewalError(
           normalizeText(exclusive.value?.error) || "Another assistant operation is starting. Try again in a moment.",

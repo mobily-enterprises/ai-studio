@@ -2429,7 +2429,9 @@ function createOutputTargetTerminalController({
           }
           await ensureTerminalSessionSourceGitSelfContained({
             runExclusive: async (operation) => {
-              const result = await runVibe64AgentWriteExclusive(context.runtime, sessionId, operation);
+              const result = await runVibe64AgentWriteExclusive(context.runtime, sessionId, operation, {
+                operation: "prepare-preview-source"
+              });
               if (!result.acquired) {
                 throw Object.assign(new Error(result.value.error), result.value);
               }

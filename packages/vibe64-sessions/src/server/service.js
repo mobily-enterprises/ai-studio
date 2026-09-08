@@ -711,7 +711,7 @@ function createService({
             replaceSuggestion(state, next, now)
           );
           return { alreadyDelivered: false, context, suggestion: next };
-        });
+        }, { operation: "approve-message-suggestion" });
         if (!prepared.acquired) {
           return prepared.value;
         }
@@ -771,7 +771,7 @@ function createService({
             replaceSuggestion(state, next, now)
           );
           return { context: prepared.value.context, suggestion: next };
-        });
+        }, { operation: "finalize-message-suggestion" });
         if (!finalized.acquired) {
           if (deliveryError) {
             throw deliveryError;
@@ -888,7 +888,7 @@ function createService({
             await runtime.clearSessionClosing(sessionId).catch(() => null);
             throw error;
           }
-        });
+        }, { operation: "archive-session" });
         if (!exclusive.acquired) {
           return exclusive.value;
         }
@@ -1656,7 +1656,7 @@ function createService({
             throw error;
           }
           return suggestion;
-        });
+        }, { operation: "suggest-agent-message" });
         if (!exclusive.acquired) {
           return exclusive.value;
         }
@@ -1713,7 +1713,7 @@ function createService({
             });
           });
           return next;
-        });
+        }, { operation: "withdraw-message-suggestion" });
         if (!exclusive.acquired) {
           return exclusive.value;
         }
@@ -1766,7 +1766,7 @@ function createService({
             });
           });
           return next;
-        });
+        }, { operation: "discard-message-suggestion" });
         if (!exclusive.acquired) {
           return exclusive.value;
         }
@@ -1865,7 +1865,7 @@ function createService({
             assistantSelection: next,
             session: await runtime.getSession(sessionId, { inspectSource: false })
           };
-        });
+        }, { operation: "update-assistant-selection" });
         if (!exclusive.acquired) {
           return exclusive.value;
         }

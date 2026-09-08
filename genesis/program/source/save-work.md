@@ -48,6 +48,19 @@ actually invoked. If admission fails before that command creates a durable
 operation, the failure is shown without borrowing the label, icon, or transcript
 of an older completed repository operation.
 
+Assistant-write lock diagnostics use the normal service logger. Acquisition,
+release, contention and rejection name the requesting operation, project and
+session, and a unique attempt ID. A blocked request records the holder's
+operation, attempt ID, PID, process-identity status, acquisition time and lock
+age, together with its own wait budget and elapsed wait. These log records
+survive removal of the live lock directory. Named operations include Save,
+Update, assistant verification, temporary chat, source editing and preparation.
+Waiting emits one initial contention event and a final acquisition or rejection,
+not an event for every poll. Prompts, file contents, credentials and the private
+lock-release token are excluded. Diagnostics do not change admission or retries.
+Contention and rejection are warnings, retained at the default log level;
+acquisition and release are informational events.
+
 After a reload, current activity is restored only from the server's exact live
 operation identity. Durable task status and timestamp order are not treated as
 proof that an operation is still running; interrupted work is reconciled by the

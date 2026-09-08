@@ -61,9 +61,10 @@ runtime state, with serialized atomic updates. Stars follow the account across
 devices and sessions and retain their insertion order. Missing or excluded files
 remain listed as unavailable in the selected session until unstarred. Availability
 checks touch only the bounded starred paths, never the whole source tree.
-The collapsible Starred section and chat's searchable Files picker share one
+The collapsible Starred section and chat's searchable star picker share one
 client state. The picker is a popover on larger screens and a bottom sheet on
-compact screens. Opening a star uses normal Dashboard Files navigation without
+compact screens, with a compact search field and Close on one row and no
+redundant heading. Opening a star uses normal Dashboard Files navigation without
 clearing the chat draft. Toggle failures roll back only the affected star and
 show an error; successful toggles do not generate toasts. Opening the picker
 reloads saved stars, so other-device changes appear without background polling.

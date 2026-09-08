@@ -21,7 +21,7 @@ async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation, 
     sessionId,
     VIBE64_AGENT_WRITE_LOCK,
     operation,
-    options
+    { ...options, operation: options.operation || "assistant-operation" }
   );
   return exclusive.acquired
     ? exclusive
@@ -31,7 +31,7 @@ async function runVibe64AgentWriteExclusive(runtime, sessionId = "", operation, 
       };
 }
 
-async function runVibe64RenewalAgentWriteExclusive(runtime, sessionId = "", operation) {
+async function runVibe64RenewalAgentWriteExclusive(runtime, sessionId = "", operation, options = {}) {
   if (typeof operation !== "function") {
     throw new TypeError("Exclusive Vibe64 renewal agent work requires an operation.");
   }
@@ -41,7 +41,8 @@ async function runVibe64RenewalAgentWriteExclusive(runtime, sessionId = "", oper
   const exclusive = await runtime.store.runSessionExclusiveForRenewal(
     sessionId,
     VIBE64_AGENT_WRITE_LOCK,
-    operation
+    operation,
+    { ...options, operation: options.operation || "session-renewal" }
   );
   return exclusive.acquired
     ? exclusive

@@ -580,7 +580,7 @@ function createService({
         await setup.completion;
       }
       return setup;
-    });
+    }, { operation: "prepare-workspace" });
   }
 
   async function prepareRenewalWorkspaceSetup(sessionId = "", options = {}) {
@@ -595,7 +595,8 @@ function createService({
         renewal: true,
         runtime,
         session: await renewalSession(runtime, sessionId)
-      })
+      }),
+      { operation: "prepare-renewal-workspace" }
     );
     if (!exclusive.acquired) {
       const error = new Error(
@@ -679,7 +680,8 @@ function createService({
           operation,
           readSession
         );
-      }
+      },
+      { operation: "seed-renewal-handover" }
     );
     return exclusive.value;
   }
@@ -688,6 +690,7 @@ function createService({
     sessionId = "",
     options = {},
     {
+      operation: operationName = "repository-write",
       activeCode = "vibe64_session_repository_agent_active",
       activeMessage = "Wait for the assistant turn to finish before changing this session's repository."
     } = {},
@@ -702,7 +705,7 @@ function createService({
       }
       await options.onRepositoryWriteAcquired?.();
       return operation(context);
-    });
+    }, { operation: operationName });
     if (result?.ok === false && result?.code === "vibe64_agent_write_mode_busy") {
       const error = new Error(result.error || "Another session operation is starting. Try again in a moment.");
       error.code = result.code;
@@ -1606,6 +1609,7 @@ function createService({
 
     async saveSessionWork(sessionId, input = {}) {
       return runSessionRepositoryWrite(sessionId, input, {
+        operation: "save-session-work",
         activeCode: "vibe64_session_save_agent_active",
         activeMessage: "Wait for the assistant turn to finish before saving this work."
       }, async (context) => {
@@ -1712,6 +1716,7 @@ function createService({
 
     async updateSessionWork(sessionId, input = {}) {
       return runSessionRepositoryWrite(sessionId, input, {
+        operation: "update-session-work",
         activeCode: "vibe64_session_update_agent_active",
         activeMessage: "Wait for the assistant turn to finish before updating this session."
       }, async (context) => {
@@ -1733,7 +1738,7 @@ function createService({
     },
 
     async recoverSessionWorkUpdate(sessionId, input = {}) {
-      return runSessionRepositoryWrite(sessionId, input, {}, async (context) => {
+      return runSessionRepositoryWrite(sessionId, input, { operation: "recover-session-update" }, async (context) => {
         const { execution, session } = await sessionWorkExecution(
           sessionId,
           context,
@@ -1751,7 +1756,7 @@ function createService({
     },
 
     async recoverSessionWorkSave(sessionId, input = {}) {
-      return runSessionRepositoryWrite(sessionId, input, {}, async (context) => {
+      return runSessionRepositoryWrite(sessionId, input, { operation: "recover-session-save" }, async (context) => {
         const normalizedSessionId = String(sessionId || "").trim();
         const { session } = context;
         const execution = await codexGitCommand.sessionWorkSaveContext({
@@ -1997,7 +2002,7 @@ function createService({
     createAgentConversation(sessionId, input = {}, options = {}) {
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.createConversation(sessionId, input, context)
-      ));
+      ), { operation: "create-agent-conversation" });
     },
 
     createEphemeralAgentConversation(scope = {}, input = {}, options = {}) {
@@ -2028,7 +2033,7 @@ function createService({
       }
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.runDetachedChatTurn(sessionId, input, context)
-      ));
+      ), { operation: "run-temporary-chat" });
     },
 
     async streamDetachedAgentChatTurn(sessionId, input = {}, options = {}) {
@@ -2041,7 +2046,7 @@ function createService({
       }
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.streamDetachedChatTurn(sessionId, input, context)
-      ));
+      ), { operation: "stream-temporary-chat" });
     },
 
     deleteDetachedAgentChatThread(sessionId, input = {}, options = {}) {
@@ -2117,7 +2122,7 @@ function createService({
           ),
           () => context.runtime.getSession(sessionId, { inspectSource: false })
         )
-      ));
+      ), { operation: "generate-renewal-handover" });
     },
 
     createSessionRenewalManualHandoverTemplate(input = {}) {
@@ -2187,7 +2192,7 @@ function createService({
             });
             return delivered;
           },
-          { waitMs: MAIN_CHAT_AGENT_WRITE_WAIT_MS }
+          { operation: "send-agent-message", waitMs: MAIN_CHAT_AGENT_WRITE_WAIT_MS }
         );
         if (result?.ok === false) {
           logOperationalEvent(logger, "warn", {
@@ -2233,7 +2238,7 @@ function createService({
       try {
         const result = await runMainAgentWrite(sessionId, options, (context) => (
           sessionAgent.ensureSession(sessionId, context)
-        ), { waitMs: 10_000 });
+        ), { operation: "ensure-agent-session", waitMs: 10_000 });
         if (result?.ok === false) {
           logFailure({
             code: result.code,
@@ -2366,14 +2371,14 @@ function createService({
     startAgentTerminal(sessionId, input = {}, options = {}) {
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.startTerminal(sessionId, input, context)
-      ));
+      ), { operation: "start-agent-terminal" });
     },
 
     startAgentConversationTurn(sessionId, input = {}, options = {}) {
       void sessionPromptHints.cancelSessionPromptHintsForSession(sessionId);
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.startConversationTurn(sessionId, input, context)
-      ));
+      ), { operation: "start-agent-turn" });
     },
 
     startEphemeralAgentConversationTurn(scope = {}, input = {}, options = {}) {
@@ -2431,7 +2436,7 @@ function createService({
     uploadAgentAttachment(sessionId, input = {}, options = {}) {
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.uploadAttachment(sessionId, input, context)
-      ));
+      ), { operation: "upload-agent-attachment" });
     },
 
     pinAgentAttachments(sessionId, input = {}, options = {}) {
@@ -2445,7 +2450,7 @@ function createService({
     deleteAgentAttachment(sessionId, input = {}, options = {}) {
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.deleteAttachment(sessionId, input, context)
-      ));
+      ), { operation: "delete-agent-attachment" });
     },
 
     waitForAgentConversationTurn(sessionId, input = {}, options = {}) {

@@ -12,6 +12,7 @@ const Vibe64ProjectProvider = defineFeature({
   domain: "vibe64-project",
   requires: {
     env: "runtime.env",
+    logger: "runtime.logger",
     http: "runtime.http"
   },
   provides: {
@@ -21,9 +22,10 @@ const Vibe64ProjectProvider = defineFeature({
     channels: ["api", "automation", "internal"],
     surfaces: ["app"]
   },
-  setup({ env, http }) {
+  setup({ env, http, logger }) {
     const project = createService({
       env,
+      logger,
       projectContext: getStudioProjectContext()
     });
     registerRoutes(http, {

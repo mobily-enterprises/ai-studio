@@ -340,6 +340,22 @@ test("assistant reconciliation retains structured failure diagnostics", async (t
   assert.equal(warnings[1].event, "vibe64.agent_session.reconciliation_failed");
 });
 
+test("rebase, assistant verification and temporary repair identify their lock requests", async (t) => {
+  const lock = agentWriteLockHarness();
+  const { service, runtime, session } = await terminalServiceFixture(t, lock);
+  const operations = [];
+  runtime.store.runSessionExclusive = async (_sessionId, _lockName, _operation, options) => {
+    operations.push(options.operation);
+    return { acquired: false };
+  };
+  await assert.rejects(service.updateSessionWork(session.sessionId), {
+    code: "vibe64_agent_write_mode_busy"
+  });
+  assert.equal((await service.ensureAgentSession(session.sessionId)).code, "vibe64_agent_write_mode_busy");
+  assert.equal((await service.streamDetachedAgentChatTurn(session.sessionId)).code, "vibe64_agent_write_mode_busy");
+  assert.deepEqual(operations, ["update-session-work", "ensure-agent-session", "stream-temporary-chat"]);
+});
+
 test("workspace setup reuses an already-held session agent-write lock", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-workspace-nested-lock-"));
   const sourcePath = path.join(root, "managed", "session-1", "source");

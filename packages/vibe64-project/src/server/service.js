@@ -246,6 +246,7 @@ function genesisEnvironmentIsUnconfigured(error) {
 
 function createService({
   env = process.env,
+  logger = null,
   inspectCollaboration = inspectGenesisCollaboration,
   inspectEngineering = inspectGenesisEngineering,
   inspectEnvironment = inspectGenesisEnvironment,
@@ -333,6 +334,7 @@ function createService({
   function sessionStore() {
     const target = requireSelectedTargetRoot();
     return createVibe64SessionStore({
+      logger,
       projectContextRoot: target,
       projectRuntimeRoot: selectedProjectRuntimeRoot(),
       projectSessionSourceRoot: selectedSessionSourceRoot()
@@ -366,7 +368,7 @@ function createService({
     };
   }
 
-  async function runSessionSourceWorkExclusive(input = {}, operation) {
+  async function runSessionSourceWorkExclusive(input = {}, operation, operationName = "project-source-write") {
     if (typeof operation !== "function") {
       throw new TypeError("Session source work requires an operation.");
     }
@@ -380,7 +382,8 @@ function createService({
     const exclusive = await runVibe64AgentWriteExclusive(
       runtime,
       sessionId,
-      operation
+      operation,
+      { operation: operationName }
     );
     if (!exclusive.acquired) {
       const error = vibe64Error(
@@ -770,7 +773,7 @@ function createService({
         },
         { operation: "save-collaboration-guidance" }
       );
-    });
+    }, "save-collaboration-guidance");
   }
 
   async function savePromptHintsState(input = {}) {
@@ -1023,7 +1026,7 @@ function createService({
           projectSlug: String(currentProjectRequestContext()?.slug || path.basename(requireSelectedTargetRoot())).trim()
         };
       }, { operation: "apply-project-template" });
-    });
+    }, "apply-project-template");
   }
 
   async function saveEngineeringProfileState(input = {}) {
@@ -1063,7 +1066,7 @@ function createService({
           operation: "save-engineering-profile"
         }
       );
-    });
+    }, "save-engineering-profile");
   }
 
   async function previewApplicationIdentitySource(input = {}) {
@@ -1221,7 +1224,7 @@ function createService({
           sourceRoot: resolved.source.sourceRoot
         });
         return resolved.projectEnvironment;
-      });
+      }, "prepare-project-environment");
     },
 
     async projectInspectionEnvironment(input = {}) {
@@ -1350,7 +1353,8 @@ function createService({
     async saveEnvUserValues(input = {}) {
       return projectResult(() => runSessionSourceWorkExclusive(
         input,
-        () => saveEnvState(input)
+        () => saveEnvState(input),
+        "save-project-environment"
       ));
     },
 
@@ -1389,7 +1393,7 @@ function createService({
             operation: "save-preview-application-identities"
           }
         );
-      }));
+      }, "save-preview-application-identities"));
     },
 
     async selectProject(input = {}) {
