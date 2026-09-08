@@ -171,7 +171,7 @@ describe("Vibe64 direct session view", () => {
     expect(temporaryAi).toContain("AI repair in progress");
     expect(temporaryAi).toContain("Repair verified");
     expect(temporaryAi).toContain("activeTaskRecoveryStatus");
-    expect(temporaryAi).toContain("activeTaskActivityLabel");
+    expect(temporaryAi).toContain("AI is working…");
     expect(temporaryAi).toContain('class="vibe64-temporary-ai__activity"');
     expect(temporaryAi).toContain('role="status"');
     expect(temporaryAi).toContain("vibe64.temporary-ai.feedback");

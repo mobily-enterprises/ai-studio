@@ -311,6 +311,12 @@ const REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY = [
   "For an overlapping edit, keep the latest saved version's overlapping lines byte-for-byte and preserve this session's additional intent in adjacent non-overlapping content. Do not report success while Git has unmerged index entries or while HEAD/index differ from their initial values."
 ].join("\n");
 
+const UPDATE_REPAIR_MESSAGES = {
+  completion: "AI repair finished. Vibe64 will check Update when the repair is complete.",
+  nextStep: "Vibe64 will check Update after the repair.",
+  handoff: "When your repair is complete, Vibe64 will run Update to verify it and show the result here. If you need a decision, return a continue result instead."
+};
+
 const TEMPORARY_AI_RECOVERY_NOTICE = "This is a separate temporary chat. Temporary AI can edit this session to make the repair. Follow progress here and reply below if it needs a decision.";
 
 function repositoryTemporaryAiDedupeKey({
@@ -424,6 +430,7 @@ function useVibe64AutopilotView(props, emit, {
   const workspaceSetupFixSending = ref(false);
   const workspaceSetupFixTaskId = ref("");
   const repositoryRecoverySending = ref(false);
+  const checkedUpdateRepairRuns = new Map();
   const previewAttachmentState = ref({
     attachDiagnostics: null,
     capture: null,
@@ -722,9 +729,33 @@ function useVibe64AutopilotView(props, emit, {
     }
   }
 
-  async function handleTemporaryAiTaskFinished(task = {}) {
+  async function handleTemporaryAiTaskFinished(task = {}, reportRecovery = () => {}) {
     const taskId = normalizedAgentTurnText(task?.id);
     const status = normalizedAgentTurnText(task?.status);
+    if (task.recoveryOperation === "update") {
+      const runId = normalizedAgentTurnText(task.runId);
+      if (
+        !taskId || !runId || task.sessionId !== sessionId.value ||
+        status !== "completed" || task.outcomeKind !== "complete" ||
+        checkedUpdateRepairRuns.get(taskId) === runId
+      ) {
+        return false;
+      }
+      checkedUpdateRepairRuns.set(taskId, runId);
+      reportRecovery(taskId, { status: "checking", message: "Checking Update…" });
+      const result = await updateBeforeSave();
+      if (task.sessionId !== sessionId.value) {
+        return false;
+      }
+      const succeeded = result?.ok === true;
+      reportRecovery(taskId, {
+        status: succeeded ? "succeeded" : "failed",
+        message: succeeded
+          ? "Update succeeded. Your session includes the latest saved work and keeps your local edits."
+          : `Update still needs attention: ${saveWorkError.value || "The operation did not confirm success."}`
+      });
+      return "repository-update";
+    }
     if (
       taskId !== workspaceSetupFixTaskId.value ||
       !["completed", "failed"].includes(status)
@@ -735,7 +766,7 @@ function useVibe64AutopilotView(props, emit, {
     if (workspaceSetupNeedsAttention.value) {
       await retryWorkspaceSetup();
     }
-    return true;
+    return "workspace-setup";
   }
 
   async function askCodexToFixPreviewIdentity(input = {}) {
@@ -792,7 +823,9 @@ function useVibe64AutopilotView(props, emit, {
     repositoryRecoverySending.value = true;
     try {
       const result = await requestTemporaryAi({
-        completionMessage: `AI repair finished. Review its result, then retry ${action}.`,
+        completionMessage: action === "Update"
+          ? UPDATE_REPAIR_MESSAGES.completion
+          : `AI repair finished. Review its result, then retry ${action}.`,
         dedupeKey: repositoryTemporaryAiDedupeKey({
           code: saveWorkFailure.value?.code,
           diagnostic: saveWorkError.value,
@@ -803,11 +836,13 @@ function useVibe64AutopilotView(props, emit, {
         message: [
           `Help resolve this Vibe64 ${action} problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:`,
           REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY,
+          action === "Update" ? UPDATE_REPAIR_MESSAGES.handoff : "",
           saveWorkError.value
         ].filter(Boolean).join("\n\n"),
-        nextStepMessage: `When the AI finishes, review its result here, then retry ${action} from Main chat.`,
+        nextStepMessage: action === "Update" ? UPDATE_REPAIR_MESSAGES.nextStep : `Review the repair, then retry ${action}.`,
         policy: "workspace_write",
         recoveryNotice: TEMPORARY_AI_RECOVERY_NOTICE,
+        recoveryOperation: action === "Update" ? "update" : "",
         title: `Resolve ${action}`
       });
       return result !== false && result?.ok !== false;
@@ -822,13 +857,16 @@ function useVibe64AutopilotView(props, emit, {
     title = "Resolve repository problem"
   } = {}) {
     const diagnostic = normalizedAgentTurnText(error);
+    const isUpdate = ["vibe64_session_update_conflict", "vibe64_session_update_history_diverged"].includes(code);
     if (temporaryAiRecoveryUnavailable() || !diagnostic) {
       return false;
     }
     repositoryRecoverySending.value = true;
     try {
       const result = await requestTemporaryAi({
-        completionMessage: "AI repair finished. Review its result, then retry the repository operation.",
+        completionMessage: isUpdate
+          ? UPDATE_REPAIR_MESSAGES.completion
+          : "AI repair finished. Review its result, then retry the repository operation.",
         dedupeKey: repositoryTemporaryAiDedupeKey({
           code,
           diagnostic,
@@ -839,11 +877,13 @@ function useVibe64AutopilotView(props, emit, {
         message: [
           "Help resolve this Vibe64 repository problem. Inspect the current session and canonical repository state, preserve all work, and do not publish until the conflict is understood:",
           REPOSITORY_TEMPORARY_AI_GIT_BOUNDARY,
+          isUpdate ? UPDATE_REPAIR_MESSAGES.handoff : "",
           diagnostic
         ].join("\n\n"),
-        nextStepMessage: "When the AI finishes, review its result here, then retry the repository operation.",
+        nextStepMessage: isUpdate ? UPDATE_REPAIR_MESSAGES.nextStep : "Review the repair, then retry the repository operation.",
         policy: "workspace_write",
         recoveryNotice: TEMPORARY_AI_RECOVERY_NOTICE,
+        recoveryOperation: isUpdate ? "update" : "",
         title
       });
       return result !== false && result?.ok !== false;
@@ -1360,6 +1400,11 @@ function useVibe64AutopilotView(props, emit, {
   ));
 
   async function updateBeforeSave() {
+    const updatingSessionId = sessionId.value;
+    const updatingProjectSlug = projectSlug.value;
+    const requestIsCurrent = () => (
+      sessionId.value === updatingSessionId && projectSlug.value === updatingProjectSlug
+    );
     saveWorkAttempt.value = {
       kind: "update",
       operationId: ""
@@ -1369,9 +1414,15 @@ function useVibe64AutopilotView(props, emit, {
     saveWorkFailure.value = null;
     try {
       const result = await props.updateSessionWork();
+      if (!requestIsCurrent()) {
+        return false;
+      }
       saveWorkAttempt.value = null;
       return result;
     } catch (error) {
+      if (!requestIsCurrent()) {
+        return false;
+      }
       saveWorkFailure.value = error && typeof error === "object"
         ? {
             code: String(error.code || error.response?.code || ""),
@@ -1384,7 +1435,9 @@ function useVibe64AutopilotView(props, emit, {
         : String(error || "This session could not be updated.");
       return false;
     } finally {
-      saveWorkSending.value = false;
+      if (requestIsCurrent()) {
+        saveWorkSending.value = false;
+      }
     }
   }
 
@@ -1828,6 +1881,10 @@ function useVibe64AutopilotView(props, emit, {
   }, { immediate: true });
 
   watch([sessionId, projectSlug], () => {
+    saveWorkSending.value = false;
+    saveWorkAttempt.value = null;
+    saveWorkError.value = "";
+    saveWorkFailure.value = null;
     composerSending.value = false;
     composerSubmissionKind.value = "";
     interrupting.value = false;
@@ -1843,6 +1900,7 @@ function useVibe64AutopilotView(props, emit, {
     savedCommitDeslopSending.value = false;
     workspaceSetupRetryError.value = "";
     workspaceSetupFixTaskId.value = "";
+    checkedUpdateRepairRuns.clear();
     systemReturnContext.value = null;
     systemRestoreRequest.value = null;
   });

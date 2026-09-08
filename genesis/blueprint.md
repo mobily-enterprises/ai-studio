@@ -132,6 +132,11 @@ launch settings.
 Commands and background processes started for a session remain owned by that
 session and stop with it, even while the assistant service itself is shared.
 
+Temporary repair chats keep progress collapsible inside the conversation and
+show a clear working status above the composer. A completed Update repair is
+verified by Vibe64 running Update, with the actual result shown in that chat.
+A request for a decision waits for the person's reply before verification.
+
 Short actions show one compact progress line that a person can dismiss or open
 for full history. The browser remembers a dismissal for that exact attempt
 across reloads, while a new attempt appears normally. Long-running application

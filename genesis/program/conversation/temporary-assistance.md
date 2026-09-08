@@ -24,6 +24,7 @@ session history.
 - `src/components/studio/Vibe64TemporaryAiFixAction.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue`
+- `src/components/studio/vibe64-session/Vibe64ConversationProgress.vue`
 - `src/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue`
 - `src/components/studio/vibe64-session/Vibe64RenewalAssistantSelector.vue`
 - `src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue`
@@ -45,13 +46,18 @@ attachment service.
 Assistant replies use the same formatted text presentation as normal chat,
 including lists, bold text, code, and links. User-authored text stays literal.
 Raw HTML remains text, and executable or data-URL links are not made clickable.
+Main and temporary chats share the collapsible progress component. Temporary
+progress starts collapsed inside its assistant message; expanding it uses the
+scrollable transcript. The fixed status above the composer says “AI is working…”
+and never repeats reasoning paragraphs. Long progress cannot push Stop or the
+composer out of view.
 
 Every product-owned repair entry uses the shared Fix it with AI control. It
 opens, selects, and focuses a separate Temporary AI task immediately. That task
-shows a concise user-facing repair request plus a prominent explanation that it
-can edit the session, where to follow progress or answer questions, and what
-the product will do after the AI finishes. Detailed diagnostics remain in the
-AI request without overwhelming the visible user message.
+shows a concise user-facing repair request and a compact status heading while
+the AI works. Completion and verification results appear after the task stops.
+Detailed diagnostics remain in the AI request without overwhelming the visible
+user message.
 
 A product-owned recovery action may remember the exact temporary task it
 started and observe that task's terminal result. Workspace preparation uses
@@ -65,6 +71,18 @@ When that deterministic check succeeds, its verified result becomes the task's
 headline even if the AI provider timed out after making useful edits. The
 provider timeout remains visible as secondary audit detail instead of leaving
 the user with a false failure conclusion.
+
+An Update repair that explicitly reports completion triggers Vibe64's existing
+Update operation. The repair chat shows “Checking Update…” while that operation
+runs and blocks new AI edits until it settles. Only a successful Update shows
+“Repair verified”; a failed check shows the latest error and permits another
+repair turn. Questions, interrupted or failed turns, stale session completions,
+and duplicate completion notifications do not trigger Update. Save repairs do
+not automatically publish work.
+
+Interactive Codex temporary turns have no fixed completion deadline. They remain
+observable until completion, Stop, deletion, or loss/replacement of the shared
+provider connection. Short helper turns retain their bounded deadlines.
 
 Temporary and lightweight helper conversations use the parent session's
 selected Codex or OpenCode service, but they do not start or retain a second

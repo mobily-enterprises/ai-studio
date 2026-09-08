@@ -196,27 +196,13 @@
           v-for="entry in turn.agentTimeline"
           :key="entry.key"
         >
-          <div
+          <Vibe64ConversationProgress
             v-if="entry.role === 'thinking'"
+            :key="`${turn.turnId}:${turn.pending ? 'active' : 'completed'}:${entry.key}`"
             class="studio-conversation-log__thinking"
-          >
-            <button
-              v-if="thinkingGroupCollapsible(turn, entry)"
-              :aria-expanded="thinkingGroupExpanded(turn, entry)"
-              class="studio-conversation-log__thinking-toggle"
-              type="button"
-              @click="toggleThinkingGroup(turn, entry)"
-            >
-              {{ thinkingGroupToggleLabel(turn, entry) }}
-            </button>
-            <div
-              v-for="message in visibleThinkingMessages(turn, entry)"
-              :key="message.key"
-              class="studio-conversation-log__thinking-message"
-            >
-              {{ message.text }}
-            </div>
-          </div>
+            :messages="entry.messages"
+            :pending="turn.pending"
+          />
           <div
             v-else
             class="studio-conversation-log__message-row studio-conversation-log__message-row--assistant"
@@ -294,6 +280,7 @@ import {
 } from "@mdi/js";
 import { useScrollToBottom } from "@/composables/useScrollToBottom.js";
 import LongTextPreviewBlocks from "@/components/studio/LongTextPreviewBlocks.vue";
+import Vibe64ConversationProgress from "@/components/studio/vibe64-session/Vibe64ConversationProgress.vue";
 import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
 import { parseNumberedQuestionPrompt } from "@/lib/vibe64NumberedQuestionSugar.js";
 import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
@@ -372,14 +359,12 @@ const props = defineProps({
 
 const emit = defineEmits(["cancel-turn", "edit-turn", "load-more", "open-source-file", "reload", "resend-turn"]);
 
-const THINKING_PREVIEW_LIMIT = 2;
 const USER_MESSAGE_COLLAPSE_MIN_CHARACTERS = 360;
 const USER_MESSAGE_PREVIEW_MAX_CHARACTERS = 280;
 const USER_MESSAGE_PREVIEW_MAX_LINES = 4;
 const DISPLAY_MESSAGE_CACHE_LIMIT = 500;
 const bodyElement = ref(null);
 const bottomElement = ref(null);
-const expandedThinkingGroups = ref(new Set());
 const expandedUserMessages = ref(new Set());
 const followingLatest = ref(true);
 const initialScrollSettled = ref(false);
@@ -630,43 +615,6 @@ function toggleUserMessage(turn = {}) {
     return;
   }
   toggleExpandedKey(expandedUserMessages, key);
-}
-
-function thinkingGroupKey(turn = {}, entry = {}) {
-  return `${turn.turnId}:${turn.pending ? "active" : "completed"}:${entry.key}`;
-}
-
-function thinkingGroupExpanded(turn = {}, entry = {}) {
-  return expandedThinkingGroups.value.has(thinkingGroupKey(turn, entry));
-}
-
-function thinkingGroupCollapsible(turn = {}, entry = {}) {
-  return turn.pending
-    ? entry.messages.length > THINKING_PREVIEW_LIMIT
-    : entry.messages.length > 0;
-}
-
-function visibleThinkingMessages(turn = {}, entry = {}) {
-  if (thinkingGroupExpanded(turn, entry)) {
-    return entry.messages;
-  }
-  return turn.pending
-    ? entry.messages.slice(-THINKING_PREVIEW_LIMIT)
-    : [];
-}
-
-function thinkingGroupToggleLabel(turn = {}, entry = {}) {
-  if (thinkingGroupExpanded(turn, entry)) {
-    return turn.pending
-      ? `Show latest ${THINKING_PREVIEW_LIMIT} progress updates`
-      : "Hide progress updates";
-  }
-  return `Show all ${entry.messages.length} progress ${entry.messages.length === 1 ? "update" : "updates"}`;
-}
-
-function toggleThinkingGroup(turn = {}, entry = {}) {
-  const key = thinkingGroupKey(turn, entry);
-  toggleExpandedKey(expandedThinkingGroups, key);
 }
 
 const loadingIndicatorVisible = computed(() => Boolean(
@@ -1168,23 +1116,11 @@ watch(timelineScrollTrigger, () => {
 }
 
 .studio-conversation-log__thinking {
-  color: rgba(var(--v-theme-on-surface), 0.58);
-  display: grid;
-  font-size: 0.78rem;
-  gap: 0.18rem;
   justify-self: start;
-  line-height: 1.42;
   margin-left: 2.15rem;
   max-width: min(34rem, 86%);
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
-.studio-conversation-log__thinking-message {
-  white-space: pre-wrap;
-}
-
-.studio-conversation-log__thinking-toggle,
 .studio-conversation-log__user-content-toggle {
   background: transparent;
   border: 0;
@@ -1192,15 +1128,6 @@ watch(timelineScrollTrigger, () => {
   cursor: pointer;
   font: inherit;
   text-align: left;
-}
-
-.studio-conversation-log__thinking-toggle {
-  justify-self: start;
-  padding: 0.12rem 0;
-}
-
-.studio-conversation-log__thinking-toggle:hover {
-  text-decoration: underline;
 }
 
 .studio-conversation-log__system {

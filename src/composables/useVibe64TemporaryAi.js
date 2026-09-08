@@ -103,6 +103,10 @@ function useVibe64TemporaryAi({
         error: temporaryAiText(task.error),
         failureMessage: temporaryAiText(task.failureMessage),
         id: task.id,
+        outcomeKind: temporaryAiText(task.outcomeKind),
+        recoveryOperation: temporaryAiText(task.recoveryOperation),
+        runId: task.runId,
+        sessionId: task.sessionId,
         status: temporaryAiText(task.status),
         title: temporaryAiText(task.title) || "Temporary AI"
       }));
@@ -120,6 +124,7 @@ function useVibe64TemporaryAi({
     nextStepMessage = "",
     policy = "read",
     recoveryNotice = "",
+    recoveryOperation = "",
     title = ""
   } = {}) {
     const number = nextTaskNumber;
@@ -146,7 +151,9 @@ function useVibe64TemporaryAi({
       recoveryOutcome: "",
       recoveryOutcomeMessage: "",
       recoveryNotice: temporaryAiText(recoveryNotice),
+      recoveryOperation: recoveryOperation === "update" ? "update" : "",
       runId: "",
+      sessionId: currentSessionId(),
       status: "ready",
       title: temporaryAiText(title) || `Temporary ${number}`
     };
@@ -257,7 +264,7 @@ function useVibe64TemporaryAi({
     status = ""
   } = {}) {
     const outcome = temporaryAiText(status);
-    if (!tasks.value.some((task) => task.id === taskId) || !["failed", "succeeded"].includes(outcome)) {
+    if (!tasks.value.some((task) => task.id === taskId) || !["checking", "failed", "succeeded"].includes(outcome)) {
       return false;
     }
     updateTask(taskId, {
@@ -341,6 +348,7 @@ function useVibe64TemporaryAi({
         conversationId: response.conversationExpired === true ? "" : task.conversationId,
         error: active ? "" : temporaryAiText(response.error),
         messages,
+        outcomeKind: temporaryAiText(response.outcome?.kind),
         runId: response.conversationExpired === true ? "" : task.runId,
         status
       });
@@ -367,7 +375,7 @@ function useVibe64TemporaryAi({
 
   async function send(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task || task.busy) {
+    if (!task || task.busy || task.recoveryOutcome === "checking") {
       return false;
     }
     const payload = chatMessagePayload(task.draft, task.attachments);
@@ -380,6 +388,9 @@ function useVibe64TemporaryAi({
       draft: "",
       error: "",
       pendingMessageId: messageId,
+      outcomeKind: "",
+      recoveryOutcome: "",
+      recoveryOutcomeMessage: "",
       status: "starting"
     });
     let conversationId = task.conversationId;

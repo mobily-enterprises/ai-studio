@@ -12,19 +12,14 @@
     :class="`vibe64-ephemeral-conversation__message--${message.role}`"
   >
     <strong>{{ message.role === "user" ? userLabel : assistantLabel }}</strong>
-    <div
+    <Vibe64ConversationProgress
       v-if="message.role === 'assistant' && message.progressUpdates?.length"
+      :key="`${message.id}:${['starting', 'inProgress'].includes(message.status) ? 'active' : 'completed'}`"
       class="vibe64-ephemeral-conversation__progress"
       :aria-label="`${assistantLabel} progress`"
-    >
-      <span
-        v-for="update in message.progressUpdates"
-        :key="update.id"
-        class="vibe64-ephemeral-conversation__progress-update"
-      >
-        {{ update.text }}
-      </span>
-    </div>
+      :messages="message.progressUpdates"
+      :preview-limit="0"
+    />
     <LongTextPreviewBlocks
       v-if="message.text && message.role === 'assistant'"
       :blocks="parseLongTextReviewBlocks(message.text)"
@@ -43,6 +38,7 @@
 
 <script setup>
 import LongTextPreviewBlocks from "@/components/studio/LongTextPreviewBlocks.vue";
+import Vibe64ConversationProgress from "@/components/studio/vibe64-session/Vibe64ConversationProgress.vue";
 import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
 import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
 
@@ -100,12 +96,9 @@ defineProps({
 }
 
 .vibe64-ephemeral-conversation__progress {
-  display: grid;
-  gap: 0.18rem;
   margin: 0.15rem 0;
 }
 
-.vibe64-ephemeral-conversation__progress-update,
 .vibe64-ephemeral-conversation__message span {
   color: rgba(var(--v-theme-on-surface), 0.62);
   font-size: 0.78rem;

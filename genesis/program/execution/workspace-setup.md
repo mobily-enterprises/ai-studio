@@ -54,9 +54,8 @@ failure remains visible with direct Retry and Fix it with AI actions until
 dismissed, without requiring the person to expand terminal details. Fix it
 opens a workspace-writing Temporary AI task with the current diagnostic and
 bounded transcript, selects and focuses that separate chat, and presents a
-concise visible request instead of the complete operational prompt. A prominent
-notice explains that Temporary AI may edit the session, that progress and
-questions remain in this chat, and that Vibe64 will verify the result. Every
+concise visible request instead of the complete operational prompt. A compact
+heading shows repair status while the AI works; the result appears afterward. Every
 product surface that offers this ephemeral repair path uses the same Fix it with
 AI control and handoff presentation.
 

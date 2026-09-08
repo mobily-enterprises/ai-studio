@@ -84,6 +84,36 @@ describe("useVibe64TemporaryAi", () => {
     vi.useFakeTimers();
   });
 
+  it("carries repair completion identity and blocks new AI edits while Update is checking", async () => {
+    const observer = vi.fn();
+    const { task, temporary } = await temporaryAiWithFinishedObserver(observer, { recoveryOperation: "update" });
+    mocks.responses.push(
+      { ok: true, conversationId: "conversation-1" },
+      { ok: true, runId: "turn-1", status: "inProgress" },
+      { ok: true, status: "completed", outcome: { kind: "complete" }, message: "Repaired." }
+    );
+    await temporary.send(task.id);
+    await flushPromises();
+    expect(observer).toHaveBeenCalledWith(expect.objectContaining({
+      id: task.id, runId: "turn-1", sessionId: "session-1",
+      recoveryOperation: "update", outcomeKind: "complete", status: "completed"
+    }));
+    temporary.reportRecoveryOutcome(task.id, { status: "checking" });
+    temporary.updateDraft(task.id, "Try again.");
+    const requestCount = mocks.requests.length;
+    await expect(temporary.send(task.id)).resolves.toBe(false);
+    expect(mocks.requests).toHaveLength(requestCount);
+    temporary.reportRecoveryOutcome(task.id, { status: "failed", message: "Still conflicts." });
+    mocks.responses.push(
+      { ok: true, runId: "turn-2", status: "inProgress" },
+      { ok: true, status: "completed", outcome: { kind: "continue" }, message: "Which version?" }
+    );
+    await expect(temporary.send(task.id)).resolves.toBe(true);
+    await flushPromises();
+    expect(temporary.activeTask.value.recoveryOutcome).toBe("");
+    expect(observer).toHaveBeenLastCalledWith(expect.objectContaining({ runId: "turn-2", outcomeKind: "continue" }));
+  });
+
   it("opens and selects a recovery task synchronously before automatically sending it", async () => {
     const conversationRequest = deferredPromise();
     mocks.responses.push(
@@ -716,14 +746,14 @@ describe("useVibe64TemporaryAi", () => {
     await flushPromises();
 
     expect(onTaskFinished).toHaveBeenCalledTimes(1);
-    expect(onTaskFinished).toHaveBeenCalledWith({
+    expect(onTaskFinished).toHaveBeenCalledWith(expect.objectContaining({
       completionMessage: "Repair complete. Retry Update.",
       error: "",
       failureMessage: "Repair stopped. Review the error.",
       id: task.id,
       status: "completed",
       title: "Resolve Update"
-    });
+    }));
   });
 
   it("turns a poll failure into a visible finished state", async () => {

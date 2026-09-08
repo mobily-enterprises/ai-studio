@@ -121,6 +121,9 @@ function createProvider(calls, subscribers, captures, providerOptions = {}) {
     currentConnectionGeneration() {
       return captures.connectionGeneration;
     },
+    isAvailable() {
+      return captures.connected !== false;
+    },
     currentServerInfo() {
       return { userAgent: captures.serverUserAgent };
     },
@@ -4482,6 +4485,104 @@ test("temporary read-only turns remain active for renewal until completion", asy
     await flushPromises();
     assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
   });
+});
+
+test("temporary turns remain active past the helper deadline and accept their eventual result", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  try {
+    await withConversationController(async ({ controller, subscribers }) => {
+      const conversation = await controller.createConversation("session-1", { ephemeral: true });
+      await controller.startConversationTurn("session-1", {
+        conversationId: conversation.conversationId,
+        ephemeral: true,
+        message: "Carefully repair this conflict.",
+        policy: "workspace_write"
+      });
+      t.mock.timers.tick(180_001);
+      await flushPromises();
+      const working = await controller.readConversation("session-1", {
+        conversationId: conversation.conversationId
+      });
+      assert.equal(working.status, "inProgress", JSON.stringify(working));
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), true);
+      emitCodexNotification(subscribers, codexEvent({ message: "Checking the actual repair." }));
+      t.mock.timers.tick(180_001);
+      emitCodexNotification(subscribers, codexEvent({
+        message: "The repair is ready to verify.", phase: "final_answer"
+      }));
+      emitCodexNotification(subscribers, turnCompleted());
+      await flushPromises();
+      const completed = await controller.readConversation("session-1", {
+        conversationId: conversation.conversationId
+      });
+      assert.equal(completed.status, "completed");
+      assert.equal(completed.message, "The repair is ready to verify.");
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+    });
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+for (const failure of ["disconnect", "replacement"]) {
+  test(`temporary turns release their watcher after a provider ${failure}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    try {
+      await withConversationController(async ({ captures, controller, subscribers }) => {
+        const conversation = await controller.createConversation("session-1", { ephemeral: true });
+        await controller.startConversationTurn("session-1", {
+          conversationId: conversation.conversationId,
+          ephemeral: true,
+          message: "Repair this conflict.",
+          policy: "workspace_write"
+        });
+        if (failure === "disconnect") captures.connected = false;
+        else captures.connectionGeneration += 1;
+        t.mock.timers.tick(1000);
+        await flushPromises();
+        const failed = await controller.readConversation("session-1", {
+          conversationId: conversation.conversationId
+        });
+        assert.equal(failed.status, "failed");
+        assert.match(failed.error, /Connection to Codex was lost/u);
+        assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+        emitCodexNotification(subscribers, codexEvent({ message: "Late obsolete response.", phase: "final_answer" }));
+        emitCodexNotification(subscribers, turnCompleted());
+        await flushPromises();
+        assert.equal((await controller.readConversation("session-1", {
+          conversationId: conversation.conversationId
+        })).status, "failed");
+      });
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+}
+
+test("long-running temporary turns still stop on request", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  try {
+    await withConversationController(async ({ controller }) => {
+      const conversation = await controller.createConversation("session-1", { ephemeral: true });
+      const turn = await controller.startConversationTurn("session-1", {
+        conversationId: conversation.conversationId,
+        ephemeral: true,
+        message: "Repair this conflict.",
+        policy: "workspace_write"
+      });
+      t.mock.timers.tick(180_001);
+      assert.equal((await controller.stopConversation("session-1", {
+        conversationId: conversation.conversationId, runId: turn.runId, ephemeral: true
+      })).ok, true);
+      await flushPromises();
+      assert.equal((await controller.readConversation("session-1", {
+        conversationId: conversation.conversationId
+      })).status, "interrupted");
+      assert.equal(controller.hasActiveTemporaryConversation("session-1"), false);
+    });
+  } finally {
+    t.mock.timers.reset();
+  }
 });
 
 test("temporary conversation retries reuse the accepted provider turn", async () => {

@@ -34,6 +34,104 @@ const TARGET_APP_URL = "http://127.0.0.1:4103/home";
 const PROXY_APP_URL = "http://127.0.0.1:49000/home";
 const TEST_ASSISTANT_CATALOG_REVISION = `sha256:${"a".repeat(64)}`;
 
+for (const width of [390, 1440]) {
+  test(`@temporary-repair progress stays in the transcript and Update verifies the repair at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockLaunchTerminalSocket(page);
+    const requests: TemporaryAiRecoveryRequests = { mainMessages: [], temporaryStarts: [], temporaryTurns: [] };
+    await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, temporaryAiRecoveryRequests: requests });
+    let updateCount = 0;
+    let releaseUpdate: (() => void) | undefined;
+    let resultKind = "";
+    let run = 0;
+    const progressUpdates = [
+      { id: "first", text: "Inspecting the conflicting document. ".repeat(60) },
+      { id: "second", text: "Comparing the current and saved versions. ".repeat(60) }
+    ];
+    await page.route("**/sessions/*/work", (route) => fulfillJson(route, {
+      ok: true, unsaved: true, requiresUpdate: true,
+      updateOperation: updateCount === 2 ? null : {
+        operationId: "failed-update", status: "failed", code: "vibe64_session_update_conflict",
+        error: "Document conflicts with the saved version."
+      }
+    }));
+    await page.route("**/temporary-conversations/*/turns", async (route) => {
+      run += 1;
+      resultKind = "";
+      requests.temporaryTurns.push(route.request().postDataJSON());
+      await fulfillJson(route, { ok: true, status: "inProgress", runId: `repair-${run}` });
+    });
+    await page.route("**/temporary-conversations/temporary-preview-identity", async (route) => {
+      if (route.request().method() !== "GET") { await route.fallback(); return; }
+      await fulfillJson(route, {
+        ok: true, runId: `repair-${run}`, status: resultKind ? "completed" : "inProgress",
+        progressUpdates,
+        message: resultKind === "continue" ? "Which version should I keep?" : resultKind ? "I repaired the document." : "",
+        outcome: resultKind ? { kind: resultKind, message: "Repair result.", report: "Document repaired." } : null
+      });
+    });
+    await page.route("**/sessions/*/updates/apply", async (route) => {
+      updateCount += 1;
+      await new Promise<void>((resolve) => { releaseUpdate = resolve; });
+      await fulfillJson(route, updateCount === 1
+        ? { ok: false, code: "vibe64_session_update_conflict", error: "The document still conflicts." }
+        : { ok: true, status: "updated" });
+    });
+    await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+    await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
+    const workspace = page.getByRole("region", { name: "Temporary AI workspace" });
+    const activity = workspace.locator(".vibe64-temporary-ai__activity");
+    const transcript = workspace.locator(".vibe64-temporary-ai__messages");
+    const composer = workspace.getByRole("textbox", { name: "Message temporary AI", exact: true });
+    await expect(activity).toHaveText("AI is working…");
+    await expect(workspace.getByText("This is a separate temporary chat", { exact: false })).toHaveCount(0);
+    const progress = workspace.getByLabel("Temporary AI progress", { exact: true }).last();
+    const toggle = progress.getByRole("button");
+    await expect(toggle).toHaveText("Show all 2 progress updates");
+    await expect(progress.locator(".vibe64-conversation-progress__message")).toHaveCount(0);
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(progress.locator(".vibe64-conversation-progress__message")).toHaveCount(2);
+    progressUpdates.push({ id: "third", text: "Checking whether the repair can be applied. ".repeat(60) });
+    await expect(progress.locator(".vibe64-conversation-progress__message")).toHaveCount(3);
+    expect(await transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    expect((await activity.boundingBox())!.height).toBeLessThan(55);
+    expect((await composer.boundingBox())!.y).toBeLessThan(844);
+    await expect(workspace.getByRole("button", { name: "Stop", exact: true })).toBeInViewport();
+    await toggle.click();
+    await expect(toggle).toHaveText("Show all 3 progress updates");
+    await page.screenshot({ path: testInfo.outputPath(`repair-working-${width}.png`) });
+
+    resultKind = "continue";
+    await expect(workspace.getByText("Waiting for your reply", { exact: true })).toBeVisible();
+    expect(updateCount).toBe(0);
+    await composer.fill("Keep both changes.");
+    await workspace.getByRole("button", { name: "Send to temporary AI", exact: true }).click();
+    await expect(activity).toHaveText("AI is working…");
+    resultKind = "complete";
+    await expect(activity).toHaveText("Checking Update…");
+    await expect(composer).toBeDisabled();
+    expect(updateCount).toBe(1);
+    releaseUpdate?.();
+    await expect(workspace.getByText("Update needs attention", { exact: true })).toBeVisible();
+    await expect(workspace.getByText("Update still needs attention: The document still conflicts.", { exact: true })).toBeVisible();
+    await composer.fill("Try again.");
+    await workspace.getByRole("button", { name: "Send to temporary AI", exact: true }).click();
+    await expect(activity).toHaveText("AI is working…");
+    resultKind = "complete";
+    await expect(activity).toHaveText("Checking Update…");
+    expect(updateCount).toBe(2);
+    releaseUpdate?.();
+    await expect(workspace.getByText("Repair verified", { exact: true })).toBeVisible();
+    await expect(workspace.getByText("Update succeeded. Your session includes the latest saved work and keeps your local edits.", { exact: true })).toBeVisible();
+    await expect(composer).toBeEnabled();
+    await expect(activity).toHaveCount(0);
+    expect(requests.mainMessages).toHaveLength(0);
+    await page.screenshot({ path: testInfo.outputPath(`repair-verified-${width}.png`) });
+  });
+}
+
 for (const width of [1440, 390]) {
   for (const changeEnvironment of [false, true]) {
     test(`@preview-preparation real preview ${changeEnvironment ? "waits for changed environment" : "starts while assistant admission is occupied"} at ${width}px`, async ({ page }, testInfo) => {

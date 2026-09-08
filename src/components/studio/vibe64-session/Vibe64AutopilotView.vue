@@ -1244,12 +1244,16 @@ function reportVerifiedWorkspaceRecovery() {
 }
 
 async function finishTemporaryAiTask(task = {}) {
-  const handled = await handleTemporaryAiTaskFinished(task);
-  if (!handled) {
+  const recovery = await handleTemporaryAiTaskFinished(task, (taskId, outcome) => (
+    temporaryAiWorkspace.value?.reportTaskRecovery?.(taskId, outcome)
+  ));
+  if (!recovery) {
     return false;
   }
-  workspaceRecoveryTaskId.value = String(task.id || "").trim();
-  reportVerifiedWorkspaceRecovery();
+  if (recovery === "workspace-setup") {
+    workspaceRecoveryTaskId.value = String(task.id || "").trim();
+    reportVerifiedWorkspaceRecovery();
+  }
   return true;
 }
 

@@ -173,16 +173,11 @@ describe("useVibe64ChatColumnResize", () => {
       "utf8"
     );
 
-    expect(conversation).toContain("THINKING_PREVIEW_LIMIT = 2");
+    expect(conversation).toContain("Vibe64ConversationProgress");
     expect(conversation).toContain("DISPLAY_MESSAGE_CACHE_LIMIT = 500");
-    expect(conversation).toContain("visibleThinkingMessages(turn, entry)");
-    expect(conversation).toContain("entry.messages.slice(-THINKING_PREVIEW_LIMIT)");
-    expect(conversation).toContain("Show all ${entry.messages.length} progress ${");
-    expect(conversation).toContain(":aria-expanded=\"thinkingGroupExpanded(turn, entry)\"");
-    expect(conversation).toContain('turn.pending ? "active" : "completed"');
-    expect(conversation).toMatch(/return turn\.pending[\s\S]*entry\.messages\.slice\(-THINKING_PREVIEW_LIMIT\)[\s\S]*:\s*\[\];/u);
+    expect(conversation).toContain(":pending=\"turn.pending\"");
+    expect(conversation).toContain("turn.pending ? 'active' : 'completed'");
     expect(conversation).toContain('pending: turn.pending === true');
-    expect(conversation).toContain('"Hide progress updates"');
     expect(conversation).toContain("window.requestAnimationFrame(() =>");
     expect(conversation).toContain('scrollToLatestMessageNow({ behavior: "auto" })');
     expect(view).not.toContain("}, { deep: true });");

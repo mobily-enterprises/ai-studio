@@ -70,7 +70,7 @@
           : 'Read-only: temporary AI cannot edit this session'"
         class="vibe64-temporary-ai__policy"
         :color="activeTask.policy === workspaceWritePolicy ? 'warning' : undefined"
-        :disabled="activeTask.busy"
+        :disabled="taskInputDisabled(activeTask)"
         height="28"
         min-width="40"
         size="x-small"
@@ -99,8 +99,7 @@
           :title="activeTaskRecoveryTitle"
           variant="tonal"
         >
-          <p>{{ activeTask.recoveryNotice }}</p>
-          <p v-if="activeTaskRecoveryStatus">{{ activeTaskRecoveryStatus }}</p>
+          <p v-if="activeTaskRecoveryStatus && !activeTask.busy">{{ activeTaskRecoveryStatus }}</p>
         </v-alert>
         <Vibe64EphemeralConversationMessages
           :session-id="props.sessionId"
@@ -110,7 +109,7 @@
       </div>
 
       <div
-        v-if="activeTask.error || activeTask.busy"
+        v-if="activeTask.error || activeTask.busy || activeTaskRecoveryChecking"
         class="vibe64-temporary-ai__feedback"
       >
         <div
@@ -125,13 +124,13 @@
           <template v-else>{{ activeTask.error }}</template>
         </div>
         <div
-          v-if="activeTask.busy"
+          v-if="activeTask.busy || activeTaskRecoveryChecking"
           class="vibe64-temporary-ai__activity"
           aria-live="polite"
           role="status"
         >
           <span class="vibe64-temporary-ai__activity-mark" aria-hidden="true" />
-          <span>{{ activeTaskActivityLabel }}</span>
+          <span>{{ activeTaskRecoveryChecking ? "Checking Update…" : "AI is working…" }}</span>
         </div>
       </div>
 
@@ -143,7 +142,7 @@
         :model-value="task.draft"
         aria-label="Message temporary AI"
         :attachments-enabled="Boolean(props.sessionId)"
-        :disabled="task.busy"
+        :disabled="taskInputDisabled(task)"
         placeholder="Ask temporary AI…"
         :rows="2"
         :session-id="props.sessionId"
@@ -157,12 +156,12 @@
           <div class="vibe64-temporary-ai__composer-actions">
             <Vibe64AgentSettingsMenu
               :agent-settings="task.agentSettings"
-              :disabled="task.busy"
+              :disabled="taskInputDisabled(task)"
               @update-setting="updateActiveAgentSetting"
             />
             <v-btn
               aria-label="Attach files"
-              :disabled="task.busy || !attachmentState.canAddFiles"
+              :disabled="taskInputDisabled(task) || !attachmentState.canAddFiles"
               :icon="mdiPaperclip"
               size="small"
               title="Attach files"
@@ -187,7 +186,7 @@
               :ref="(element) => setTaskSendButton(task.id, element)"
               aria-label="Send to temporary AI"
               color="primary"
-              :disabled="!task.draft.trim() || !attachmentState.canSubmit"
+              :disabled="task.recoveryOutcome === 'checking' || !task.draft.trim() || !attachmentState.canSubmit"
               :icon="mdiArrowUp"
               size="small"
               title="Send to temporary AI"
@@ -253,6 +252,9 @@ const temporary = useVibe64TemporaryAi({
   onTaskFinished(task = {}) {
     emit("task-finished", task);
     if (task.status === "completed") {
+      if (task.outcomeKind === "continue" || task.recoveryOperation === "update") {
+        return;
+      }
       temporaryAiFeedback.success(
         task.completionMessage || `${task.title} finished. Review the result before continuing.`
       );
@@ -268,10 +270,20 @@ const temporary = useVibe64TemporaryAi({
   sessionsApiPath: resolvedSessionsApiPath
 });
 const activeTask = temporary.activeTask;
+const activeTaskRecoveryChecking = computed(() => activeTask.value?.recoveryOutcome === "checking");
 const activeTaskRecoveryVerified = computed(() => (
   activeTask.value?.recoveryOutcome === "succeeded"
 ));
 const activeTaskRecoveryTitle = computed(() => {
+  if (activeTaskRecoveryChecking.value) {
+    return "Checking Update…";
+  }
+  if (activeTask.value?.recoveryOutcome === "failed") {
+    return "Update needs attention";
+  }
+  if (activeTask.value?.outcomeKind === "continue") {
+    return "Waiting for your reply";
+  }
   if (activeTaskRecoveryVerified.value) {
     return "Repair verified";
   }
@@ -292,6 +304,9 @@ const activeTaskRecoveryTitle = computed(() => {
 });
 const activeTaskRecoveryStatus = computed(() => {
   const task = activeTask.value || {};
+  if (task.recoveryOutcome === "checking" || task.outcomeKind === "continue") {
+    return "";
+  }
   if (task.recoveryOutcome === "succeeded") {
     return task.recoveryOutcomeMessage || "Vibe64 independently verified that the repair succeeded.";
   }
@@ -310,11 +325,11 @@ const activeTaskRecoveryStatus = computed(() => {
   }
   return task.nextStepMessage || "Follow progress here and reply below if Temporary AI needs a decision.";
 });
-const activeTaskActivityLabel = computed(() => {
-  const updates = activeTask.value?.messages?.at(-1)?.progressUpdates;
-  return updates?.at(-1)?.text || "Temporary AI is working...";
-});
 const workspaceWritePolicy = TEMPORARY_AI_WORKSPACE_WRITE_POLICY;
+
+function taskInputDisabled(task) {
+  return task.busy || task.recoveryOutcome === "checking";
+}
 
 function taskPrompt(taskId = "") {
   return taskPrompts.get(String(taskId || "")) || null;
@@ -591,11 +606,13 @@ defineExpose({
 
 .vibe64-temporary-ai__activity {
   align-items: center;
-  color: rgba(var(--v-theme-on-surface), 0.66);
+  background: rgba(var(--v-theme-primary), 0.06);
+  color: rgb(var(--v-theme-primary));
   display: flex;
-  font-size: 0.78rem;
+  font-size: 0.875rem;
+  font-weight: 600;
   gap: 0.45rem;
-  min-height: 1.8rem;
+  min-height: 2rem;
   padding: 0.15rem 0.55rem;
 }
 
@@ -638,6 +655,12 @@ defineExpose({
     border-radius: 0;
     inset: 0;
     z-index: 30;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe64-temporary-ai__activity-mark {
+    animation: none;
   }
 }
 

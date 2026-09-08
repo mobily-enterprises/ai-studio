@@ -70,7 +70,10 @@ vi.mock("@/components/studio/vibe64-session/Vibe64ConversationAttachments.vue", 
 import Vibe64TemporaryAiWorkspace from "../../src/components/studio/vibe64-session/Vibe64TemporaryAiWorkspace.vue";
 import Vibe64EphemeralConversationMessages from "../../src/components/studio/vibe64-session/Vibe64EphemeralConversationMessages.vue";
 
+import Vibe64ConversationProgress from "../../src/components/studio/vibe64-session/Vibe64ConversationProgress.vue";
+
 for (const [name, component] of [
+  ["Vibe64ConversationProgress", Vibe64ConversationProgress],
   ["Vibe64TemporaryAiWorkspace", Vibe64TemporaryAiWorkspace],
   ["Vibe64EphemeralConversationMessages", Vibe64EphemeralConversationMessages]
 ]) {
@@ -261,6 +264,31 @@ describe("Temporary AI recovery workspace accessibility", () => {
     vi.unstubAllGlobals();
   });
 
+  it("preserves the main chat's two-update preview and resets completed progress to collapsed", async () => {
+    const pending = ref(true);
+    const messages = ref([1, 2, 3].map((id) => ({ id: String(id), text: `Progress ${id}.` })));
+    const app = testRenderer().createApp(defineComponent({
+      setup: () => () => h(Vibe64ConversationProgress, {
+        key: pending.value ? "active" : "completed", pending: pending.value, messages: messages.value
+      })
+    }));
+    app.provide(ssrContextKey, { modules: new Set() });
+    const container = { children: [], parent: null, type: "root" };
+    app.mount(container);
+    try {
+      expect(nodeText(container)).toBe("Show all 3 progress updates Progress 2. Progress 3.");
+      findNode(container, (node) => node.type === "button").props.onClick();
+      await nextTick();
+      expect(nodeText(container)).toBe("Show latest 2 progress updates Progress 1. Progress 2. Progress 3.");
+      pending.value = false;
+      await nextTick();
+      expect(nodeText(container)).toBe("Show all 3 progress updates");
+      findNode(container, (node) => node.type === "button").props.onClick();
+      await nextTick();
+      expect(nodeText(container)).toBe("Hide progress updates Progress 1. Progress 2. Progress 3.");
+    } finally { app.unmount(); }
+  });
+
   it("reveals and focuses the recovery task before its request finishes", async () => {
     const startResult = deferred();
     temporaryProvider.value = temporaryAiTestState(startResult);
@@ -288,7 +316,7 @@ describe("Temporary AI recovery workspace accessibility", () => {
     app.unmount();
   });
 
-  it("explains the editable temporary handoff and what happens next", async () => {
+  it("shows only the repair heading while temporary AI is working", async () => {
     const startResult = deferred();
     const temporary = temporaryAiTestState(startResult);
     temporary.tasks.value = [{
@@ -320,12 +348,12 @@ describe("Temporary AI recovery workspace accessibility", () => {
     expect(recoveryNotice).toBeTruthy();
     expect(recoveryNotice.props.role).toBe("status");
     expect(nodeText(recoveryNotice)).toContain("AI repair in progress");
-    expect(nodeText(recoveryNotice)).toContain("separate temporary chat");
-    expect(nodeText(recoveryNotice)).toContain("Vibe64 will verify the repair");
+    expect(nodeText(recoveryNotice)).not.toContain("separate temporary chat");
+    expect(nodeText(recoveryNotice)).not.toContain("Vibe64 will verify the repair");
     app.unmount();
   });
 
-  it("renders labeled assistant progress in order and updates it without exposing user-message progress", async () => {
+  it("keeps thinking in collapsed conversation details and the working status concise", async () => {
     const temporary = temporaryAiTestState(deferred());
     temporary.tasks.value = [{
       agentSettings: {},
@@ -368,7 +396,17 @@ describe("Temporary AI recovery workspace accessibility", () => {
         node.props?.["aria-label"] === "Temporary AI progress"
       ));
       expect(progress).toBeTruthy();
-      expect(nodeText(progress)).toBe("Inspecting the conflict. Checking the repair.");
+      expect(nodeText(progress)).toBe("Show all 2 progress updates");
+      const toggle = findNode(progress, (node) => node.type === "button");
+      expect(toggle.props["aria-expanded"]).toBe(false);
+      toggle.props.onClick();
+      await nextTick();
+      expect(nodeText(progress)).toBe("Hide progress updates Inspecting the conflict. Checking the repair.");
+      const activity = findNode(container, (node) => (
+        node.props?.class === "vibe64-temporary-ai__activity"
+      ));
+      expect(activity.props.role).toBe("status");
+      expect(nodeText(activity)).toBe("AI is working…");
 
       const userMessage = findNode(container, (node) => (
         node.type === "article" && nodeText(node).includes("Check this repair.")
@@ -388,8 +426,12 @@ describe("Temporary AI recovery workspace accessibility", () => {
         node.props?.["aria-label"] === "Temporary AI progress"
       ));
       expect(nodeText(updatedProgress)).toBe(
-        "Inspecting the conflict. Checking the repair. The repair is ready for verification."
+        "Hide progress updates Inspecting the conflict. Checking the repair. The repair is ready for verification."
       );
+      expect(nodeText(activity)).toBe("AI is working…");
+      toggle.props.onClick();
+      await nextTick();
+      expect(nodeText(updatedProgress)).toBe("Show all 3 progress updates");
       expect(nodeText(container)).not.toContain("This is not assistant progress.");
     } finally {
       app.unmount();

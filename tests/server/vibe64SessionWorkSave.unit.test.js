@@ -897,6 +897,44 @@ test("Update leaves HEAD, index, and worktree untouched when newer work conflict
   }
 });
 
+test("Update verifies a repaired document while preserving edits made after the conflict", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-repair-"));
+  try {
+    const fixture = await createRemoteFixture(root);
+    const body = Array.from({ length: 20 }, (_, index) => `Record ${index}.`).join("\n");
+    await writeFile(path.join(fixture.seed, "shared.txt"), `Old heading\n${body}\n`);
+    await git(fixture.seed, ["add", "shared.txt"]);
+    await git(fixture.seed, ["commit", "-m", "document baseline"]);
+    await git(fixture.seed, ["push", "origin", "main"]);
+    fixture.baseCommit = await git(fixture.seed, ["rev-parse", "HEAD"]);
+    const session = await sessionForRemote(root, fixture);
+    await writeFile(path.join(fixture.seed, "shared.txt"), `Corrected heading\n${body}\n`);
+    await git(fixture.seed, ["add", "shared.txt"]);
+    await git(fixture.seed, ["commit", "-m", "correct heading"]);
+    await git(fixture.seed, ["push", "origin", "main"]);
+    await writeFile(path.join(session.sourcePath, "shared.txt"), `Session heading\n${body}\nSession decisions.\n`);
+    const input = { project: githubProject(root, fixture.remote), runCommand: commandRunner, session };
+    let conflictRecovery;
+    await assert.rejects(updateSessionWork({ ...input, operationId: "before-repair" }), (error) => {
+      assert.equal(error.code, "vibe64_session_update_conflict");
+      conflictRecovery = error.details.conflictRecovery;
+      return true;
+    });
+    const corrected = `Corrected heading\n${body}\nSession decisions.\n`;
+    await writeFile(path.join(session.sourcePath, "shared.txt"), corrected);
+    await writeFile(path.join(session.sourcePath, "ongoing-work.txt"), "Keep these newer edits.\n");
+    const updated = await updateSessionWork({ ...input, conflictRecovery, operationId: "after-repair" });
+    assert.equal(updated.status, "updated");
+    assert.equal(await git(session.sourcePath, ["rev-parse", "HEAD"]), updated.canonicalCommit);
+    assert.equal(await readFile(path.join(session.sourcePath, "shared.txt"), "utf8"), corrected);
+    assert.equal(await readFile(path.join(session.sourcePath, "ongoing-work.txt"), "utf8"), "Keep these newer edits.\n");
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /shared\.txt/u);
+    assert.match(await git(session.sourcePath, ["status", "--porcelain"]), /ongoing-work\.txt/u);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("interrupted Update recovery applies the prepared result exactly once", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-update-"));
   try {
