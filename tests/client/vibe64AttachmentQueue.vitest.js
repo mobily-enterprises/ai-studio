@@ -46,6 +46,8 @@ vi.mock("vuetify/components/VProgressLinear", async () => {
   };
 });
 
+vi.mock("../../src/components/studio/vibe64-session/Vibe64AttachmentDialog.vue", () => ({ default: { render: () => null } }));
+
 import Vibe64AttachmentQueue from "../../src/components/studio/vibe64-session/Vibe64AttachmentQueue.vue";
 
 const VBtn = defineComponent({

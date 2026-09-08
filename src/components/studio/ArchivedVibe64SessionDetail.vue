@@ -47,6 +47,7 @@
     <section class="studio-archived-session-detail__section studio-archived-session-detail__conversation">
       <h3>Conversation</h3>
       <Vibe64ConversationLog
+        :session-id="session.sessionId"
         :error="conversationError"
         :has-more-before="conversationHasMoreBefore"
         :loading="conversationLoading"

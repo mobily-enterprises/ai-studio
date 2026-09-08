@@ -1,11 +1,22 @@
-const ATTACHMENT_SECTION_HEADING = "Attached files for Codex:";
+import { conversationAttachmentContentType, conversationAttachmentReference } from "@local/vibe64-runtime/shared";
 
-function attachmentFileName(attachment = {}) {
-  return String(attachment.fileName || "attachment").trim() || "attachment";
+function labelComposerAttachments(attachments = []) {
+  let images = 0;
+  let files = 0;
+  return attachments.map((attachment) => ({
+    ...attachment,
+    reference: conversationAttachmentReference(attachment,
+      conversationAttachmentContentType(attachment.fileName).startsWith("image/") ? ++images : ++files)
+  }));
 }
 
-function attachmentPath(attachment = {}) {
-  return String(attachment.path || "").trim();
+function updateComposerAttachmentReferences(text, previous, next) {
+  const replacements = new Map(previous.filter((attachment) => attachment.reference).map((attachment) => [
+    attachment.reference,
+    next.find((candidate) => candidate.attachmentId === attachment.attachmentId)?.reference || ""
+  ]));
+  return String(text || "").replace(/\[(?:Image|File) #[1-9][0-9]{0,3}\]/gu,
+    (reference) => replacements.has(reference) ? replacements.get(reference) : reference);
 }
 
 function attachmentSizeLabel(size) {
@@ -22,69 +33,8 @@ function attachmentSizeLabel(size) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function promptAttachmentReference(attachment = {}) {
-  const codexPath = attachmentPath(attachment);
-  if (!codexPath) {
-    return "";
-  }
-  const sizeLabel = attachmentSizeLabel(attachment.size);
-  const details = sizeLabel ? ` (${sizeLabel})` : "";
-  return `- ${attachmentFileName(attachment)}${details}: ${codexPath}`;
-}
-
-function promptAttachmentReferences(attachments = []) {
-  return attachments
-    .map(promptAttachmentReference)
-    .filter(Boolean);
-}
-
-function escapeRegExp(value = "") {
-  return String(value || "").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function appendPromptAttachmentReferences(promptText = "", attachments = []) {
-  const references = promptAttachmentReferences(attachments);
-  if (references.length < 1) {
-    return String(promptText || "");
-  }
-
-  const source = String(promptText || "").trimEnd();
-  const sectionStartPattern = new RegExp(`(^|\\n)${ATTACHMENT_SECTION_HEADING}\\n`, "u");
-  if (sectionStartPattern.test(source)) {
-    return `${source}\n${references.join("\n")}`;
-  }
-
-  return [
-    source,
-    [
-      ATTACHMENT_SECTION_HEADING,
-      ...references
-    ].join("\n")
-  ].filter(Boolean).join("\n\n");
-}
-
-function removePromptAttachmentReferences(promptText = "", attachments = []) {
-  const references = new Set(promptAttachmentReferences(attachments));
-  if (references.size < 1) {
-    return String(promptText || "");
-  }
-
-  const textWithoutReferences = String(promptText || "")
-    .split("\n")
-    .filter((line) => !references.has(line.trimEnd()))
-    .join("\n");
-  const trailingEmptySectionPattern = new RegExp(
-    `\\n{0,2}${escapeRegExp(ATTACHMENT_SECTION_HEADING)}\\n*$`,
-    "u"
-  );
-  return textWithoutReferences.replace(trailingEmptySectionPattern, "").trimEnd();
-}
-
 export {
-  ATTACHMENT_SECTION_HEADING,
-  appendPromptAttachmentReferences,
   attachmentSizeLabel,
-  promptAttachmentReference,
-  promptAttachmentReferences,
-  removePromptAttachmentReferences
+  labelComposerAttachments,
+  updateComposerAttachmentReferences
 };

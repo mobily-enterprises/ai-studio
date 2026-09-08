@@ -37,8 +37,11 @@ distinct from the durable project conversation. Closing a task stops its live
 turn, deletes its provider conversation and exact uploaded attachments, and
 removes its browser-local state. Tasks are not restored after reload and never
 appear in session History.
-Sent task attachments remain separate from the message as compact, read-only
-file details showing the safe file name and size.
+Task attachments use the shared upload queue, text references and preview/download
+dialog. They retain the temporary upload lease and exact-file cleanup when the
+task closes; they are not copied into the durable main conversation's artifacts.
+Both assistant adapters receive file descriptors resolved by the shared
+attachment service.
 Assistant replies use the same formatted text presentation as normal chat,
 including lists, bold text, code, and links. User-authored text stays literal.
 Raw HTML remains text, and executable or data-URL links are not made clickable.

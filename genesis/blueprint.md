@@ -98,7 +98,11 @@ can create a session.
 Vibe64 makes machine-facing work dependable. It manages project access,
 credentials, development environments, application processes, previews,
 browser identities, and attachments without putting private machine state into
-the project. It shows clear status and failures and lets people retry or ask the
+the project. Chat attachments have readable image or file references for every
+supported assistant. People can open attached images, download files, and return
+to sent attachments throughout the conversation and its archive. Removing a
+queued upload removes its unchanged reference; editing the message alone does
+not remove a file. It shows clear status and failures and lets people retry or ask the
 agent for help. When a provider reports exhausted quota or another account
 failure, completed project work remains available and the conversation gives a
 direct route to the relevant account recovery. Non-urgent background checks

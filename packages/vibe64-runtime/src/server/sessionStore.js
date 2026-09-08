@@ -4711,6 +4711,7 @@ function createVibe64SessionStore({
     mutateSessionForRenewal,
     paths,
     readArtifact,
+    withReadableSessionPaths,
     readArtifactForRenewal,
     readAgentRun,
     readAgentRuns,

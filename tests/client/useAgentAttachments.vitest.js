@@ -6,15 +6,15 @@ import {
   useCodexTerminalAttachments
 } from "../../src/composables/useCodexTerminalAttachments.js";
 import {
-  CODEX_ATTACHMENT_MAX_BYTES,
-  CODEX_ATTACHMENT_MAX_ITEMS,
+  AGENT_ATTACHMENT_MAX_BYTES,
+  AGENT_ATTACHMENT_MAX_ITEMS,
   codexAttachmentEventHasFiles,
   codexAttachmentFiles,
   codexAttachmentFilesFromPasteEvent,
   codexAttachmentFilesFromDropEvent,
   codexAttachmentFilesFromTransferItems,
-  useCodexAttachments
-} from "../../src/composables/useCodexAttachments.js";
+  useAgentAttachments
+} from "../../src/composables/useAgentAttachments.js";
 
 function testFile(name, size = 1) {
   return {
@@ -53,7 +53,7 @@ async function flushPromises() {
   await Promise.resolve();
 }
 
-describe("useCodexAttachments", () => {
+describe("useAgentAttachments", () => {
   it("shares file filtering for drag, picker, and terminal uploads", () => {
     const files = codexAttachmentFiles([
       testFile("valid.txt"),
@@ -143,7 +143,7 @@ describe("useCodexAttachments", () => {
       fileName: file.name,
       size: file.size
     }));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       onUploaded,
       sessionId: ref("session-1"),
       uploadAttachment
@@ -189,7 +189,7 @@ describe("useCodexAttachments", () => {
       requests.set(file.name, request);
       return request.promise;
     });
-    attachments = useCodexAttachments({
+    attachments = useAgentAttachments({
       onUploaded: async () => {
         publishedLists.push(attachments.attachments.value.map((attachment) => attachment.fileName));
       },
@@ -217,7 +217,7 @@ describe("useCodexAttachments", () => {
   it("shows producer attachments immediately while preparing and then uploads the produced file", async () => {
     const preparation = deferred();
     const uploadAttachment = vi.fn(async (sessionId, file) => uploadedAttachment(sessionId, file));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment
     });
@@ -258,7 +258,7 @@ describe("useCodexAttachments", () => {
       })
       .mockResolvedValueOnce(producedFile);
     const uploadAttachment = vi.fn(async (sessionId, file) => uploadedAttachment(sessionId, file));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment
     });
@@ -289,7 +289,7 @@ describe("useCodexAttachments", () => {
       .mockImplementationOnce(() => firstPreparation.promise)
       .mockImplementationOnce(() => secondPreparation.promise);
     const uploadAttachment = vi.fn(async (sessionId, file) => uploadedAttachment(sessionId, file));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment
     });
@@ -338,7 +338,7 @@ describe("useCodexAttachments", () => {
       });
       return request.promise;
     });
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       onUploaded,
       sessionId: ref("session-1"),
       uploadAttachment
@@ -409,13 +409,13 @@ describe("useCodexAttachments", () => {
 
   it("retains visible size failures and enforces ten non-cancelled items", async () => {
     const uploadAttachment = vi.fn(() => deferred().promise);
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment
     });
 
     expect(await attachments.uploadFiles([
-      testFile("too-large.bin", CODEX_ATTACHMENT_MAX_BYTES + 1)
+      testFile("too-large.bin", AGENT_ATTACHMENT_MAX_BYTES + 1)
     ])).toEqual([]);
     expect(attachments.queueItems.value[0]).toMatchObject({
       failureStage: "validation",
@@ -426,10 +426,10 @@ describe("useCodexAttachments", () => {
     expect(uploadAttachment).not.toHaveBeenCalled();
 
     void attachments.uploadFiles(Array.from(
-      { length: CODEX_ATTACHMENT_MAX_ITEMS },
+      { length: AGENT_ATTACHMENT_MAX_ITEMS },
       (_unused, index) => testFile(`file-${index}.txt`)
     ));
-    expect(attachments.queueItems.value).toHaveLength(CODEX_ATTACHMENT_MAX_ITEMS);
+    expect(attachments.queueItems.value).toHaveLength(AGENT_ATTACHMENT_MAX_ITEMS);
     expect(attachments.atCapacity.value).toBe(true);
     expect(attachments.status.value).toContain("at most 10 attachments");
     expect(uploadAttachment).toHaveBeenCalledTimes(2);
@@ -448,7 +448,7 @@ describe("useCodexAttachments", () => {
       }
       return uploadedAttachment(sessionId, file);
     });
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment
     });
@@ -476,7 +476,7 @@ describe("useCodexAttachments", () => {
     const request = deferred();
     const deleteAttachment = vi.fn(async () => ({ ok: true }));
     let uploadOptions = null;
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       deleteAttachment,
       sessionId: ref("session-1"),
       uploadAttachment: (_sessionId, _file, options) => {
@@ -503,7 +503,7 @@ describe("useCodexAttachments", () => {
 
   it("keeps a cancelled attempt separate from the retry that follows it", async () => {
     const requests = [];
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment: () => {
         const request = deferred();
@@ -534,7 +534,7 @@ describe("useCodexAttachments", () => {
       .mockRejectedValueOnce(new Error("Terminal path could not be injected."))
       .mockResolvedValueOnce(true);
     const uploadAttachment = vi.fn(async (sessionId, file) => uploadedAttachment(sessionId, file));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       onUploaded,
       sessionId: ref("session-1"),
       uploadAttachment
@@ -558,7 +558,7 @@ describe("useCodexAttachments", () => {
 
   it("deletes removed and abandoned receipts but preserves accepted prompt attachments", async () => {
     const deleteAttachment = vi.fn(async () => ({ ok: true }));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       deleteAttachment,
       sessionId: ref("session-1"),
       uploadAttachment: async (sessionId, file) => uploadedAttachment(sessionId, file)
@@ -591,7 +591,7 @@ describe("useCodexAttachments", () => {
       }
       return Promise.resolve(uploadedAttachment(sessionId, file));
     });
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       deleteAttachment,
       sessionId: currentSessionId,
       uploadAttachment
@@ -619,7 +619,7 @@ describe("useCodexAttachments", () => {
     const request = deferred();
     const deleteAttachment = vi.fn(async () => ({ ok: true }));
     let signal = null;
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       deleteAttachment,
       sessionId: ref("session-1"),
       uploadAttachment: (_sessionId, _file, options) => {
@@ -643,7 +643,7 @@ describe("useCodexAttachments", () => {
 
   it("does not let a cancelled retry exceed the ten-file retained limit", async () => {
     const requests = [];
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment: () => {
         const request = deferred();
@@ -656,11 +656,11 @@ describe("useCodexAttachments", () => {
     const cancelled = attachments.queueItems.value[0];
     attachments.cancelAttachment(cancelled);
     void attachments.uploadFiles(Array.from(
-      { length: CODEX_ATTACHMENT_MAX_ITEMS },
+      { length: AGENT_ATTACHMENT_MAX_ITEMS },
       (_unused, index) => testFile(`replacement-${index}.txt`)
     ));
 
-    expect(attachments.queueItems.value).toHaveLength(CODEX_ATTACHMENT_MAX_ITEMS + 1);
+    expect(attachments.queueItems.value).toHaveLength(AGENT_ATTACHMENT_MAX_ITEMS + 1);
     expect(attachments.atCapacity.value).toBe(true);
     expect(await attachments.retryAttachment(cancelled)).toBe(null);
     expect(cancelled.phase).toBe("cancelled");
@@ -668,7 +668,7 @@ describe("useCodexAttachments", () => {
   });
 
   it("removes uploaded attachment records by id", async () => {
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment: async (_sessionId, file) => ({
         ok: true,
@@ -691,7 +691,7 @@ describe("useCodexAttachments", () => {
   });
 
   it("clears uploaded attachment records after a prompt is accepted", async () => {
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment: async (_sessionId, file) => ({
         ok: true,
@@ -713,7 +713,7 @@ describe("useCodexAttachments", () => {
 
   it("respects a caller-provided upload gate", async () => {
     const uploadAttachment = vi.fn();
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       canUpload: () => false,
       sessionId: ref("session-1"),
       uploadAttachment
@@ -723,9 +723,28 @@ describe("useCodexAttachments", () => {
     expect(uploadAttachment).not.toHaveBeenCalled();
   });
 
+  it("clears only acknowledged attachments while preserving newer ready and in-flight uploads", async () => {
+    const pending = deferred();
+    const deleteAttachment = vi.fn(async () => ({ ok: true }));
+    const attachments = useAgentAttachments({
+      sessionId: ref("session-1"), deleteAttachment,
+      uploadAttachment: (sessionId, file) => file.name === "uploading.txt"
+        ? pending.promise
+        : Promise.resolve(uploadedAttachment(sessionId, file))
+    });
+    await attachments.uploadFiles([testFile("sent.txt"), testFile("new.txt")]);
+    const inFlight = attachments.uploadFiles([testFile("uploading.txt")]);
+    expect(attachments.clearAttachments({ attachmentIds: ["sent.txt"] }).map((item) => item.fileName)).toEqual(["sent.txt"]);
+    expect(attachments.queueItems.value.map((item) => item.fileName)).toEqual(["new.txt", "uploading.txt"]);
+    pending.resolve(uploadedAttachment("session-1", testFile("uploading.txt")));
+    await inFlight;
+    expect(attachments.attachments.value.map((item) => item.fileName)).toEqual(["new.txt", "uploading.txt"]);
+    expect(deleteAttachment).not.toHaveBeenCalled();
+  });
+
   it("keeps a consumer handoff failure on its row without duplicate global feedback", async () => {
     const onError = vi.fn();
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       onError,
       onUploaded: async () => {
         throw new Error("Codex path could not be injected.");
@@ -755,7 +774,7 @@ describe("useCodexAttachments", () => {
   it("still hands off files uploaded before a later upload fails", async () => {
     const onError = vi.fn();
     const onUploaded = vi.fn();
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       onError,
       onUploaded,
       sessionId: ref("session-1"),
@@ -804,7 +823,7 @@ describe("useCodexAttachments", () => {
       fileName: file.name,
       size: file.size
     }));
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       sessionId: ref("session-1"),
       uploadAttachment
     });
@@ -860,7 +879,7 @@ describe("useCodexAttachments", () => {
     const onError = vi.fn();
     const preventDefault = vi.fn();
     const uploadAttachment = vi.fn();
-    const attachments = useCodexAttachments({
+    const attachments = useAgentAttachments({
       onError,
       sessionId: ref("session-1"),
       uploadAttachment

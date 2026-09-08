@@ -332,6 +332,10 @@ async function advanceMockTimers(t, milliseconds, values, expected) {
   await waitForArrayLength(values, expected);
 }
 
+function writeAttachedTerminal(provider, context, input) {
+  return provider.writeTerminal(context, { data: input.message, input, terminalSessionId: "terminal-a" });
+}
+
 function retainedAttachmentLease(ids = []) {
   return {
     busy: [],
@@ -532,7 +536,7 @@ test("Codex adapter publishes the resolved audit profile before a streamed detac
   assert.deepEqual(result.executionProfile, events[0].executionProfile);
 });
 
-test("Codex adapter validates attachment leases before delivery and renews accepted deliveries again", async () => {
+test("Codex adapter keeps chat delivery independent of upload leases and renews terminal attachments", async () => {
   const attachmentIds = {
     main: "11111111-1111-4111-8111-111111111111",
     temporary: "22222222-2222-4222-8222-222222222222",
@@ -629,22 +633,13 @@ test("Codex adapter validates attachment leases before delivery and renews accep
   assert.equal(terminal.ok, true);
   assert.equal(terminalFailed.ok, false);
   assert.deepEqual(renewals, [
-    { ids: [attachmentIds.main], sessionId: "session-a" },
-    { ids: [attachmentIds.main], sessionId: "session-a" },
-    { ids: [attachmentIds.main], sessionId: "session-a" },
-    { ids: [attachmentIds.main], sessionId: "session-a" },
-    { ids: [attachmentIds.main], sessionId: "session-a" },
-    { ids: [attachmentIds.main], sessionId: "session-a" },
-    { ids: [attachmentIds.temporary], sessionId: "session-a" },
-    { ids: [attachmentIds.temporary], sessionId: "session-a" },
-    { ids: [attachmentIds.temporary], sessionId: "session-a" },
     { ids: [attachmentIds.terminal], sessionId: "session-a" },
     { ids: [attachmentIds.terminal], sessionId: "session-a" },
     { ids: [attachmentIds.terminal], sessionId: "session-a" }
   ]);
 });
 
-test("Codex adapter rejects missing, busy, and unavailable attachments before every delivery seam", async () => {
+test("Codex adapter rejects missing, busy, and unavailable terminal attachments", async () => {
   const attachmentId = "11111111-1111-4111-8111-111111111111";
   const deliveries = [];
   const scenarios = [
@@ -702,8 +697,6 @@ test("Codex adapter rejects missing, busy, and unavailable attachments before ev
     const context = { sessionId: "session-a" };
     const input = { attachmentIds: [attachmentId] };
     const results = [
-      await provider.sendMessage(context, input),
-      await provider.startConversationTurn(context, input),
       await provider.writeTerminal(context, {
         data: "[/tmp/file] ",
         input,
@@ -725,7 +718,7 @@ test("Codex adapter fails closed before delivery when attachment validation cann
   const deliveries = [];
   for (const failure of ["missing-controller", "result", "throw"]) {
     const controller = {
-      async sendMessage() {
+      async writeTerminal() {
         deliveries.push(failure);
         return { ok: true, turnId: "must-not-run" };
       },
@@ -745,7 +738,7 @@ test("Codex adapter fails closed before delivery when attachment validation cann
           })
     };
     const provider = createCodexSessionAgentProvider({ controller });
-    const result = await provider.sendMessage({ sessionId: "session-a" }, {
+    const result = await writeAttachedTerminal(provider, { sessionId: "session-a" }, {
       attachmentIds: [attachmentId],
       message: "must not be delivered"
     });
@@ -780,7 +773,7 @@ test("Codex adapter retries only busy attachment leases after accepted delivery"
         retained: [busyId]
       };
     },
-    async sendMessage() {
+    async writeTerminal() {
       return {
         ok: true,
         turnId: "accepted-turn"
@@ -789,7 +782,7 @@ test("Codex adapter retries only busy attachment leases after accepted delivery"
   };
   const provider = createCodexSessionAgentProvider({ controller });
 
-  const result = await provider.sendMessage({ sessionId: "session-a" }, {
+  const result = await writeAttachedTerminal(provider, { sessionId: "session-a" }, {
     attachmentIds: [firstId, busyId],
     message: "accepted"
   });
@@ -842,7 +835,7 @@ test("accepted delivery schedules lease-only recovery after foreground contentio
         retained: [busyId]
       };
     },
-    async sendMessage(sessionId, input) {
+    async writeTerminal(sessionId, _terminalId, _data, input) {
       deliveries.push({ input, sessionId });
       return {
         ok: true,
@@ -853,7 +846,7 @@ test("accepted delivery schedules lease-only recovery after foreground contentio
   const provider = createCodexSessionAgentProvider({ controller });
 
   try {
-    const pending = provider.sendMessage({ sessionId: "session-a" }, {
+    const pending = writeAttachedTerminal(provider, { sessionId: "session-a" }, {
       attachmentIds: [firstId, busyId],
       message: "accepted once"
     });
@@ -864,7 +857,7 @@ test("accepted delivery schedules lease-only recovery after foreground contentio
 
     const result = await pending;
     assert.equal(result.ok, true);
-    assert.equal(result.turn?.id, "accepted-turn");
+    assert.equal(result.turnId, "accepted-turn");
     assert.equal(deliveries.length, 1);
 
     await advanceMockTimers(t, 500, renewals, 5);
@@ -921,7 +914,7 @@ test("accepted delivery survives foreground lease errors and retries only the le
             retained: [attachmentId]
           };
         },
-        async sendMessage(sessionId, input) {
+        async writeTerminal(sessionId, _terminalId, _data, input) {
           deliveries.push({ input, sessionId });
           return {
             ok: true,
@@ -931,12 +924,12 @@ test("accepted delivery survives foreground lease errors and retries only the le
       };
       const provider = createCodexSessionAgentProvider({ controller });
 
-      const result = await provider.sendMessage({ sessionId: "session-a" }, {
+      const result = await writeAttachedTerminal(provider, { sessionId: "session-a" }, {
         attachmentIds: [attachmentId],
         message: `accepted despite ${failure}`
       });
       assert.equal(result.ok, true);
-      assert.equal(result.turn?.id, `accepted-${failure}`);
+      assert.equal(result.turnId, `accepted-${failure}`);
       assert.equal(deliveries.length, 1);
       assert.equal(renewals.length, 2);
 
@@ -978,7 +971,7 @@ test("exhausted accepted-delivery lease recovery emits the established diagnosti
         retained: []
       };
     },
-    async sendMessage(sessionId, input) {
+    async writeTerminal(sessionId, _terminalId, _data, input) {
       deliveries.push({ input, sessionId });
       return {
         ok: true,
@@ -989,7 +982,7 @@ test("exhausted accepted-delivery lease recovery emits the established diagnosti
   const provider = createCodexSessionAgentProvider({ controller });
 
   try {
-    const pending = provider.sendMessage({ sessionId: "session-a" }, {
+    const pending = writeAttachedTerminal(provider, { sessionId: "session-a" }, {
       attachmentIds: [attachmentId],
       message: "accepted once despite lease contention"
     });
@@ -1023,7 +1016,7 @@ test("exhausted accepted-delivery lease recovery emits the established diagnosti
   }
 });
 
-test("Codex adapter accepts ten attachments and rejects eleven before every delivery seam", async () => {
+test("Codex adapter accepts ten terminal attachments and rejects eleven", async () => {
   const calls = [];
   const controller = {
     async renewAttachments(_sessionId, ids) {
@@ -1062,8 +1055,6 @@ test("Codex adapter accepts ten attachments and rejects eleven before every deli
   })).ok, true);
 
   for (const result of [
-    await provider.sendMessage(context, { attachmentIds: eleven, message: "eleven" }),
-    await provider.startConversationTurn(context, { attachmentIds: eleven, message: "eleven" }),
     await provider.writeTerminal(context, {
       data: "eleven",
       input: { attachmentIds: eleven },

@@ -37,6 +37,7 @@ including follow-up guidance while a turn is active.
 - `packages/vibe64-terminals/src/server/opencodeSessionEnvironmentPlugin.js`
 - `packages/vibe64-terminals/src/server/opencodeTerminal.js`
 - `packages/vibe64-terminals/src/server/service.js`
+- `packages/vibe64-terminals/src/server/sessionAttachments.js`
 - `packages/vibe64-terminals/src/server/sessionPromptHints.js`
 - `src/composables/useVibe64AssistantCatalog.js`
 - `src/composables/useVibe64AutopilotView.js`
@@ -51,6 +52,7 @@ including follow-up guidance while a turn is active.
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationLog.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue`
+- `src/components/studio/vibe64-session/Vibe64AttachmentDialog.vue`
 - `src/components/studio/vibe64-session/Vibe64PromptHints.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionAssistantMenu.vue`
 - `src/components/studio/vibe64-session/Vibe64SessionRuntimeHost.vue`
@@ -98,9 +100,32 @@ events; action declarations do not publish the same completion again. Lifecycle
 progress remains separate from completion.
 Long user messages remain available in full but initially use a compact preview
 that each reader can expand or collapse.
-Sent attachments remain distinct from the person's message as compact,
-read-only file details. Their safe file names and sizes remain durable with the
-conversation, while temporary provider paths stay out of visible history.
+The shared composer inserts ordinary `[Image #1]` and `[File #1]` references and
+shows the same labels beside uploaded files. Removing an upload removes its
+exact reference and renumbers remaining references; edited text remains ordinary
+text and never deletes a file. Both Codex and OpenCode use the same upload,
+reference, admission and retention implementation. Their adapters translate
+resolved image descriptors into native image inputs; other files remain
+available through trusted file paths in the provider prompt. OpenCode also
+records per-conversation native access to those attachment directories so its
+file tools can reopen them later, preserving unrelated permission rules.
+
+The session attachment service resolves project- and session-scoped upload IDs
+and copies submitted files into the existing session artifacts before delivery.
+Files prepared for a submission stay for the session lifetime, including failed
+delivery attempts that may be retried, and are included in the session archive.
+The temporary upload lease still expires abandoned uploads. A retry can resolve
+the same ID from session artifacts after that temporary copy has expired.
+Conversation records retain IDs, safe file names, sizes and references without
+provider paths or file bytes, preserving paginated history. Clicking a queued or
+sent file opens the shared dialog: supported raster images display inline and
+other files offer download. A failed image decode falls back to download. The
+read route uses the existing project authorization and resolves the attachment
+within its session; active document formats such as SVG are download-only.
+Send, steering and Resend clear only the upload IDs acknowledged for that
+message, preserving newer draft uploads and renumbering their references.
+Older conversation records that retained only file details cannot recover bytes
+already removed by upload expiry.
 
 When a host reserves an AI connection for its owner, collaborators can submit
 message suggestions for the owner's approval or dismissal. A new suggestion

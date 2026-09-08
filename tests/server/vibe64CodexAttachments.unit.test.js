@@ -5,6 +5,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -2091,3 +2092,39 @@ function multipartPayload(parts) {
     contentType: `multipart/form-data; boundary=${boundary}`
   };
 }
+
+
+test("attachment download route streams bytes and restricts inline previews to raster images", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "vibe64-attachment-download-"));
+  const app = testApp();
+  const fastify = Fastify();
+  const calls = [];
+  await writeFile(path.join(root, "content"), "downloaded bytes");
+  app.terminals.readAgentAttachment = async (sessionId, attachmentId) => {
+    calls.push({ sessionId, attachmentId });
+    return {
+      attachment: { contentType: attachmentId === "raster" ? "image/png" : "application/octet-stream", fileName: attachmentId === "raster" ? "image.png" : "unsafe.svg" },
+      fileHandle: await open(path.join(root, "content"), "r")
+    };
+  };
+  registerRoutes(app.http, { fastify: app.fastify, projectContext: explicitProjectContext(root), terminals: app.terminals, uploads: { readSingleMultipartFile() {} } });
+  const route = app.registeredRoutes.find((candidate) => candidate.method === "GET" && candidate.path.endsWith("/agent-attachments/:attachmentId"));
+  fastify.route({ method: "GET", url: route.path, handler: route.handler });
+  try {
+    for (const attachmentId of ["raster", "document"]) {
+      for (const query of ["", "?inline=1"]) {
+        const response = await fastify.inject({ method: "GET", url: route.path.replace(":slug", "project").replace(":sessionId", "one").replace(":attachmentId", attachmentId) + query });
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.body, "downloaded bytes");
+        assert.equal(response.headers["x-content-type-options"], "nosniff");
+        assert.equal(response.headers["cache-control"], "private, no-store");
+        assert.match(response.headers["content-security-policy"], /sandbox/u);
+        assert.match(response.headers["content-disposition"], attachmentId === "raster" && query ? /^inline$/u : /^attachment;/u);
+      }
+    }
+    assert.deepEqual(calls.map((call) => call.sessionId), ["one", "one", "one", "one"]);
+  } finally {
+    await fastify.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

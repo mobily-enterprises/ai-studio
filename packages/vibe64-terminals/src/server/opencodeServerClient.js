@@ -1,4 +1,6 @@
+import { pathToFileURL } from "node:url";
 import { Buffer } from "node:buffer";
+import path from "node:path";
 
 const OPENCODE_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
 const OPENCODE_CATALOG_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -215,7 +217,12 @@ function stablePromptBody(input = {}) {
     ...(text(input.agent) ? { agent: text(input.agent) } : {}),
     ...(text(input.id) ? { messageID: text(input.id) } : {}),
     ...(modelID && providerID ? { model: { modelID, providerID } } : {}),
-    parts: [{ text: prompt, type: "text" }],
+    parts: [{ text: prompt, type: "text" }, ...(input.attachments || [])
+      .filter((attachment) => attachment.contentType?.startsWith("image/"))
+      .map((attachment) => ({
+        type: "file", mime: attachment.contentType, filename: attachment.fileName,
+        url: pathToFileURL(attachment.path).href
+      }))],
     ...(text(model.variant) ? { variant: text(model.variant) } : {})
   };
 }
@@ -436,8 +443,26 @@ function createOpenCodeServerClient({
       return { data: normalizedMessageRows(result) };
     },
     async prompt(sessionId = "", input = {}, { signal } = {}) {
+      const body = stablePromptBody(input);
+      if (input.attachments?.length) {
+        // Native tools check the parent directory when reopening a supplied file.
+        // Keep these exceptions on this conversation, alongside its existing rules.
+        const session = await request("GET", stableSessionPath(sessionId), { signal });
+        const permission = [...(session.permission || [])];
+        const previousLength = permission.length;
+        for (const attachment of input.attachments) {
+          const pattern = path.join(path.dirname(attachment.path), "*").replaceAll("\\", "/");
+          const rule = permission.findLast((item) => item.permission === "external_directory" && item.pattern === pattern);
+          if (rule?.action !== "allow") {
+            permission.push({ permission: "external_directory", pattern, action: "allow" });
+          }
+        }
+        if (permission.length !== previousLength) {
+          await request("PATCH", stableSessionPath(sessionId), { body: { permission }, signal });
+        }
+      }
       await request("POST", stableSessionPath(sessionId, "/prompt_async"), {
-        body: stablePromptBody(input),
+        body,
         signal
       });
       return {

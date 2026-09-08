@@ -1766,6 +1766,7 @@ function createOpenCodeTerminalController({
         id: providerMessageId,
         model: openCodeModel(context.selection),
         prompt: { text: renderedPrompt },
+        attachments: input.attachments,
         resume: true
       });
     } catch (error) {
@@ -1977,6 +1978,7 @@ function createOpenCodeTerminalController({
       id: inputMessageId,
       model: openCodeModel(context.selection, executionProfile),
       prompt: { text: prompt },
+      attachments: input.attachments,
       resume: true
     });
     const eventAbort = new AbortController();

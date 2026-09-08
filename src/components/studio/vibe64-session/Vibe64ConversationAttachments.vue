@@ -9,32 +9,46 @@
       :key="attachmentKey(attachment, index)"
       class="vibe64-conversation-attachments__item"
     >
-      <v-icon
-        aria-hidden="true"
-        class="vibe64-conversation-attachments__icon"
-        :icon="attachmentIcon(attachment)"
-        size="19"
-      />
-      <span class="vibe64-conversation-attachments__details">
-        <span
-          class="vibe64-conversation-attachments__name text-body-small font-weight-medium"
-          :title="attachment.fileName"
-        >
-          {{ attachment.fileName }}
+      <component
+        :is="attachment.attachmentId && sessionId ? 'button' : 'span'"
+        :type="attachment.attachmentId && sessionId ? 'button' : undefined"
+        class="vibe64-conversation-attachments__open"
+        @click="attachment.attachmentId && sessionId && (selectedAttachment = attachment)"
+      >
+        <v-icon
+          aria-hidden="true"
+          class="vibe64-conversation-attachments__icon"
+          :icon="attachmentIcon(attachment)"
+          size="19"
+        />
+        <span class="vibe64-conversation-attachments__details">
+          <span
+            class="vibe64-conversation-attachments__name text-body-small font-weight-medium"
+            :title="attachment.fileName"
+          >
+            {{ attachment.reference }} {{ attachment.fileName }}
+          </span>
+          <span
+            v-if="attachmentSizeLabel(attachment.size)"
+            class="vibe64-conversation-attachments__size text-label-small"
+          >
+            {{ attachmentSizeLabel(attachment.size) }}
+          </span>
         </span>
-        <span
-          v-if="attachmentSizeLabel(attachment.size)"
-          class="vibe64-conversation-attachments__size text-label-small"
-        >
-          {{ attachmentSizeLabel(attachment.size) }}
-        </span>
-      </span>
+      </component>
     </li>
+    <Vibe64AttachmentDialog
+      v-if="selectedAttachment"
+      :attachment="selectedAttachment"
+      :session-id="sessionId"
+      @close="selectedAttachment = null"
+    />
   </ul>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
+import Vibe64AttachmentDialog from "./Vibe64AttachmentDialog.vue";
 import { mdiFileOutline, mdiImageOutline } from "@mdi/js";
 import {
   normalizeVibe64ConversationAttachments
@@ -43,11 +57,14 @@ import {
 import { attachmentSizeLabel } from "@/lib/vibe64PromptAttachments.js";
 
 const props = defineProps({
+  sessionId: { default: "", type: String },
   items: {
     default: () => [],
     type: Array
   }
 });
+const selectedAttachment = ref(null);
+watch(() => props.sessionId, () => { selectedAttachment.value = null; });
 
 const attachments = computed(() => normalizeVibe64ConversationAttachments(props.items));
 const imageFilePattern = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
@@ -80,9 +97,6 @@ function attachmentKey(attachment = {}, index = 0) {
   border: 1px solid rgba(var(--v-theme-outline), 0.2);
   border-radius: 10px;
   color: rgb(var(--v-theme-on-surface));
-  display: grid;
-  gap: 0.55rem;
-  grid-template-columns: auto minmax(0, 1fr);
   min-height: 2.8rem;
   min-width: 0;
   padding: 0.42rem 0.65rem;
@@ -95,6 +109,20 @@ function attachmentKey(attachment = {}, index = 0) {
 .vibe64-conversation-attachments__details {
   display: grid;
   min-width: 0;
+}
+
+.vibe64-conversation-attachments__open {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  gap: 0.55rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 0;
+  text-align: left;
+  display: grid;
+  min-width: 0;
+  width: 100%;
 }
 
 .vibe64-conversation-attachments__name {

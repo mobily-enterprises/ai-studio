@@ -114,10 +114,10 @@ async function deliverUploadedAttachments(onUploaded, uploaded = []) {
   return null;
 }
 
-const CODEX_ATTACHMENT_MAX_BYTES = 100_000_000;
-const CODEX_ATTACHMENT_MAX_ITEMS = 10;
-const CODEX_ATTACHMENT_UPLOAD_CONCURRENCY = 2;
-const CODEX_ATTACHMENT_UNRESOLVED_PHASES = new Set([
+const AGENT_ATTACHMENT_MAX_BYTES = 100_000_000;
+const AGENT_ATTACHMENT_MAX_ITEMS = 10;
+const AGENT_ATTACHMENT_UPLOAD_CONCURRENCY = 2;
+const AGENT_ATTACHMENT_UNRESOLVED_PHASES = new Set([
   "preparing",
   "queued",
   "uploading",
@@ -216,7 +216,7 @@ function attachmentReceipt(row, uploaded = {}) {
   };
 }
 
-function useCodexAttachments({
+function useAgentAttachments({
   canUpload = () => true,
   deleteAttachment = null,
   onError = null,
@@ -245,13 +245,13 @@ function useCodexAttachments({
     ))
   ));
   const hasUnresolved = computed(() => queueItems.value.some((item) => (
-    CODEX_ATTACHMENT_UNRESOLVED_PHASES.has(item.phase)
+    AGENT_ATTACHMENT_UNRESOLVED_PHASES.has(item.phase)
   )));
   const canSubmit = computed(() => !hasUnresolved.value);
   const retainedItemCount = computed(() => queueItems.value.filter((item) => (
     item.phase !== "cancelled"
   )).length);
-  const atCapacity = computed(() => retainedItemCount.value >= CODEX_ATTACHMENT_MAX_ITEMS);
+  const atCapacity = computed(() => retainedItemCount.value >= AGENT_ATTACHMENT_MAX_ITEMS);
   const canAddFiles = computed(() => Boolean(
     !disposed &&
     codexAttachmentSessionId(sessionId) &&
@@ -522,7 +522,7 @@ function useCodexAttachments({
     if (disposed) {
       return;
     }
-    while (activeAttempts.size < CODEX_ATTACHMENT_UPLOAD_CONCURRENCY && uploadQueue.length > 0) {
+    while (activeAttempts.size < AGENT_ATTACHMENT_UPLOAD_CONCURRENCY && uploadQueue.length > 0) {
       const row = uploadQueue.shift();
       if (!row?.retained || row.phase !== "queued") {
         continue;
@@ -575,8 +575,8 @@ function useCodexAttachments({
     ) {
       return Promise.resolve(null);
     }
-    if (row.phase === "cancelled" && retainedItemCount.value >= CODEX_ATTACHMENT_MAX_ITEMS) {
-      reportAttachmentError(`A message can keep at most ${CODEX_ATTACHMENT_MAX_ITEMS} attachments.`);
+    if (row.phase === "cancelled" && retainedItemCount.value >= AGENT_ATTACHMENT_MAX_ITEMS) {
+      reportAttachmentError(`A message can keep at most ${AGENT_ATTACHMENT_MAX_ITEMS} attachments.`);
       return Promise.resolve(null);
     }
     if (row.failureStage === "handoff" && row.receipt) {
@@ -591,7 +591,7 @@ function useCodexAttachments({
       startAttachmentProducer(row);
       return waiter.promise;
     }
-    if (row.size > CODEX_ATTACHMENT_MAX_BYTES) {
+    if (row.size > AGENT_ATTACHMENT_MAX_BYTES) {
       row.error = `${row.fileName} is larger than the 100 MB attachment limit.`;
       row.failureStage = "validation";
       row.phase = "failed";
@@ -634,13 +634,19 @@ function useCodexAttachments({
     return removed;
   }
 
-  function clearAttachments({ accepted = true } = {}) {
+  function clearAttachments({ accepted = true, attachmentIds = null } = {}) {
     if (!accepted) {
       return abandonAttachments();
     }
-    const cleared = [...attachments.value];
+    const selectedIds = Array.isArray(attachmentIds) ? new Set(attachmentIds) : null;
+    const cleared = attachments.value.filter((attachment) => !selectedIds || selectedIds.has(attachment.attachmentId));
     const readyIds = new Set(cleared.map((attachment) => attachment.clientId));
+    const remaining = [];
     for (const row of [...queueItems.value]) {
+      if (selectedIds && !readyIds.has(row.clientId)) {
+        remaining.push(row);
+        continue;
+      }
       if (readyIds.has(row.clientId)) {
         row.retained = false;
         rowsById.delete(row.clientId);
@@ -651,8 +657,8 @@ function useCodexAttachments({
         void cleanupReceipt(row.sessionId, row.receipt);
       }
     }
-    attachments.value = [];
-    queueItems.value = [];
+    attachments.value = attachments.value.filter((attachment) => !readyIds.has(attachment.clientId));
+    queueItems.value = remaining;
     return cleared;
   }
 
@@ -767,7 +773,7 @@ function useCodexAttachments({
     row.fileName = attachmentFileName(preparedFile);
     row.size = Number(preparedFile.size) || 0;
     row.totalBytes = row.size;
-    if (row.size > CODEX_ATTACHMENT_MAX_BYTES) {
+    if (row.size > AGENT_ATTACHMENT_MAX_BYTES) {
       row.error = `${row.fileName} is larger than the 100 MB attachment limit.`;
       row.failureStage = "validation";
       row.phase = "failed";
@@ -840,7 +846,7 @@ function useCodexAttachments({
     const currentSessionId = codexAttachmentSessionId(sessionId);
     if (!canAddFiles.value || typeof produce !== "function") {
       if (atCapacity.value) {
-        reportAttachmentError(`A message can keep at most ${CODEX_ATTACHMENT_MAX_ITEMS} attachments.`);
+        reportAttachmentError(`A message can keep at most ${AGENT_ATTACHMENT_MAX_ITEMS} attachments.`);
       }
       return Promise.resolve(null);
     }
@@ -870,10 +876,10 @@ function useCodexAttachments({
     }
 
     status.value = "";
-    const availableSlots = Math.max(0, CODEX_ATTACHMENT_MAX_ITEMS - retainedItemCount.value);
+    const availableSlots = Math.max(0, AGENT_ATTACHMENT_MAX_ITEMS - retainedItemCount.value);
     const acceptedFiles = uploadableFiles.slice(0, availableSlots);
     if (acceptedFiles.length < uploadableFiles.length) {
-      reportAttachmentError(`A message can keep at most ${CODEX_ATTACHMENT_MAX_ITEMS} attachments.`);
+      reportAttachmentError(`A message can keep at most ${AGENT_ATTACHMENT_MAX_ITEMS} attachments.`);
     }
 
     const waiters = [];
@@ -881,7 +887,7 @@ function useCodexAttachments({
       const row = createQueueRow({ currentSessionId, file });
       const waiter = row.waiter;
       waiters.push(waiter.promise);
-      if (row.size > CODEX_ATTACHMENT_MAX_BYTES) {
+      if (row.size > AGENT_ATTACHMENT_MAX_BYTES) {
         row.error = `${row.fileName} is larger than the 100 MB attachment limit.`;
         row.failureStage = "validation";
         row.phase = "failed";
@@ -967,13 +973,13 @@ function useCodexAttachments({
 }
 
 export {
-  CODEX_ATTACHMENT_MAX_BYTES,
-  CODEX_ATTACHMENT_MAX_ITEMS,
-  CODEX_ATTACHMENT_UPLOAD_CONCURRENCY,
+  AGENT_ATTACHMENT_MAX_BYTES,
+  AGENT_ATTACHMENT_MAX_ITEMS,
+  AGENT_ATTACHMENT_UPLOAD_CONCURRENCY,
   codexAttachmentEventHasFiles,
   codexAttachmentFiles,
   codexAttachmentFilesFromDropEvent,
   codexAttachmentFilesFromPasteEvent,
   codexAttachmentFilesFromTransferItems,
-  useCodexAttachments
+  useAgentAttachments
 };

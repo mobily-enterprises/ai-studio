@@ -1,94 +1,24 @@
 import { describe, expect, it } from "vitest";
-import {
-  appendPromptAttachmentReferences,
-  promptAttachmentReference,
-  removePromptAttachmentReferences
-} from "../../src/lib/vibe64PromptAttachments.js";
+import { labelComposerAttachments, updateComposerAttachmentReferences } from "../../src/lib/vibe64PromptAttachments.js";
 
-describe("vibe64PromptAttachments", () => {
-  it("formats uploaded files as Codex-readable prompt references", () => {
-    expect(promptAttachmentReference({
-      path: "/tmp/vibe64-attachments/session/file.txt",
-      fileName: "file.txt",
-      size: 512
-    })).toBe("- file.txt (512 B): /tmp/vibe64-attachments/session/file.txt");
+describe("shared composer references", () => {
+  const files = [
+    { attachmentId: "a", fileName: "one.png" },
+    { attachmentId: "b", fileName: "notes.txt" },
+    { attachmentId: "c", fileName: "two.jpg" }
+  ];
+  it("numbers image and file references separately", () => {
+    expect(labelComposerAttachments(files).map((file) => file.reference)).toEqual(["[Image #1]", "[File #1]", "[Image #2]"]);
   });
-
-  it("appends attachment references without replacing prompt text", () => {
-    const prompt = appendPromptAttachmentReferences("Please inspect this.", [
-      {
-        path: "/tmp/vibe64-attachments/session/a.png",
-        fileName: "a.png",
-        size: 2048
-      }
-    ]);
-
-    expect(prompt).toBe([
-      "Please inspect this.",
-      "",
-      "Attached files for Codex:",
-      "- a.png (2.0 KB): /tmp/vibe64-attachments/session/a.png"
-    ].join("\n"));
+  it("explicit removal deletes the exact reference and renumbers surviving references without touching edited text", () => {
+    const before = labelComposerAttachments(files);
+    const after = labelComposerAttachments(files.slice(1));
+    expect(updateComposerAttachmentReferences("See [Image #1], [Image #2] and [File #1]. Keep [Image edited].", before, after))
+      .toBe("See , [Image #1] and [File #1]. Keep [Image edited].");
+    expect(updateComposerAttachmentReferences("My own message", before, after)).toBe("My own message");
   });
-
-  it("adds later uploads to the existing attachment section", () => {
-    const firstPrompt = appendPromptAttachmentReferences("Review these.", [
-      {
-        path: "/tmp/vibe64-attachments/session/first.txt",
-        fileName: "first.txt"
-      }
-    ]);
-    const nextPrompt = appendPromptAttachmentReferences(firstPrompt, [
-      {
-        path: "/tmp/vibe64-attachments/session/second.txt",
-        fileName: "second.txt"
-      }
-    ]);
-
-    expect(nextPrompt).toBe([
-      "Review these.",
-      "",
-      "Attached files for Codex:",
-      "- first.txt: /tmp/vibe64-attachments/session/first.txt",
-      "- second.txt: /tmp/vibe64-attachments/session/second.txt"
-    ].join("\n"));
-  });
-
-  it("removes a closed attachment reference and keeps remaining attachments", () => {
-    const prompt = [
-      "Review these.",
-      "",
-      "Attached files for Codex:",
-      "- first.txt: /tmp/vibe64-attachments/session/first.txt",
-      "- second.txt: /tmp/vibe64-attachments/session/second.txt"
-    ].join("\n");
-
-    expect(removePromptAttachmentReferences(prompt, [
-      {
-        path: "/tmp/vibe64-attachments/session/first.txt",
-        fileName: "first.txt"
-      }
-    ])).toBe([
-      "Review these.",
-      "",
-      "Attached files for Codex:",
-      "- second.txt: /tmp/vibe64-attachments/session/second.txt"
-    ].join("\n"));
-  });
-
-  it("removes the attachment section when the last reference is closed", () => {
-    const prompt = [
-      "Review this.",
-      "",
-      "Attached files for Codex:",
-      "- file.txt: /tmp/vibe64-attachments/session/file.txt"
-    ].join("\n");
-
-    expect(removePromptAttachmentReferences(prompt, [
-      {
-        path: "/tmp/vibe64-attachments/session/file.txt",
-        fileName: "file.txt"
-      }
-    ])).toBe("Review this.");
+  it("treats SVG and unknown binaries as files", () => {
+    expect(labelComposerAttachments([{ fileName: "unsafe.svg" }, { fileName: "binary.exe" }]).map((file) => file.reference))
+      .toEqual(["[File #1]", "[File #2]"]);
   });
 });

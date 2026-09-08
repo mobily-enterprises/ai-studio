@@ -36,6 +36,7 @@
     <Vibe64ConversationAttachments
       v-if="message.attachments?.length"
       :items="message.attachments"
+      :session-id="sessionId"
     />
   </article>
 </template>
@@ -46,6 +47,7 @@ import Vibe64ConversationAttachments from "@/components/studio/vibe64-session/Vi
 import { parseLongTextReviewBlocks } from "@/lib/studioLongTextBlocks.js";
 
 defineProps({
+  sessionId: { default: "", type: String },
   assistantLabel: {
     default: "Temporary AI",
     type: String

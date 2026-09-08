@@ -39,6 +39,10 @@ vi.mock("vuetify/components/VSkeletonLoader", () => ({
   VSkeletonLoader: passthroughComponent()
 }));
 
+vi.mock("@/components/studio/vibe64-session/Vibe64AttachmentDialog.vue", () => ({
+  default: defineComponent({ render: () => null })
+}));
+
 import Vibe64ConversationLog from "../../src/components/studio/vibe64-session/Vibe64ConversationLog.vue";
 import Vibe64ConversationAttachments from "../../src/components/studio/vibe64-session/Vibe64ConversationAttachments.vue";
 

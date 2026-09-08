@@ -231,6 +231,7 @@
       </div>
 
       <Vibe64ConversationLog
+        :session-id="sessionId"
         :assistant-label="conversationAssistantLabel"
         class="studio-autopilot__conversation"
         :error="props.conversationLog?.error"
@@ -879,7 +880,6 @@ const {
   chatReloadAvailable,
   chatReloading,
   chatTurns,
-  composerAcceptedAttachments,
   composerAttachmentsEnabled,
   composerAttachmentsSupported,
   composerCanSubmit,
@@ -984,6 +984,7 @@ const {
   assistantCanRequestMessage,
   assistantCanUseAi: assistantCanUseAiState,
   assistantRestrictionMessage,
+  onAttachmentsAccepted: (attachmentIds) => composerInput.value?.clearAttachments?.({ attachmentIds }),
   requestTemporaryAi: startTemporaryAiTask,
   sendMainChatMessage
 });
@@ -1130,11 +1131,7 @@ async function sendComposerMessage() {
     return false;
   }
   stopTypingOnSubmit();
-  const accepted = await submitComposerMessage();
-  if (accepted && composerAcceptedAttachments.value) {
-    composerInput.value?.clearAttachments?.();
-  }
-  return accepted;
+  return submitComposerMessage();
 }
 
 function focusComposerSendButton() {

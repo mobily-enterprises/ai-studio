@@ -146,7 +146,7 @@
             >
               {{ userMessageExpanded(turn) ? "Show less" : "Read more" }}
             </button>
-            <Vibe64ConversationAttachments :items="turn.user.attachments" />
+            <Vibe64ConversationAttachments :items="turn.user.attachments" :session-id="sessionId" />
             <div
               v-if="turn.user.displayAt"
               class="studio-conversation-log__message-footer studio-conversation-log__message-footer--user"
@@ -306,6 +306,7 @@ import {
 } from "@/lib/vibe64ConversationThinkingText.js";
 
 const props = defineProps({
+  sessionId: { default: "", type: String },
   assistantLabel: {
     default: "Codex",
     type: String

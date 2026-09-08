@@ -156,7 +156,7 @@ function vibe64AgentAttachmentPath(sessionsApiPath = "", sessionId = "") {
   return vibe64SessionPath(sessionsApiPath, sessionId, "/agent-attachments");
 }
 
-function vibe64AgentAttachmentDeletePath(
+function vibe64AgentAttachmentFilePath(
   sessionsApiPath = "",
   sessionId = "",
   attachmentId = ""
@@ -410,7 +410,7 @@ export {
   DEFAULT_MAX_OPEN_SESSIONS,
   SELECTED_SESSION_STORAGE_KEY,
   agentSettingsInputFromContext,
-  vibe64AgentAttachmentDeletePath,
+  vibe64AgentAttachmentFilePath,
   vibe64AgentAttachmentPath,
   vibe64AssistantCapabilitiesQueryKey,
   vibe64AssistantModelAccessPath,

@@ -23,6 +23,7 @@
     >
 
     <Vibe64AttachmentQueue
+      :session-id="sessionId"
       :items="queueItems"
       @cancel="attachments.cancelAttachment"
       @remove="removeUploadedAttachment"
@@ -97,13 +98,14 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import {
-  useVibe64CodexCommands
-} from "@/composables/useVibe64CodexCommands.js";
+  useVibe64AttachmentCommands
+} from "@/composables/useVibe64AttachmentCommands.js";
 import { useUiFeedback } from "@jskit-ai/http-web/client/composables/useUiFeedback";
 import {
-  useCodexAttachments
-} from "@/composables/useCodexAttachments.js";
+  useAgentAttachments
+} from "@/composables/useAgentAttachments.js";
 import Vibe64AttachmentQueue from "@/components/studio/vibe64-session/Vibe64AttachmentQueue.vue";
+import { labelComposerAttachments, updateComposerAttachmentReferences } from "@/lib/vibe64PromptAttachments.js";
 
 const emit = defineEmits([
   "attachment-state-change",
@@ -199,16 +201,34 @@ const props = defineProps({
   }
 });
 
-const codexCommands = useVibe64CodexCommands();
-const uploadAttachment = codexCommands.uploadAttachment;
+const attachmentCommands = useVibe64AttachmentCommands();
+const uploadAttachment = attachmentCommands.uploadAttachment;
 const attachmentFeedback = useUiFeedback({
   source: "vibe64.agent-attachment.upload.feedback"
 });
-const attachments = useCodexAttachments({
+const attachments = useAgentAttachments({
   canUpload: () => props.attachmentsEnabled && !props.disabled,
-  deleteAttachment: codexCommands.deleteAttachment,
+  deleteAttachment: attachmentCommands.deleteAttachment,
   onError: attachmentFeedback.error,
-  onUploaded: async () => {
+  onUploaded: async (uploaded) => {
+    const labeled = labelComposerAttachments(uploadedAttachments.value);
+    for (const attachment of uploadedAttachments.value) {
+      attachment.reference = labeled.find((item) => item.attachmentId === attachment.attachmentId).reference;
+    }
+    const textarea = textareaRef.value;
+    const text = textarea?.value ?? props.modelValue;
+    const position = textarea?.selectionEnd ?? text.length;
+    const references = uploaded.map((attachment) => attachment.reference).join(" ");
+    const before = text.slice(0, position);
+    const after = text.slice(position);
+    const inserted = `${before && !/\s$/u.test(before) ? " " : ""}${references} `;
+    const value = before + inserted + after;
+    if (textarea) {
+      textarea.value = value;
+      textarea.setSelectionRange(position + inserted.length, position + inserted.length);
+    }
+    emit("update:modelValue", value);
+    queueResizeTextarea();
     emit("attachments-change", [...uploadedAttachments.value]);
   },
   sessionId: computed(() => props.sessionId),
@@ -363,18 +383,42 @@ function handleTextareaKeydown(event = {}) {
 }
 
 function removeUploadedAttachment(attachment = {}) {
+  const previous = uploadedAttachments.value.map((item) => ({ ...item }));
   const removed = attachments.removeAttachment(attachment);
   if (!removed.length) {
     return;
   }
+  const next = labelComposerAttachments(uploadedAttachments.value);
+  for (const item of uploadedAttachments.value) {
+    item.reference = next.find((candidate) => candidate.attachmentId === item.attachmentId).reference;
+  }
+  const textarea = textareaRef.value;
+  const value = updateComposerAttachmentReferences(textarea?.value ?? props.modelValue, previous, next);
+  if (textarea) textarea.value = value;
+  emit("update:modelValue", value);
   emitAttachmentsChanged();
 }
 
-function clearAttachments() {
+function clearAttachments({ attachmentIds = null } = {}) {
   if (!queueItems.value.length) {
     return false;
   }
-  attachments.clearAttachments({ accepted: true });
+  const previous = uploadedAttachments.value.map((item) => ({ ...item }));
+  attachments.clearAttachments({ accepted: true, attachmentIds });
+  const labeled = labelComposerAttachments(uploadedAttachments.value);
+  for (const attachment of uploadedAttachments.value) {
+    attachment.reference = labeled.find((item) => item.attachmentId === attachment.attachmentId).reference;
+  }
+  const remainingIds = new Set(labeled.map((attachment) => attachment.attachmentId));
+  const text = textareaRef.value?.value ?? props.modelValue;
+  const value = updateComposerAttachmentReferences(
+    text,
+    previous.filter((attachment) => remainingIds.has(attachment.attachmentId)), labeled
+  );
+  if (value !== text) {
+    if (textareaRef.value) textareaRef.value.value = value;
+    emit("update:modelValue", value);
+  }
   emitAttachmentsChanged();
   return true;
 }

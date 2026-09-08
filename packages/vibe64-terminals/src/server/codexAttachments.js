@@ -951,6 +951,30 @@ async function renewCodexAttachments(executionRoot, sessionId, attachmentIds = [
   };
 }
 
+// The shared conversation layer uses the same upload lease as expiry and deletion.
+// Keep it held until the caller has copied or opened the file.
+async function withUploadedAgentAttachment(executionRoot, sessionId, attachmentId, operation, options = {}) {
+  const id = assertAttachmentId(attachmentId);
+  const directory = attachmentHostDirectory(executionRoot, sessionId, id, options);
+  const result = await withAttachmentDirectoryLock(directory, async () => {
+    const entries = (await readdir(directory, { withFileTypes: true }))
+      .filter((entry) => entry.name !== ATTACHMENT_LEASE_LOCK_FILE && !isSuggestionPin(entry));
+    if (entries.length !== 1 || !entries[0].isFile() || entries[0].name.startsWith(".uploading-")) {
+      return null;
+    }
+    const filePath = path.join(directory, entries[0].name);
+    return operation({ attachmentId: id, fileName: entries[0].name, path: filePath, size: (await stat(filePath)).size });
+  }, { waitMs: attachmentLockWaitMs(options, ATTACHMENT_RENEW_LOCK_WAIT_MS) });
+  if (result.busy || !result.exists || !result.value) {
+    throw attachmentUploadValidationError(
+      result.busy ? "vibe64_agent_attachment_busy" : "vibe64_agent_attachment_missing",
+      result.busy ? "The attachment is busy. Try again." : "This attachment is no longer available. Upload it again.",
+      result.busy ? 409 : 404
+    );
+  }
+  return result.value;
+}
+
 async function pinCodexAttachments(
   executionRoot,
   sessionId,
@@ -1162,5 +1186,6 @@ export {
   releaseCodexSessionAttachments,
   renewCodexAttachments,
   unpinCodexAttachments,
+  withUploadedAgentAttachment,
   storeCodexAttachment
 };

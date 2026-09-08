@@ -2287,6 +2287,7 @@ async function ensureCodexAppServerThreadForSession({
 
 async function sendCodexAppServerPromptForSession({
   agentSettings = {},
+  attachments = [],
   clientUserMessageId = "",
   outputSchema = null,
   provider,
@@ -2299,7 +2300,9 @@ async function sendCodexAppServerPromptForSession({
   if (!authoredInput.trim()) {
     throw new Error("Codex app-server prompt is empty.");
   }
-  const input = [authoredInput];
+  const input = [authoredInput, ...attachments
+    .filter((attachment) => attachment.contentType?.startsWith("image/"))
+    .map((attachment) => ({ type: "localImage", path: attachment.path }))];
   const turnSettings = {
     ...codexAppServerTurnSettings({
       agentSettings,

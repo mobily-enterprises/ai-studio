@@ -363,6 +363,27 @@ function registerRoutes(
     summary: "Delete one temporary assistant attachment."
   });
 
+  routes.serviceRoute("GET", "/sessions/:sessionId/agent-attachments/:attachmentId", {
+    summary: "Read an attachment belonging to this conversation."
+  }, async (request, reply) => {
+    const { attachment, fileHandle } = await terminalService().readAgentAttachment(
+      request.params.sessionId, request.params.attachmentId
+    );
+    try {
+      const inline = request.query?.inline === "1" && attachment.contentType.startsWith("image/");
+      await reply
+        .header("Cache-Control", "private, no-store")
+        .header("Content-Disposition", inline ? "inline" : outputResultContentDisposition(attachment.fileName))
+        .header("Content-Type", attachment.contentType)
+        .header("Content-Security-Policy", "default-src 'none'; sandbox")
+        .header("X-Content-Type-Options", "nosniff")
+        .send(fileHandle.createReadStream({ autoClose: true }));
+    } catch (error) {
+      await fileHandle.close().catch(() => null);
+      throw error;
+    }
+  });
+
   routes.actionRoute("POST", "/sessions/:sessionId/temporary-conversations", {
     actionId: ACTION_CREATE_TEMPORARY_CONVERSATION,
     buildInput: (request) => withVibe64User(request, bodyWithSessionId(routes)(request)),

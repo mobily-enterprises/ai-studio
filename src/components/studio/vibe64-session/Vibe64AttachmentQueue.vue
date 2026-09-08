@@ -24,13 +24,20 @@
           :color="itemColor(item)"
           :icon="itemIcon(item)"
           size="18"
+          @click="item.attachmentId && sessionId && (selectedAttachment = item.receipt || item)"
         />
 
         <div class="vibe64-attachment-queue__content">
           <div class="vibe64-attachment-queue__primary">
-            <span class="vibe64-attachment-queue__name" :title="itemName(item)">
-              {{ itemName(item) }}
-            </span>
+            <component
+              :is="item.attachmentId && sessionId ? 'button' : 'span'"
+              :type="item.attachmentId && sessionId ? 'button' : undefined"
+              class="vibe64-attachment-queue__name"
+              :title="itemName(item)"
+              @click="item.attachmentId && sessionId && (selectedAttachment = item.receipt || item)"
+            >
+              {{ item.receipt?.reference }} {{ itemName(item) }}
+            </component>
             <span class="vibe64-attachment-queue__size">{{ attachmentSizeLabel(item.size) }}</span>
           </div>
           <div class="vibe64-attachment-queue__secondary">
@@ -110,11 +117,17 @@
     >
       {{ announcement }}
     </span>
+    <Vibe64AttachmentDialog
+      v-if="selectedAttachment"
+      :attachment="selectedAttachment"
+      :session-id="sessionId"
+      @close="selectedAttachment = null"
+    />
   </section>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   mdiAlertCircleOutline,
   mdiCheckCircleOutline,
@@ -125,10 +138,12 @@ import {
 } from "@mdi/js";
 
 import { attachmentSizeLabel } from "@/lib/vibe64PromptAttachments.js";
+import Vibe64AttachmentDialog from "./Vibe64AttachmentDialog.vue";
 
 const emit = defineEmits(["cancel", "remove", "retry"]);
 
 const props = defineProps({
+  sessionId: { default: "", type: String },
   items: {
     default: () => [],
     type: Array
@@ -142,6 +157,8 @@ const props = defineProps({
     type: Number
   }
 });
+const selectedAttachment = ref(null);
+watch(() => props.sessionId, () => { selectedAttachment.value = null; });
 
 const activePhases = new Set(["queued", "preparing", "uploading", "delivering"]);
 const queueRoot = ref(null);
@@ -480,12 +497,21 @@ onBeforeUnmount(() => {
 }
 
 .vibe64-attachment-queue__name {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  text-align: left;
   font-size: 0.78rem;
   font-weight: 650;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+button.vibe64-attachment-queue__name {
+  cursor: pointer;
 }
 
 .vibe64-attachment-queue__size,

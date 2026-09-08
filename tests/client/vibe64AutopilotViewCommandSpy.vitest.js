@@ -180,7 +180,7 @@ describe("Vibe64 direct session view", () => {
     expect(temporaryAi).not.toContain("console & network");
     expect(temporaryAiComposable).toContain("beforeunload");
     expect(temporaryAiComposable).toContain("keepalive: true");
-    expect(temporaryAiComposable).toContain("vibe64AgentAttachmentDeletePath");
+    expect(temporaryAiComposable).toContain("vibe64AgentAttachmentFilePath");
     expect(temporaryAiComposable).toContain("function showWorkspace()");
     expect(temporaryAiComposable).toContain("async function startTask(options = {})");
     expect(temporaryAiComposable).toContain("if (tasks.value.length === 0)");
@@ -211,7 +211,7 @@ describe("Vibe64 direct session view", () => {
     expect(component).toContain("aria-label=\"Attach console & network\"");
     expect(component).toContain("@preview-attachment-state=\"updatePreviewAttachmentState\"");
     expect(component).not.toContain("Composer menu");
-    expect(promptTextarea).toContain("const codexCommands = useVibe64CodexCommands();");
+    expect(promptTextarea).toContain("const attachmentCommands = useVibe64AttachmentCommands();");
     expect(promptTextarea).toContain("canUpload: () => props.attachmentsEnabled && !props.disabled");
     expect(promptTextarea).toContain("onError: attachmentFeedback.error");
     expect(promptTextarea).toContain('source: "vibe64.agent-attachment.upload.feedback"');

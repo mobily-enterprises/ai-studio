@@ -126,9 +126,6 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         vibe64User: context.vibe64User
       });
     },
-    async deleteAttachment() {
-      return unsupportedOperation("attachment deletion");
-    },
     async deleteConversation(context, input = {}) {
       return controller.deleteConversation(context.sessionId, input, {
         assistantScope: context.assistantScope,
@@ -189,18 +186,6 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
         session: context.session,
         vibe64User: context.vibe64User
       });
-    },
-    async pinAttachments(_context, input = {}) {
-      const attachmentIds = Array.isArray(input.attachmentIds) ? input.attachmentIds : [];
-      return attachmentIds.length < 1
-        ? { missing: [], ok: true, retained: [] }
-        : {
-            code: "vibe64_opencode_attachment_unsupported",
-            error: "OpenCode does not support message attachments.",
-            missing: attachmentIds,
-            ok: false,
-            retained: []
-          };
     },
     async invalidateRuntimes(_context, input = {}) {
       return controller.invalidateRuntimes(input);
@@ -321,12 +306,6 @@ function createOpenCodeSessionAgentProvider({ controller } = {}) {
     },
     async unsubscribeSessions() {
       return { ok: true };
-    },
-    async uploadAttachment() {
-      return unsupportedOperation("attachment upload");
-    },
-    async unpinAttachments() {
-      return { ok: true, released: [] };
     },
     async waitForConversationTurn(context, input = {}) {
       return controller.waitForConversationTurn(context.sessionId, input, {

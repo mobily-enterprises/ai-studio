@@ -1067,27 +1067,33 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.chatTurns.value.at(-1)?.user?.text).toBe("Make the smallest safe change.");
   });
 
-  it("includes uploaded attachments in the Codex message", async () => {
+  it("sends shared attachment identities and acknowledges accepted uploads", async () => {
     const sendAgentMessage = vi.fn(async () => true);
-    const view = await createView({ sendAgentMessage });
-    view.composerDraft.value = "Inspect this screenshot.";
+    const onAttachmentsAccepted = vi.fn();
+    const attachmentId = "12345678-1234-4234-8234-123456789abc";
+    const view = await createView({ sendAgentMessage }, { onAttachmentsAccepted });
+    view.composerDraft.value = "Inspect [Image #1].";
     view.updateComposerAttachments([{
-      attachmentId: "attachment-1",
+      attachmentId,
       fileName: "screen.png",
       path: "/tmp/screen.png",
+      reference: "[Image #1]",
       size: 1024
     }]);
 
     await view.submitComposerMessage();
 
-    expect(sendAgentMessage.mock.calls[0][0].message).toContain(
-      "- screen.png (1.0 KB): /tmp/screen.png"
-    );
-    expect(sendAgentMessage.mock.calls[0][0].displayMessage).toBe("Inspect this screenshot.");
+    expect(sendAgentMessage.mock.calls[0][0].message).toBe("Inspect [Image #1].");
+    expect(sendAgentMessage.mock.calls[0][0].displayMessage).toBe("Inspect [Image #1].");
+    expect(sendAgentMessage.mock.calls[0][0].attachmentIds).toEqual([attachmentId]);
     expect(sendAgentMessage.mock.calls[0][0].displayAttachments).toEqual([{
+      attachmentId,
       fileName: "screen.png",
+      reference: "[Image #1]",
       size: 1024
     }]);
+    expect(JSON.stringify(sendAgentMessage.mock.calls[0][0])).not.toContain("/tmp/");
+    expect(onAttachmentsAccepted).toHaveBeenCalledWith([attachmentId]);
   });
 
   it("connects preview capture and diagnostics actions to direct chat", async () => {

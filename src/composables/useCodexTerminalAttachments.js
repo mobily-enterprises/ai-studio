@@ -1,7 +1,7 @@
 import { unref } from "vue";
 import {
-  useCodexAttachments
-} from "@/composables/useCodexAttachments.js";
+  useAgentAttachments
+} from "@/composables/useAgentAttachments.js";
 
 function attachmentPathForTerminal(attachmentPath = "") {
   const normalizedPath = String(attachmentPath || "").trim();
@@ -35,7 +35,7 @@ function useCodexTerminalAttachments({
     }
   }
 
-  const attachments = useCodexAttachments({
+  const attachments = useAgentAttachments({
     canUpload: () => Boolean(unref(sessionId)) && (
       typeof canUpload === "function"
         ? canUpload() !== false

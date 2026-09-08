@@ -103,6 +103,7 @@
           <p v-if="activeTaskRecoveryStatus">{{ activeTaskRecoveryStatus }}</p>
         </v-alert>
         <Vibe64EphemeralConversationMessages
+          :session-id="props.sessionId"
           :messages="activeTask.messages"
           empty-message="Ask a focused question or investigate a problem without adding it to the main conversation."
         />

@@ -15,23 +15,26 @@ describe("direct chat messages", () => {
     expect(chatMessagePayload("   ")).toBeNull();
   });
 
-  it("adds attachment references without exposing paths in visible chat", () => {
-    const payload = chatMessagePayload("Please inspect this.", [{
-      attachmentId: "attachment-1",
+  it("sends attachment references without trusting browser filesystem paths", () => {
+    const attachmentId = "12345678-1234-4234-8234-123456789abc";
+    const payload = chatMessagePayload("Please inspect [Image #1].", [{
+      attachmentId,
       fileName: "screenshot.png",
       path: "/tmp/vibe64-attachments/session/screenshot.png",
+      reference: "[Image #1]",
       size: 2048
     }]);
 
-    expect(payload.displayMessage).toBe("Please inspect this.");
+    expect(payload.displayMessage).toBe("Please inspect [Image #1].");
     expect(payload.displayAttachments).toEqual([{
+      attachmentId,
       fileName: "screenshot.png",
+      reference: "[Image #1]",
       size: 2048
     }]);
-    expect(payload.attachmentIds).toEqual(["attachment-1"]);
-    expect(payload.message).toContain(
-      "- screenshot.png (2.0 KB): /tmp/vibe64-attachments/session/screenshot.png"
-    );
+    expect(payload.attachmentIds).toEqual([attachmentId]);
+    expect(payload.message).toBe("Please inspect [Image #1].");
+    expect(JSON.stringify(payload)).not.toContain("/tmp/");
   });
 
   it("creates unique ids for one browser origin", () => {

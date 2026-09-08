@@ -331,6 +331,7 @@ function useVibe64AutopilotView(props, emit, {
   assistantCanRequestMessage = null,
   assistantCanUseAi = null,
   assistantRestrictionMessage = null,
+  onAttachmentsAccepted = null,
   requestTemporaryAi = null,
   sendMainChatMessage = null
 } = {}) {
@@ -397,7 +398,6 @@ function useVibe64AutopilotView(props, emit, {
 
   const composerDraft = ref("");
   const composerAttachments = ref([]);
-  const composerAcceptedAttachments = ref(false);
   const composerRetrySubmission = ref(null);
   const composerSending = ref(false);
   const composerSubmissionKind = ref("");
@@ -515,9 +515,7 @@ function useVibe64AutopilotView(props, emit, {
     sessionInteractionDisabled.value ||
     !assistantMainChatAllowed.value
   ));
-  const composerAttachmentsSupported = computed(() => (
-    normalizedAgentTurnText(props.session?.assistantSelection?.engineId) !== "opencode"
-  ));
+  const composerAttachmentsSupported = computed(() => true);
   const composerAttachmentsEnabled = computed(() => Boolean(
     composerAttachmentsSupported.value &&
     !composerDisabled.value &&
@@ -982,6 +980,9 @@ function useVibe64AutopilotView(props, emit, {
       } else if (accepted) {
         conversationFollowLatestKey.value += 1;
       }
+      if (accepted && payload.attachmentIds?.length) {
+        onAttachmentsAccepted?.(payload.attachmentIds);
+      }
       return accepted;
     } catch (error) {
       if (sessionId.value !== sendingSessionId || projectSlug.value !== sendingProjectSlug) {
@@ -1033,8 +1034,6 @@ function useVibe64AutopilotView(props, emit, {
       ? latestAssistantQuestionText.value
       : "");
     const messageId = retry?.messageId || nextMessageId();
-    const includedAttachments = !retry && composerAttachments.value.length > 0;
-    composerAcceptedAttachments.value = false;
     if (submissionKind === "send" && !retry) {
       submittedQuestionText.value = questionTextSnapshot;
       composerDraft.value = "";
@@ -1046,9 +1045,6 @@ function useVibe64AutopilotView(props, emit, {
     const accepted = await sendChatPayload(payload, { messageId, submissionKind });
     if (sessionId.value !== sendingSessionId || projectSlug.value !== sendingProjectSlug) {
       return false;
-    }
-    if (accepted) {
-      composerAcceptedAttachments.value = includedAttachments;
     }
     if (accepted && (submissionKind === "steer" || retry)) {
       submittedQuestionText.value = questionTextSnapshot;
@@ -1837,7 +1833,6 @@ function useVibe64AutopilotView(props, emit, {
     interrupting.value = false;
     composerDraft.value = "";
     composerAttachments.value = [];
-    composerAcceptedAttachments.value = false;
     composerRetrySubmission.value = null;
     optimisticMessages.value = [];
     questionAnswers.value = {};
@@ -1911,7 +1906,6 @@ function useVibe64AutopilotView(props, emit, {
     chatReloading,
     chatTurns,
     composerAttachments,
-    composerAcceptedAttachments,
     composerAttachmentsEnabled,
     composerAttachmentsSupported,
     composerCanSubmit,

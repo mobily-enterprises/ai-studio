@@ -7,7 +7,7 @@ import {
 
 import { chatMessagePayload } from "@/lib/vibe64ChatMessage.js";
 import {
-  vibe64AgentAttachmentDeletePath,
+  vibe64AgentAttachmentFilePath,
   vibe64TemporaryConversationPath,
   vibe64TemporaryConversationsPath,
   vibe64TemporaryConversationStopPath,
@@ -529,7 +529,7 @@ function useVibe64TemporaryAi({
         });
       }
       for (const attachmentId of task.ownedAttachmentIds) {
-        void fetch(resolveStudioRequestUrl(vibe64AgentAttachmentDeletePath(
+        void fetch(resolveStudioRequestUrl(vibe64AgentAttachmentFilePath(
           apiPath,
           currentSession,
           attachmentId

@@ -226,6 +226,7 @@ function untrustedExecutionProfileResolutionError(provider = {}, sessionId = "",
 }
 
 function createSessionAgentManager({
+  attachments = null,
   defaultProviderId = "codex",
   readAssistantAccess = async () => ({ ownerOnly: false }),
   providers = []
@@ -394,7 +395,8 @@ function createSessionAgentManager({
       agentSettings: options?.agentSettings || input?.agentSettings || null
     };
     const provider = bindSession(sessionId, operationOptions);
-    if (typeof provider[method] !== "function") {
+    const operation = attachments?.[method] || provider[method];
+    if (typeof operation !== "function") {
       throw new TypeError(`Assistant provider ${provider.id} does not implement ${method}().`);
     }
     const assistantAccess = AI_METHODS.has(method)
@@ -468,7 +470,10 @@ function createSessionAgentManager({
           };
         }
       }
-      const result = await provider[method](context, providerInput);
+      if (attachments && ["sendMessage", "startConversationTurn"].includes(method)) {
+        providerInput = await attachments.prepareMessage(context, providerInput, { durable: method === "sendMessage" });
+      }
+      const result = await operation(context, providerInput);
       return executionProfileRequest
         ? rememberVerifiedExecutionProfile(
             provider,

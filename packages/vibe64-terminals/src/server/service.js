@@ -1,4 +1,5 @@
 import { createCodexTerminalController } from "./codexTerminal.js";
+import { createSessionAttachments } from "./sessionAttachments.js";
 import {
   createSessionAgentManager
 } from "./agent/sessionAgentManager.js";
@@ -488,7 +489,9 @@ function createService({
     publishSessionChanged: publishAgentSessionChanged,
     resolveConnection: (context) => assistantRuntime.resolveConnection(context)
   });
+  const sessionAttachments = createSessionAttachments({ projectService, env });
   const sessionAgent = createSessionAgentManager({
+    attachments: sessionAttachments,
     providers: [
       createCodexSessionAgentProvider({
         connectionStatus: (context) => assistantRuntime.codexConnectionStatus(context),
@@ -2437,6 +2440,10 @@ function createService({
       return runMainAgentWrite(sessionId, options, (context) => (
         sessionAgent.uploadAttachment(sessionId, input, context)
       ), { operation: "upload-agent-attachment" });
+    },
+
+    readAgentAttachment(sessionId, attachmentId) {
+      return sessionAttachments.readAttachment({ sessionId }, attachmentId);
     },
 
     pinAgentAttachments(sessionId, input = {}, options = {}) {

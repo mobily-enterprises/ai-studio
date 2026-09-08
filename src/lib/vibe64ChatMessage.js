@@ -4,9 +4,6 @@ import {
 import {
   normalizeVibe64ConversationAttachments
 } from "@local/vibe64-runtime/shared";
-import {
-  appendPromptAttachmentReferences
-} from "@/lib/vibe64PromptAttachments.js";
 
 function chatText(value = "") {
   return String(value || "").trim();
@@ -43,9 +40,7 @@ function chatMessagePayload(message = "", attachments = []) {
     ...(attachmentIds.length ? { attachmentIds } : {}),
     ...(displayAttachments.length ? { displayAttachments } : {}),
     displayMessage: text,
-    message: files.length
-      ? appendPromptAttachmentReferences(text, files)
-      : text
+    message: text
   };
 }
 

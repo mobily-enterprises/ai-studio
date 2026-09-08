@@ -8378,6 +8378,7 @@ function createCodexTerminalController({
           agentSettings,
           clientUserMessageId,
           prompt: renderedPrompt,
+          attachments: input.attachments,
           provider,
           threadId: thread.threadId,
           workdir
@@ -10002,6 +10003,7 @@ function createCodexTerminalController({
     let failureDetailTimeout = null;
     let settled = false;
     let timeout = null;
+    let connectionCheck = null;
     let unsubscribe = null;
     let pendingCompletionStatus = "";
     let pendingFailure = null;
@@ -10011,6 +10013,8 @@ function createCodexTerminalController({
     function cleanup() {
       clearTimeout(timeout);
       timeout = null;
+      clearInterval(connectionCheck);
+      connectionCheck = null;
       clearTimeout(failureDetailTimeout);
       failureDetailTimeout = null;
       unsubscribe?.();
@@ -10150,9 +10154,22 @@ function createCodexTerminalController({
         return new Promise((resolve, reject) => {
           resolveWaiter = resolve;
           rejectWaiter = reject;
-          timeout = setTimeout(() => {
-            fail(new Error("Timed out waiting for Codex app-server response."));
-          }, timeoutMs);
+          if (timeoutMs > 0) {
+            timeout = setTimeout(() => {
+              fail(new Error("Timed out waiting for Codex app-server response."));
+            }, timeoutMs);
+          } else {
+            // Interactive repair turns may take longer than bounded helper jobs.
+            // Retain their watcher until completion, interruption, or connection loss.
+            const generation = provider?.currentConnectionGeneration?.();
+            connectionCheck = setInterval(() => {
+              if (provider?.isAvailable?.() === false ||
+                provider?.currentConnectionGeneration?.() !== generation) {
+                fail(new Error("Connection to Codex was lost while the temporary AI was working."));
+              }
+            }, 1000);
+            connectionCheck.unref?.();
+          }
           unsubscribe = typeof provider?.subscribe === "function"
             ? provider.subscribe((notification = {}) => {
                 if (!notificationMatches(notification)) {
@@ -11029,6 +11046,7 @@ function createCodexTerminalController({
         });
         watcher = createCodexAppServerDetachedTurnWatcher(context.provider, conversationId, {
           includeThreadHistory: false,
+          timeoutMs: 0,
           onEvent(classification = {}) {
             const current = codexAppServerEphemeralConversation(sessionId, conversationId);
             if (!current || (classification.turnId && current.runId && classification.turnId !== current.runId)) {
@@ -11049,6 +11067,7 @@ function createCodexTerminalController({
           agentSettings: context.agentSettings,
           outputSchema: workspaceWrite ? VIBE64_AGENT_TASK_RESULT_SCHEMA : null,
           prompt,
+          attachments: input.attachments,
           provider: context.provider,
           readOnly: Boolean(context.assistantScope),
           threadId: conversationId,
@@ -12637,7 +12656,11 @@ function createCodexTerminalController({
       const response = provider.steerTurn(
         threadId,
         turnId,
-        message,
+        input.attachments?.some((attachment) => attachment.contentType?.startsWith("image/"))
+          ? [message, ...input.attachments
+              .filter((attachment) => attachment.contentType?.startsWith("image/"))
+              .map((attachment) => ({ type: "localImage", path: attachment.path }))]
+          : message,
         {
           clientUserMessageId
         }

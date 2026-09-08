@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Request as PlaywrightRequest, type Route } from "@playwright/test";
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import { createServer as createHttpServer, request as requestHttp, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile, writeFile } from "node:fs/promises";
 import { createPreviewPreparationFixture } from "../fixtures/previewPreparation.js";
@@ -1165,6 +1165,7 @@ test("@preview-lifecycle Temporary AI keeps its shared upload queue across task 
   await page.setViewportSize({ height: 844, width: 390 });
   await mockLaunchTerminalSocket(page);
   const launchSession = await mockLaunchSession(page, {
+    assistantAccess: PERSONAL_ASSISTANT_ACCESS,
     attachmentUploadResponseDelayMs: 1000
   });
   await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
@@ -5809,4 +5810,171 @@ async function fulfillNdjson(route: Route, events: unknown[]) {
     body: `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
     contentType: "application/x-ndjson"
   });
+}
+
+for (const engine of ["codex", "opencode"]) {
+  for (const width of [390, 1440]) {
+    test(`@shared-attachments ${engine} references, removal, sent previews and downloads at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 950 });
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await mockLaunchTerminalSocket(page);
+      const base = sessionPayload();
+      const session = engine === "codex" ? base : {
+        ...base,
+        agentSession: { ...base.agentSession, providerId: "opencode", transportId: "opencode_server" },
+        assistantSelection: { agentId: "build", catalogRevision: TEST_ASSISTANT_CATALOG_REVISION, engineId: "opencode", modelId: "glm-5.3", modelProviderId: "zai-coding-plan", variantId: "high" }
+      };
+      const conversationLog: unknown[] = [];
+      await mockLaunchSession(page, { session, conversationLog, assistantAccess: PERSONAL_ASSISTANT_ACCESS, assistantCatalog: assistantCatalogPayload({ includeOpenCode: true }) });
+      const uploads = new Map<string, AttachmentUpload>();
+      const deleted: string[] = [];
+      const messages: Record<string, unknown>[] = [];
+      let imageUnavailable = false;
+      // Chromium's same-origin `download` requests bypass page routing. Serve
+      // actual file responses so this verifies saved bytes as well as the UI.
+      const downloadServer = createHttpServer((request, response) => {
+        const url = new URL(request.url || "/", BASE_URL);
+        if (url.pathname.startsWith(`${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}/agent-attachments/`)) {
+          const uploaded = uploads.get(url.pathname.split("/").at(-1) || "");
+          if (!uploaded || (imageUnavailable && url.searchParams.has("inline"))) { response.writeHead(404).end(); return; }
+          response.writeHead(200, {
+            "content-type": uploaded.contentType,
+            "content-disposition": url.searchParams.has("inline") ? "inline" : `attachment; filename="${uploaded.fileName}"`,
+            "cache-control": "no-store"
+          }).end(uploaded.bytes);
+          return;
+        }
+        const upstream = requestHttp(url, { method: request.method, headers: { ...request.headers, host: new URL(BASE_URL).host } }, (incoming) => {
+          response.writeHead(incoming.statusCode || 502, incoming.headers);
+          incoming.pipe(response);
+        });
+        upstream.on("error", () => response.writeHead(502).end());
+        request.pipe(upstream);
+      });
+      await listenOnLoopback(downloadServer);
+      try {
+      await page.route(/\/agent-attachments(?:\/[^/?]+)?(?:\?.*)?$/u, async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        expect(url.pathname.startsWith(`${SCOPED_API_PREFIX}/vibe64/sessions/${SESSION_ID}/agent-attachments`)).toBe(true);
+        if (request.method() === "POST") {
+          const uploaded = await readMultipartAttachment(request);
+          const id = `aaaaaaaa-aaaa-4aaa-8aaa-${String(uploads.size + 1).padStart(12, "0")}`;
+          uploads.set(id, uploaded);
+          await new Promise((resolve) => setTimeout(resolve, uploaded.fileName === "one.png" ? 700 : 150));
+          await fulfillJson(route, { ok: true, attachmentId: id, fileName: uploaded.fileName, size: uploaded.bytes.length, path: `/private/upload/${id}`, contentType: uploaded.contentType });
+        } else if (request.method() === "DELETE") {
+          deleted.push(url.pathname.split("/").at(-1) || "");
+          await fulfillJson(route, { ok: true });
+        } else {
+          await route.continue();
+        }
+      });
+      await page.route("**/agent-message", async (route) => {
+        const payload = route.request().postDataJSON();
+        messages.push(payload);
+        if (messages.length === 1) {
+          await fulfillJson(route, { ok: false, error: "Test delivery interrupted. Retry this message." }, { status: 503 });
+          return;
+        }
+        conversationLog.push({
+          turnId: "attachment-turn",
+          user: { role: "user", at: new Date().toISOString(), messageId: payload.messageId, text: payload.displayMessage || payload.message, attachments: payload.displayAttachments }
+        });
+        await fulfillJson(route, { ok: true, delivered: true });
+      });
+      await page.goto(`http://127.0.0.1:${(downloadServer.address() as AddressInfo).port}${DEVELOPMENT_PATH}`);
+      const composer = page.getByLabel("Message AI assistant");
+      await composer.fill("Inspect these");
+      const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFe0AAAAASUVORK5CYII=", "base64");
+      const chooser = page.waitForEvent("filechooser");
+      await page.getByRole("button", { name: "Attach files", exact: true }).click();
+      await (await chooser).setFiles([
+        { name: "one.png", mimeType: "image/png", buffer: png },
+        { name: "two.png", mimeType: "image/png", buffer: png },
+        { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Saved attachment") }
+      ]);
+      await expect(page.locator(".vibe64-attachment-queue__item--ready")).toHaveCount(3);
+      for (const reference of ["[Image #1]", "[Image #2]", "[File #1]"]) {
+        expect(await composer.inputValue()).toContain(reference);
+      }
+      await expect(composer).not.toHaveValue(/\/private\/upload/u);
+      await page.screenshot({ path: testInfo.outputPath("attachment-composer.png"), animations: "disabled" });
+      await page.getByRole("button", { name: /\[Image #[12]\] one.png/u }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await expect.poll(() => dialog.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await page.getByRole("button", { name: "Remove one.png", exact: true }).click();
+      await expect(composer).toHaveValue(/^Inspect these\s+\[Image #1\]\s+\[File #1\]\s*$/u);
+      await expect.poll(() => deleted.length).toBe(1);
+      await composer.fill("I removed the tokens myself.");
+      await expect(page.locator(".vibe64-attachment-queue__item--ready")).toHaveCount(2);
+      expect(deleted).toHaveLength(1);
+      await composer.fill("Review [Image #1] and [File #1]. I edited this.");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      await expect.poll(() => messages.length).toBe(1);
+      expect(messages[0].message).toBe("Review [Image #1] and [File #1]. I edited this.");
+      expect(messages[0].attachmentIds).toHaveLength(2);
+      expect(JSON.stringify(messages[0])).not.toContain("/private/upload");
+      await expect(page.getByText("Test delivery interrupted. Retry this message.", { exact: false })).toBeVisible();
+      await composer.fill("Keep this next draft");
+      const nextChooser = page.waitForEvent("filechooser");
+      await page.getByRole("button", { name: "Attach files", exact: true }).click();
+      await (await nextChooser).setFiles({ name: "later.txt", mimeType: "text/plain", buffer: Buffer.from("Next message attachment") });
+      await expect(composer).toHaveValue(/Keep this next draft\s+\[File #2\]/u);
+      await page.getByRole("button", { name: "Resend", exact: true }).click();
+      await expect.poll(() => messages.length).toBe(2);
+      expect(messages[1].attachmentIds).toEqual(messages[0].attachmentIds);
+      expect(messages[1].messageId).toBe(messages[0].messageId);
+      expect(uploads.size).toBe(4);
+      await expect(page.locator(".vibe64-attachment-queue__item--ready")).toHaveCount(1);
+      await expect(composer).toHaveValue(/Keep this next draft\s+\[File #1\]/u);
+      await expect(page.getByRole("button", { name: /\[File #1\] later.txt/u })).toBeVisible();
+      expect(deleted).toHaveLength(1);
+      await page.getByRole("button", { name: "Remove later.txt", exact: true }).click();
+      await composer.fill("");
+      await expect(page.locator(".vibe64-attachment-queue__item--ready")).toHaveCount(0);
+      const sent = page.locator(".vibe64-conversation-attachments");
+      await sent.getByRole("button", { name: /two.png/u }).click();
+      await expect.poll(() => dialog.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      imageUnavailable = true;
+      await sent.getByRole("button", { name: /two.png/u }).click();
+      await expect(dialog.getByText("Preview is unavailable for this file.", { exact: false })).toBeVisible();
+      await expect(dialog.getByRole("link", { name: "Download", exact: true })).toBeVisible();
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      imageUnavailable = false;
+      await sent.getByRole("button", { name: /notes.txt/u }).click();
+      await expect(dialog.getByText("Preview is unavailable for this file.", { exact: false })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("attachment-dialog.png"), animations: "disabled" });
+      const download = page.waitForEvent("download");
+      await dialog.getByRole("link", { name: "Download", exact: true }).click();
+      const downloaded = await download;
+      expect(downloaded.suggestedFilename()).toBe("notes.txt");
+      expect(await readFile((await downloaded.path())!, "utf8")).toBe("Saved attachment");
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await page.reload();
+      await expect(sent.getByRole("button", { name: /\[Image #1\] two.png/u })).toBeVisible();
+      await sent.getByRole("button", { name: /two.png/u }).click();
+      await expect.poll(() => dialog.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await composer.fill("Pasted screenshot");
+      await composer.evaluate((textarea, bytes) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.items.add(new File([new Uint8Array(bytes)], "pasted.png", { type: "image/png" }));
+        textarea.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+      }, [...png]);
+      await expect(composer).toHaveValue(/Pasted screenshot\s+\[Image #1\]/u);
+      await expect(page.getByRole("button", { name: /\[Image #1\] pasted.png/u })).toBeVisible();
+      await page.getByRole("button", { name: "Remove pasted.png", exact: true }).click();
+      await expect(composer).toHaveValue(/^Pasted screenshot\s*$/u);
+      expect(errors).toEqual([]);
+      } finally {
+        downloadServer.closeAllConnections();
+        await closeHttpServer(downloadServer);
+      }
+    });
+  }
 }

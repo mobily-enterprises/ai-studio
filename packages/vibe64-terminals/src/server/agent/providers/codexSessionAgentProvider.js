@@ -564,9 +564,6 @@ function createCodexSessionAgentProvider({
         assistantScope: context.assistantScope
       });
     },
-    async deleteAttachment(context, input = {}) {
-      return controller.deleteAttachment(context.sessionId, input);
-    },
     async deleteDetachedChatThread(context, input = {}) {
       return controller.deleteDetachedChatThread(context.sessionId, input, {
         runtime: context.runtime,
@@ -612,20 +609,6 @@ function createCodexSessionAgentProvider({
     },
     async interruptTurn(context, input = {}) {
       return normalizeCodexSessionResult(await controller.interruptTurn(context.sessionId, input));
-    },
-    async pinAttachments(context, input = {}) {
-      if (typeof controller.pinAttachments !== "function") {
-        return codexAttachmentDeliveryFailure(
-          "vibe64_agent_attachment_unavailable",
-          "Attachments cannot be retained for owner approval.",
-          true
-        );
-      }
-      return controller.pinAttachments(
-        context.sessionId,
-        codexAttachmentIds(input),
-        normalizeText(input.suggestionId)
-      );
     },
     async invalidateRuntimes(_context, input = {}) {
       return controller.invalidateAppServerRuntimes(input);
@@ -713,28 +696,11 @@ function createCodexSessionAgentProvider({
             message: input,
             vibe64User: context.vibe64User || null
           };
-      const attachmentLimit = codexAttachmentLimitResult(message);
-      if (attachmentLimit) {
-        return normalizeCodexSessionResult(attachmentLimit);
-      }
-      const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
-        controller,
-        context.sessionId,
-        message
-      );
-      if (attachmentValidation) {
-        return normalizeCodexSessionResult(attachmentValidation);
-      }
       const result = normalizeCodexSessionResult(await controller.sendMessage(context.sessionId, message, {
         runtime: context.runtime,
         session: context.session,
         turnOwnership: context.turnOwnership
       }));
-      await renewAcceptedCodexAttachments(controller, context.sessionId, message, (
-        result.ok &&
-        result.newTurnRequired !== true &&
-        (result.delivered === true || Boolean(result.turn?.id))
-      ));
       return result;
     },
     async sessionState(context) {
@@ -748,27 +714,9 @@ function createCodexSessionAgentProvider({
         agentSettings: codexAssistantSettings(context, input),
         vibe64User: input.vibe64User || context.vibe64User || null
       };
-      const attachmentLimit = codexAttachmentLimitResult(message);
-      if (attachmentLimit) {
-        return attachmentLimit;
-      }
-      const attachmentValidation = await validateCodexAttachmentsBeforeDelivery(
-        controller,
-        context.sessionId,
-        message
-      );
-      if (attachmentValidation) {
-        return attachmentValidation;
-      }
       const result = await controller.startConversationTurn(context.sessionId, message, {
         assistantScope: context.assistantScope
       });
-      await renewAcceptedCodexAttachments(
-        controller,
-        context.sessionId,
-        message,
-        result?.ok !== false && Boolean(normalizeText(result?.runId))
-      );
       return result;
     },
     async startTerminal(context, input = {}) {
@@ -801,19 +749,6 @@ function createCodexSessionAgentProvider({
     },
     async unsubscribeSessions(_context, sessions = []) {
       return controller.unsubscribeKnownAppServerThreads(sessions);
-    },
-    async uploadAttachment(context, input = {}) {
-      return controller.uploadAttachment(context.sessionId, input);
-    },
-    async unpinAttachments(context, input = {}) {
-      if (typeof controller.unpinAttachments !== "function") {
-        return { ok: true, released: [] };
-      }
-      return controller.unpinAttachments(
-        context.sessionId,
-        codexAttachmentIds(input),
-        normalizeText(input.suggestionId)
-      );
     },
     async waitForConversationTurn(context, input = {}) {
       return controller.waitForConversationTurn(context.sessionId, input, {

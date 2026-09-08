@@ -13,6 +13,54 @@ function jsonResponse(value, status = 200) {
   });
 }
 
+test("OpenCode attachment access persists on its conversation, preserves other permissions and does not grow on retries", async () => {
+  const initial = [{ permission: "read", pattern: "*.env", action: "deny" }];
+  let permission = [...initial];
+  const requests = [];
+  const client = createOpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetchImpl: async (url, init) => {
+      const body = init.body ? JSON.parse(init.body) : null;
+      requests.push({ path: new URL(url).pathname, method: init.method, body });
+      if (init.method === "PATCH") permission = body.permission;
+      return jsonResponse({ permission });
+    }
+  });
+  const attachments = [
+    { path: "/sessions/one/artifacts/attachments/id-1/file", fileName: "image.png", contentType: "image/png" },
+    { path: "/sessions/one/artifacts/attachments/id-2/file", fileName: "data.csv", contentType: "application/octet-stream" }
+  ];
+  await client.prompt("ses_one", { prompt: { text: "Inspect" }, attachments });
+  assert.deepEqual(permission, [...initial, ...attachments.map((attachment) => ({
+    permission: "external_directory", pattern: attachment.path.replace(/file$/u, "*"), action: "allow"
+  }))]);
+  assert.deepEqual(requests.map(({ method, path }) => [method, path]), [
+    ["GET", "/session/ses_one"], ["PATCH", "/session/ses_one"], ["POST", "/session/ses_one/prompt_async"]
+  ]);
+  await client.prompt("ses_one", { prompt: { text: "Retry" }, attachments });
+  assert.equal(requests.filter(({ method }) => method === "PATCH").length, 1);
+  requests.length = 0;
+  await client.prompt("ses_one", { prompt: { text: "Reopen the earlier file" } });
+  assert.equal(requests.length, 1);
+  assert.equal(permission.length, 3);
+});
+
+test("OpenCode does not send attachments if their native access cannot be configured", async () => {
+  const requests = [];
+  const client = createOpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetchImpl: async (_url, init) => {
+      requests.push(init.method);
+      return init.method === "GET" ? jsonResponse({ permission: [] }) : jsonResponse({ message: "Cannot save permissions" }, 500);
+    }
+  });
+  await assert.rejects(client.prompt("ses_one", {
+    prompt: { text: "Inspect" },
+    attachments: [{ path: "/sessions/one/artifacts/attachments/id/file", fileName: "data.csv" }]
+  }), /Cannot save permissions/u);
+  assert.deepEqual(requests, ["GET", "PATCH"]);
+});
+
 test("OpenCode client accepts only loopback HTTP origins", () => {
   for (const baseUrl of [
     "https://127.0.0.1:4096",

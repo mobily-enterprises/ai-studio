@@ -2876,6 +2876,9 @@ function codexTextInput(text = "") {
 function codexTurnInput(input = []) {
   const values = Array.isArray(input) ? input : [input];
   return values.map((item) => {
+    if (isPlainObject(item) && item.type === "localImage" && typeof item.path === "string") {
+      return { type: "localImage", path: item.path };
+    }
     if (isPlainObject(item) && item.type === "text") {
       return codexTextInput(item.text);
     }
