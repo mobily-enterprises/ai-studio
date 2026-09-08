@@ -206,6 +206,11 @@ Message delivery and provider work remain visibly distinct. The composer shows
 the initial send while the message is being accepted, then reports the selected
 assistant as working for the rest of the active turn. The session tab and
 assistant avatar use that same live turn state until completion or interruption.
+New Send and Steer submissions clear the draft immediately. Their pending
+conversation entry retains the submitted text, and later delivery leaves any
+new draft untouched. A rejected Steer restores its original text only when the
+composer is still empty; otherwise its failed entry keeps the Resend and Edit
+actions without replacing the newer draft. Retries retain the same message id.
 A durable user-message receipt with the exact submitted message id settles Send
 and the saved-commit Deslop banner even while the HTTP request remains pending.
 Unrelated messages do not acknowledge delivery. Codex records that authored

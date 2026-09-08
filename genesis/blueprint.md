@@ -16,6 +16,8 @@ personal project-wide stars, reachable from chat and the file browser in any ses
 Chat responds to confirmed message acceptance and interruption immediately;
 background bookkeeping must not keep Send, Stop, or the saved-commit cleanup
 prompt busy after that confirmation.
+Send and Steer clear submitted text immediately so people can write their next
+message while delivery is pending, with failed messages kept recoverable.
 An interruption failure stays visible without covering the composer or its retry controls.
 Provider failures reach the conversation even when no assistant answer is created.
 Confirmed Stop releases chat controls without requiring a final provider message.

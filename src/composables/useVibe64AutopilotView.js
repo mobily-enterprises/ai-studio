@@ -1074,7 +1074,7 @@ function useVibe64AutopilotView(props, emit, {
       ? latestAssistantQuestionText.value
       : "");
     const messageId = retry?.messageId || nextMessageId();
-    if (submissionKind === "send" && !retry) {
+    if (!retry) {
       submittedQuestionText.value = questionTextSnapshot;
       composerDraft.value = "";
       questionAnswers.value = {};
@@ -1086,7 +1086,7 @@ function useVibe64AutopilotView(props, emit, {
     if (sessionId.value !== sendingSessionId || projectSlug.value !== sendingProjectSlug) {
       return false;
     }
-    if (accepted && (submissionKind === "steer" || retry)) {
+    if (accepted && retry) {
       submittedQuestionText.value = questionTextSnapshot;
       if (!settleComposerRetry(retry)) {
         composerDraft.value = composerDraftAfterAcceptedSubmission(
@@ -1096,7 +1096,10 @@ function useVibe64AutopilotView(props, emit, {
       }
       questionAnswers.value = {};
       selectedAnswerChoice.value = "";
-    } else if (!accepted && submissionKind === "steer") {
+    } else if (!accepted && submissionKind === "steer" && (retry || !composerDraft.value)) {
+      if (!retry) {
+        composerDraft.value = draftSnapshot;
+      }
       const optimistic = optimisticMessageById(messageId) || {
         createdAtMs: Date.now(),
         id: messageId,

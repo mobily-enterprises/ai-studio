@@ -424,7 +424,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     const submission = view.submitComposerMessage();
     await nextTick();
     expect(view.composerSubmitMode.value).toBe("steering");
-    expect(view.composerDraft.value).toBe("Keep the parser.");
+    expect(view.composerDraft.value).toBe("");
     await expect(view.submitComposerMessage()).resolves.toBe(false);
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
     expect(sendAgentMessage.mock.calls[0][0]).toMatchObject({
@@ -470,6 +470,46 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
   });
 
+  for (const outcome of ["accepted", "receipt", "rejected"]) {
+    it(`keeps a new draft that repeats the submitted Steer after ${outcome}`, async () => {
+      const delivery = deferredResult();
+      const sendAgentMessage = vi.fn().mockImplementationOnce(() => delivery.promise).mockResolvedValue(true);
+      const { props, view } = await createViewWithProps({ sendAgentMessage });
+      props.session.agentSession.turn = { active: true, id: "turn-1", state: "active" };
+      await nextTick();
+      view.composerDraft.value = "Keep the parser.";
+      const submission = view.submitComposerMessage();
+      expect(view.composerDraft.value).toBe("");
+      const messageId = sendAgentMessage.mock.calls[0][0].messageId;
+      const newerDraft = "Keep the parser. This is a separate follow-up.";
+      view.composerDraft.value = newerDraft;
+
+      if (outcome === "receipt") {
+        props.conversationLog.turns = [{
+          turnId: "000001",
+          user: { role: "user", at: new Date().toISOString(), messageId, text: "Keep the parser." }
+        }];
+      } else {
+        delivery.resolve(outcome === "accepted");
+      }
+      await expect(submission).resolves.toBe(outcome !== "rejected");
+      expect(view.composerDraft.value).toBe(newerDraft);
+      expect(view.composerSubmitMode.value).toBe("steer");
+
+      if (outcome === "rejected") {
+        expect(view.chatTurns.value.at(-1).optimistic.status).toBe("failed");
+        await expect(view.resendOptimisticMessage(messageId)).resolves.toBe(true);
+        expect(sendAgentMessage.mock.calls[1][0]).toMatchObject({ messageId, message: "Keep the parser." });
+        expect(view.composerDraft.value).toBe(newerDraft);
+      } else if (outcome === "receipt") {
+        delivery.reject(new Error("Late request failure"));
+        await nextTick();
+        expect(view.composerDraft.value).toBe(newerDraft);
+        expect(view.chatTurns.value).toHaveLength(1);
+      }
+    });
+  }
+
   it("reuses a rejected Steer message id so a lost response cannot duplicate it", async () => {
     const sendAgentMessage = vi.fn()
       .mockResolvedValueOnce(false)
@@ -500,7 +540,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     expect(view.composerDraft.value).toBe("");
   });
 
-  it("retries only the original Steer and retains text appended after submission", async () => {
+  it("retries only the rejected Steer and retains text appended to its restored draft", async () => {
     const sendAgentMessage = vi.fn()
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
@@ -520,8 +560,8 @@ describe("useVibe64AutopilotView direct chat", () => {
     view.composerDraft.value = "Original steer.";
 
     const first = view.submitComposerMessage();
-    view.composerDraft.value += " New thought.";
     await expect(first).resolves.toBe(false);
+    view.composerDraft.value += " New thought.";
     const messageId = sendAgentMessage.mock.calls[0][0].messageId;
 
     await expect(view.submitComposerMessage()).resolves.toBe(true);
@@ -1222,7 +1262,7 @@ describe("useVibe64AutopilotView direct chat", () => {
     );
   });
 
-  it("does not truncate text appended to a failed Steer when editing it", async () => {
+  it("restores a failed Steer for editing without losing the new draft", async () => {
     const sendAgentMessage = vi.fn(async () => false);
     const view = await createView({
       sendAgentMessage,
@@ -1240,12 +1280,12 @@ describe("useVibe64AutopilotView direct chat", () => {
     view.composerDraft.value = "Failed steer.";
 
     const submission = view.submitComposerMessage();
-    view.composerDraft.value += " New suffix.";
+    view.composerDraft.value = "New suffix.";
     await expect(submission).resolves.toBe(false);
     const failedMessageId = view.chatTurns.value.at(-1).optimistic.id;
 
     expect(view.editOptimisticMessage(failedMessageId)).toBe(true);
-    expect(view.composerDraft.value).toBe("Failed steer. New suffix.");
+    expect(view.composerDraft.value).toBe("Failed steer.\n\nNew suffix.");
   });
 
   it("shows the server's delivery failure instead of a generic send error", async () => {

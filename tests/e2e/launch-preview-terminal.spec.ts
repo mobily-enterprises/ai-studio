@@ -4382,6 +4382,61 @@ for (const width of [1440, 390]) {
   });
 }
 
+for (const width of [390, 820, 1440]) {
+  for (const engineId of ["codex", "opencode"]) {
+    for (const outcome of ["accepted", "receipt", "rejected"]) {
+      test(`@steer-clear ${engineId} clears immediately and preserves the next draft after ${outcome} at ${width}px`, async ({ page }, testInfo) => {
+        await page.setViewportSize({ width, height: 900 });
+        const chat = await responsiveChatHarness(page, { active: true, engineId });
+        const original = "Do not make the cards configurable yet.";
+        const nextDraft = `${original} This is a separate follow-up.`;
+        try {
+          await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+          await chat.composer.fill(original);
+          const started = Date.now();
+          await chat.steer.click();
+          await expect(chat.composer).toHaveValue("", { timeout: 500 });
+          expect(Date.now() - started).toBeLessThan(1_000);
+          await expect.poll(() => chat.messages.length).toBe(1);
+          await expect(chat.visible.getByRole("button", { name: "Sending guidance to assistant", exact: true })).toBeDisabled();
+          await chat.composer.pressSequentially(nextDraft, { delay: 5 });
+          await expect(chat.composer).toHaveValue(nextDraft);
+          expect(chat.messages[0].settled).toBe(false);
+          await page.screenshot({ path: testInfo.outputPath("draft-while-steering-pending.png"), animations: "disabled" });
+
+          if (outcome === "receipt") {
+            await chat.receipt(0);
+            await expect(chat.steer).toBeEnabled();
+            expect(chat.messages[0].settled).toBe(false);
+            await chat.messages[0].finish({ ok: false, error: "Late delivery error" }, 500);
+            await expect(page.getByText("Late delivery error", { exact: true })).toHaveCount(0);
+          } else if (outcome === "rejected") {
+            await chat.messages[0].finish({ ok: false, error: "Guidance was not delivered." }, 409);
+            await expect(chat.visible.getByText("Guidance was not delivered.", { exact: true })).toBeVisible();
+            await expect(chat.steer).toBeEnabled();
+            await expect(chat.composer).toHaveValue(nextDraft);
+            await chat.visible.getByRole("button", { name: "Resend", exact: true }).click();
+            await expect.poll(() => chat.messages.length).toBe(2);
+            expect(chat.messages[1].body.messageId).toBe(chat.messages[0].body.messageId);
+            expect(chat.messages[1].body.message).toBe(original);
+            await chat.receipt(1);
+            await chat.messages[1].finish();
+          } else {
+            await chat.messages[0].finish();
+            await expect(chat.steer).toBeEnabled();
+            await chat.receipt(0);
+          }
+          await expect(chat.composer).toHaveValue(nextDraft);
+          await expect(chat.steer).toBeEnabled();
+          await expect(chat.visible.getByText(original, { exact: true })).toHaveCount(1);
+          await expect(chat.stop).toBeEnabled();
+          expect(chat.errors).toEqual([]);
+        } finally { await chat.close(); }
+      });
+    }
+  }
+}
+
 type HeldChatRequest = {
   body: Record<string, unknown>;
   sessionId: string;
@@ -4391,16 +4446,23 @@ type HeldChatRequest = {
 
 async function responsiveChatHarness(page: Page, {
   active = false,
+  engineId = "",
   twoSessions = false,
   history = []
-}: { active?: boolean; twoSessions?: boolean; history?: unknown[] } = {}) {
+}: { active?: boolean; engineId?: string; twoSessions?: boolean; history?: unknown[] } = {}) {
   page.setDefaultTimeout(10_000);
   await mockLaunchTerminalSocket(page);
   const sessions = [sessionPayload({ sessionName: twoSessions ? "Alpha" : "Renderer session" })];
   if (twoSessions) sessions.push(sessionPayload({ sessionId: `${SESSION_ID}-beta`, sessionName: "Beta" }));
+  const assistantCatalog = engineId ? assistantCatalogPayload({ includeOpenCode: true }) : undefined;
+  if (assistantCatalog) {
+    const engine = assistantCatalog.engines.find((item) => item.engineId === engineId)!;
+    Object.assign(sessions[0].assistantSelection, { ...engine.defaults, engineId });
+    Object.assign(sessions[0].agentSession, { providerId: engineId, transportId: engine.transportId });
+  }
   Object.assign(sessions[0].agentSession.turn, { active, id: "turn-stress", state: active ? "active" : "idle" });
   const conversationLog = [...history];
-  await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, conversationLog, session: sessions[0], sessionList: sessions });
+  await mockLaunchSession(page, { assistantAccess: PERSONAL_ASSISTANT_ACCESS, assistantCatalog, conversationLog, session: sessions[0], sessionList: sessions });
   const messages: HeldChatRequest[] = [];
   const interrupts: HeldChatRequest[] = [];
   const errors: string[] = [];
