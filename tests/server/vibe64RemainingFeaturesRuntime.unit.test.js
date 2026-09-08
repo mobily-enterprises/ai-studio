@@ -39,7 +39,7 @@ function projectApi() {
   });
 }
 
-test("remaining Vibe64 features use named capabilities and register direct routes/actions", async () => {
+test("remaining Vibe64 features use named capabilities and register direct routes/actions", async (t) => {
   const routes = [];
   let actions = null;
   const actionObserver = defineProvider({
@@ -86,20 +86,30 @@ test("remaining Vibe64 features use named capabilities and register direct route
     }
   });
 
+  t.after(() => runtime.shutdown());
   await runtime.start();
 
   assert.deepEqual(actions.listDefinitions().map((action) => action.id).sort(), [
     "vibe64.current-app.read",
     "vibe64.studio-health.read"
   ]);
-  assert.equal(routes.length, 21);
+  assert.equal(routes.length, 24);
+  for (const [method, suffix] of [
+    ["GET", "/source-editor/download"],
+    ["GET", "/source-editor/stars"],
+    ["POST", "/source-editor/stars"]
+  ]) {
+    assert.equal(
+      routes.filter((route) => route.method === method && route.path.endsWith(suffix)).length,
+      1,
+      `${method} ${suffix} must be registered exactly once`
+    );
+  }
   assert.equal(routes.every((route) => typeof route.handler === "function"), true);
   assert.equal(runtime.diagnostics().capabilityIds.includes("vibe64.current-app"), true);
   assert.equal(runtime.diagnostics().capabilityIds.includes("vibe64.source-editor"), true);
   assert.equal(runtime.diagnostics().capabilityIds.includes("vibe64.studio-health"), true);
   assert.equal(runtime.diagnostics().capabilityIds.includes("vibe64.system-graph"), true);
-
-  await runtime.shutdown();
 });
 
 test("source editor publishes explicit top-level realtime events", async () => {

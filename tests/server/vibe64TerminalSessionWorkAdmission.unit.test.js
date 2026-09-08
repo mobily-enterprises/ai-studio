@@ -132,6 +132,16 @@ async function terminalServiceFixture(t, lock, {
       status: "unconfigured"
     }
   };
+  const sessionStore = createVibe64SessionStore({
+    projectContextRoot,
+    projectRuntimeRoot,
+    projectSessionSourceRoot: path.join(root, "managed", "sessions")
+  });
+  await sessionStore.createSession({
+    metadata: session.metadata,
+    runtimeKind: "genesis",
+    sessionId: session.sessionId
+  });
   const runtime = {
     async getSession() {
       return session;
@@ -140,6 +150,7 @@ async function terminalServiceFixture(t, lock, {
     async resolvePromptEnvironment() { return {}; },
     stateRoot: projectRuntimeRoot,
     store: {
+      ...sessionStore,
       ...lock.store,
       async writeMetadataValue(_sessionId, name, value) {
         session.metadata[name] = value;

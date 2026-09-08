@@ -16,6 +16,7 @@ test("project and sessions expose only named Feature capabilities", () => {
   assert.equal(Vibe64ProjectProvider.id, "vibe64.project");
   assert.deepEqual(Vibe64ProjectProvider.requires, {
     env: "runtime.env",
+    logger: "runtime.logger",
     http: "runtime.http",
     actionCatalogue: "runtime.actions"
   });
@@ -49,6 +50,7 @@ test("project and sessions register routes and captured actions during setup", a
       }
     },
     env: {},
+    logger: console,
     http: {
       router: {
         register(...args) {
