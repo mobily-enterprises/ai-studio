@@ -48,6 +48,14 @@ switches sibling tabs and their header action to Update. The pending incoming
 version survives older work inspections and canonical-check responses until an
 inspection confirms the announced version. The header observes the same
 pending state as the session tabs, including while follow-up checks run.
+Selecting a session also shows Update as soon as the canonical check confirms
+incoming work, without waiting for another full worktree inspection. The check's
+HTTP response and realtime notification carry the same dated result; the shared
+registry applies it once and schedules one background work inspection. Older
+check results cannot replace a newer confirmation, and pending incoming work
+survives an older work inspection until that inspection sees the announced
+canonical commit. An initially unknown file-change list does not hide a
+confirmed Update action.
 
 Each Save or Update attempt starts a fresh visible transcript. Retrying after a
 failure does not mix the earlier attempt's errors into the new operation.

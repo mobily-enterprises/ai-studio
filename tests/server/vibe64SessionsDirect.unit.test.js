@@ -1618,6 +1618,7 @@ test("one exact update check is shared, cached, and invalidates every sibling se
     ["session-1", "session-repository-checked"],
     ["session-2", "repository-canonical-changed"]
   ]);
+  assert.deepEqual(publications[0][1].payload.repositoryUpdateCheck, JSON.parse(metadata[1][2]));
 });
 
 test("repository history facades require a stored session from the selected project before terminal admission", async (t) => {

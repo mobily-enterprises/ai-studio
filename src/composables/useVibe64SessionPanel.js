@@ -435,7 +435,7 @@ function sessionRepositoryWorkState(workState = null) {
       updateAvailable: source.updateAvailable === true
     };
   }
-  if (source.loading || source.unsaved === null || source.unsaved === undefined) {
+  if ((source.loading || source.unsaved === null || source.unsaved === undefined) && source.updateAvailable !== true) {
     return {
       ...freshness,
       state: source.error ? "unavailable" : "checking"

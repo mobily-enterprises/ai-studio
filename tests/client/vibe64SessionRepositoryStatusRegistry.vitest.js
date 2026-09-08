@@ -5,6 +5,7 @@ const registryHarness = vi.hoisted(() => ({
   documentListeners: new Map(),
   intervalCallbacks: [],
   realtimeEvents: [],
+  requestHandler: null,
   requests: []
 }));
 
@@ -12,6 +13,7 @@ vi.mock("@jskit-ai/http-web/client/lib/httpClient", () => ({
   getHttpWebClient: () => ({
     async request(path, options = {}) {
       registryHarness.requests.push({ options, path });
+      if (registryHarness.requestHandler) return registryHarness.requestHandler(path, options);
       return String(path).endsWith("/updates/check")
         ? { ok: true, relationship: "current", updateAvailable: false }
         : { changedPaths: [], ok: true, unsaved: false };
@@ -44,6 +46,7 @@ describe("session repository status registry", () => {
     registryHarness.intervalCallbacks.length = 0;
     registryHarness.realtimeEvents.length = 0;
     registryHarness.requests.length = 0;
+    registryHarness.requestHandler = null;
     vi.stubGlobal("document", {
       addEventListener: vi.fn((event, callback) => {
         registryHarness.documentListeners.set(event, callback);
@@ -199,13 +202,101 @@ describe("session repository status registry", () => {
     queue.observe("session-a", { canonicalCommit: "old-version", unsaved: true });
     queue.markUpdatePending("session-a", "first-save");
     queue.markUpdatePending("session-a", "second-save");
-    queue.confirmCanonical("session-a", "first-save");
+    queue.confirmCanonical("session-a", { canonicalCommit: "first-save", updateAvailable: true });
     queue.observe("session-a", { canonicalCommit: "first-save", unsaved: true, updateAvailable: false });
     expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
     queue.observe("session-a", { canonicalCommit: "second-save", unsaved: true, updateAvailable: false });
     expect(states.at(-1)).toMatchObject({ updateAvailable: false });
     expect(states.at(-1).updateStatusPending).not.toBe(true);
     queue.dispose();
+  });
+
+  it("announces a confirmed update without letting an old inspection clear it", async () => {
+    const states = [];
+    const work = Promise.withResolvers();
+    const queue = createVibe64SessionRepositoryStatusQueue({
+      onState: ({ workState }) => states.push(workState),
+      requestWork: () => work.promise
+    });
+    queue.observe("session-a", { canonicalCommit: "new-version", unsaved: false });
+    queue.enqueue(["session-a"], { force: true });
+    queue.confirmCanonical("session-a", { canonicalCommit: "new-version", updateAvailable: true });
+    expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
+    work.resolve({ ok: true, canonicalCommit: "old-version", unsaved: false, updateAvailable: false });
+    await queue.waitForIdle();
+    expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
+    queue.observe("session-a", { canonicalCommit: "new-version", unsaved: false, updateAvailable: false });
+    expect(states.at(-1)).toMatchObject({ updateAvailable: false });
+    expect(states.at(-1).updateStatusPending).not.toBe(true);
+    queue.dispose();
+  });
+
+  for (const first of ["HTTP", "realtime"]) {
+    it(`shows Rebase immediately and shares one inspection when ${first} arrives first`, async () => {
+      const check = Promise.withResolvers();
+      const work = Promise.withResolvers();
+      const states = [];
+      const result = {
+        ok: true, checkedAt: "2026-09-08T10:00:00.000Z",
+        canonicalCommit: "new-version", updateAvailable: true
+      };
+      registryHarness.requestHandler = (path) => String(path).endsWith("/updates/check")
+        ? check.promise : work.promise;
+      const scope = effectScope();
+      scope.run(() => useVibe64SessionRepositoryStatusRegistry({
+        onState: ({ workState }) => states.push(workState),
+        selectedSessionId: ref("session-a"),
+        sessions: ref([{ sessionId: "session-a" }]),
+        sessionsApiPath: ref("/api/app/sample/vibe64/sessions")
+      }));
+      const event = registryHarness.realtimeEvents[0];
+      const notify = () => event.onEvent({ payload: {
+        reason: "session-repository-checked", sessionId: "session-a", repositoryUpdateCheck: result
+      } });
+      if (first === "realtime") notify();
+      else check.resolve(result);
+      await settleRegistryRequests();
+      expect(states.at(-1)).toMatchObject({ loading: false, updateAvailable: true, updateStatusPending: true });
+      expect(registryHarness.requests.filter(({ options }) => options.method === "GET")).toHaveLength(1);
+      if (first === "realtime") check.resolve(result);
+      else notify();
+      await settleRegistryRequests();
+      expect(registryHarness.requests.filter(({ options }) => options.method === "GET")).toHaveLength(1);
+      work.resolve({ ok: true, canonicalCommit: "new-version", unsaved: false, updateAvailable: true });
+      await settleRegistryRequests();
+      expect(states.at(-1)).toMatchObject({ updateAvailable: true, unsaved: false });
+      expect(states.at(-1).updateStatusPending).not.toBe(true);
+      expect(registryHarness.requests).toHaveLength(2);
+      scope.stop();
+    });
+  }
+
+  it("ignores an older check delivered after a newer realtime confirmation", async () => {
+    const check = Promise.withResolvers();
+    const work = Promise.withResolvers();
+    const states = [];
+    registryHarness.requestHandler = (path) => String(path).endsWith("/updates/check")
+      ? check.promise : work.promise;
+    const scope = effectScope();
+    scope.run(() => useVibe64SessionRepositoryStatusRegistry({
+      onState: ({ workState }) => states.push(workState),
+      selectedSessionId: ref("session-a"), sessions: ref([{ sessionId: "session-a" }]),
+      sessionsApiPath: ref("/api/app/sample/vibe64/sessions")
+    }));
+    registryHarness.realtimeEvents[0].onEvent({ payload: {
+      reason: "session-repository-checked", sessionId: "session-a", repositoryUpdateCheck: {
+        canonicalCommit: "second-save", checkedAt: "2026-09-08T10:01:00.000Z", updateAvailable: true
+      }
+    } });
+    check.resolve({ ok: true, canonicalCommit: "first-save", checkedAt: "2026-09-08T10:00:00.000Z", updateAvailable: true });
+    await settleRegistryRequests();
+    expect(registryHarness.requests).toHaveLength(2);
+    expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
+    work.resolve({ ok: true, canonicalCommit: "second-save", unsaved: false, updateAvailable: false });
+    await settleRegistryRequests();
+    expect(states.at(-1)).toMatchObject({ updateAvailable: false });
+    expect(states.at(-1).updateStatusPending).not.toBe(true);
+    scope.stop();
   });
 
   it("settles a pending recheck without an announced version only after inspecting its confirmed version", () => {
@@ -215,7 +306,7 @@ describe("session repository status registry", () => {
       requestWork: async () => ({ ok: true })
     });
     queue.markUpdatePending("session-a");
-    queue.confirmCanonical("session-a", "current-version");
+    queue.confirmCanonical("session-a", { canonicalCommit: "current-version" });
     queue.observe("session-a", { canonicalCommit: "old-version", unsaved: true, updateAvailable: false });
     expect(states.at(-1)).toMatchObject({ updateAvailable: true, updateStatusPending: true });
     queue.observe("session-a", { canonicalCommit: "current-version", unsaved: true, updateAvailable: false });

@@ -1323,6 +1323,7 @@ function createService({
             operation: "updated",
             originId: text(input.originId),
             reason: "session-repository-checked",
+            payload: { repositoryUpdateCheck: updateCheck },
             session: await runtime.getSession(sessionId, { inspectSource: false })
           });
           if (previousCanonicalCommit && previousCanonicalCommit !== result.canonicalCommit) {

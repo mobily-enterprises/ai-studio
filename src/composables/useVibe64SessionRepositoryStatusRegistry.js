@@ -60,7 +60,7 @@ function createVibe64SessionRepositoryStatusQueue({
     const state = workState && typeof workState === "object" ? { ...workState } : {};
     if (canonicalUpdatePending.has(id)) {
       const expectedCommit = canonicalUpdatePending.get(id);
-      if (expectedCommit && state.canonicalCommit === expectedCommit) {
+      if (expectedCommit && state.canonicalCommit === expectedCommit && state.updateStatusPending !== true) {
         canonicalUpdatePending.delete(id);
       } else {
         state.updateAvailable = true;
@@ -92,10 +92,14 @@ function createVibe64SessionRepositoryStatusQueue({
     });
   }
 
-  function confirmCanonical(sessionId = "", canonicalCommit = "") {
+  function confirmCanonical(sessionId = "", { canonicalCommit = "", updateAvailable = false } = {}) {
     const id = String(sessionId || "").trim();
-    if (canonicalUpdatePending.get(id) === "") {
-      canonicalUpdatePending.set(id, String(canonicalCommit || "").trim());
+    const commit = String(canonicalCommit || "").trim();
+    const expectedCommit = canonicalUpdatePending.get(id);
+    if (updateAvailable && (!expectedCommit || expectedCommit === commit)) {
+      markUpdatePending(id, commit);
+    } else if (expectedCommit === "") {
+      canonicalUpdatePending.set(id, commit);
     }
   }
 
@@ -258,6 +262,7 @@ function useVibe64SessionRepositoryStatusRegistry({
     sessionSourceOperationsSuspended(sessionId) === true
   )));
   const canonicalChecks = new Map();
+  const canonicalCheckedAt = new Map();
   const canonicalAccessRevisions = new Map();
   const forcedCanonicalFollowups = new Set();
   let disposed = false;
@@ -303,6 +308,21 @@ function useVibe64SessionRepositoryStatusRegistry({
     queue.enqueue(ids, { force });
   }
 
+  function observeCanonicalCheck(sessionId, result) {
+    if (forcedCanonicalFollowups.has(sessionId)) {
+      return;
+    }
+    const checkedAt = String(result.checkedAt || "");
+    if (checkedAt && checkedAt <= (canonicalCheckedAt.get(sessionId) || "")) {
+      return;
+    }
+    if (checkedAt) {
+      canonicalCheckedAt.set(sessionId, checkedAt);
+    }
+    queue.confirmCanonical(sessionId, result);
+    inspectVisible({ force: true, includeSelected: true, sessionId });
+  }
+
   async function checkCanonical(sessionId = "", { force = false } = {}) {
     const id = String(sessionId || "").trim();
     if (disposed || !id || !apiPath.value || sourceOperationsSuspended(id)) {
@@ -340,8 +360,7 @@ function useVibe64SessionRepositoryStatusRegistry({
           result?.message || result?.error || "Repository update status is unavailable."
         ));
       }
-      queue.confirmCanonical(id, result.canonicalCommit);
-      inspectVisible({ force: true, includeSelected: true, sessionId: id });
+      observeCanonicalCheck(id, result);
       return result;
     }).catch((error) => {
       if (requestIsCurrent()) {
@@ -369,6 +388,9 @@ function useVibe64SessionRepositoryStatusRegistry({
 
   watch(() => [apiPath.value, selectedId.value, ...visibleSessionIds.value], () => {
     queue.removeExcept(visibleSessionIds.value);
+    for (const id of canonicalCheckedAt.keys()) {
+      if (!visibleSessionIds.value.includes(id)) canonicalCheckedAt.delete(id);
+    }
     inspectVisible();
     void checkCanonical(selectedId.value);
   }, { immediate: true });
@@ -408,6 +430,10 @@ function useVibe64SessionRepositoryStatusRegistry({
     onEvent: ({ payload = {} } = {}) => {
       const sessionId = repositoryStatusSessionId(payload);
       if (sourceOperationsSuspended(sessionId)) {
+        return;
+      }
+      if (payload.reason === "session-repository-checked") {
+        observeCanonicalCheck(sessionId, payload.repositoryUpdateCheck);
         return;
       }
       inspectVisible({
@@ -471,6 +497,7 @@ function useVibe64SessionRepositoryStatusRegistry({
       window.clearInterval(canonicalInterval);
     }
     canonicalChecks.clear();
+    canonicalCheckedAt.clear();
     canonicalAccessRevisions.clear();
     forcedCanonicalFollowups.clear();
     queue.dispose();

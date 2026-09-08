@@ -202,6 +202,9 @@ describe("useVibe64SessionPanel", () => {
       state: "update_available"
     });
     expect(sessionRepositoryWorkState({
+      loading: false, unsaved: null, updateAvailable: true, updateStatusPending: true
+    })).toEqual({ checkedAt: "", state: "update_available", updateStatusPending: true });
+    expect(sessionRepositoryWorkState({
       operation: { status: "running" },
       unsaved: true
     }).state).toBe("saving");

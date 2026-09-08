@@ -7,6 +7,8 @@ People can open or create a project, work in isolated sessions, and have a
 direct conversation with the agent while seeing the source, changes, running
 application, environment, and the system's explained structure in one place.
 Each session keeps valuable work recoverable and separate from unrelated work.
+Selecting a session shows incoming saved work as soon as its version check
+confirms it, while the file-change details continue loading in the background.
 The chat header gives three session tabs room to show their labels, hides the
 new-session plus when all three slots are occupied, and groups Save beside the
 session actions.

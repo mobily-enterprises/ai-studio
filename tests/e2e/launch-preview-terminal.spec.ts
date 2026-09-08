@@ -79,6 +79,82 @@ for (const width of [390, 1440]) {
 }
 
 for (const width of [390, 1440]) {
+  for (const first of ["HTTP", "realtime"]) {
+    test(`@rebase-discovery ${first} shows Rebase before work inspection at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await mockLaunchTerminalSocket(page);
+      const sessions = ["Alpha", "Beta", "Gamma"].map((sessionName, index) => sessionPayload({
+        sessionId: index ? `session-${sessionName}` : SESSION_ID, sessionName
+      }));
+      const targetId = sessions[1].sessionId;
+      await mockLaunchSession(page, {
+        assistantAccess: PERSONAL_ASSISTANT_ACCESS, session: sessions[0], sessionList: sessions
+      });
+      const checkGate = Promise.withResolvers<void>();
+      const workGate = Promise.withResolvers<void>();
+      const confirmed = {
+        ok: true, canonicalCommit: "new-version", checkedAt: "2026-09-08T10:00:00.000Z", updateAvailable: true
+      };
+      let targetChecks = 0;
+      let targetWorkReads = 0;
+      let workFinished = false;
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.route("**/sessions/*/work", async (route) => {
+        const target = route.request().url().includes(`/${targetId}/`);
+        if (target) { targetWorkReads += 1; await workGate.promise; workFinished = true; }
+        await fulfillJson(route, {
+          ok: true, canonicalCommit: target ? "new-version" : "old-version",
+          unsaved: true, changedPaths: ["app.js"], updateAvailable: target
+        });
+      });
+      await page.route("**/sessions/*/updates/check", async (route) => {
+        if (route.request().url().includes(`/${targetId}/`)) {
+          targetChecks += 1;
+          await checkGate.promise;
+          await fulfillJson(route, confirmed);
+        } else {
+          await fulfillJson(route, { ok: true, canonicalCommit: "old-version", updateAvailable: false });
+        }
+      });
+      try {
+        await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+        await page.locator(`[data-vibe64-session-id='${targetId}']:visible`).click();
+        await expect.poll(() => targetChecks).toBe(1);
+        const chat = page.locator(".studio-autopilot:visible");
+        const composer = chat.locator("textarea").last();
+        await composer.fill("Keep this draft while checking for updates.");
+        await composer.focus();
+        const notify = () => publishChatSessionChange(page, {
+          reason: "session-repository-checked", sessionId: targetId, repositoryUpdateCheck: confirmed
+        });
+        if (first === "realtime") await notify();
+        else checkGate.resolve();
+        const update = chat.getByRole("button", { name: "Update selected session (rebase)", exact: true });
+        await expect(update).toBeEnabled({ timeout: 1500 });
+        expect(workFinished).toBe(false);
+        await expect(composer).toHaveValue("Keep this draft while checking for updates.");
+        await expect(composer).toBeFocused();
+        const reads = targetWorkReads;
+        if (first === "realtime") checkGate.resolve();
+        else await notify();
+        await expect(update).toBeEnabled();
+        await page.screenshot({ path: testInfo.outputPath("rebase-before-work.png"), animations: "disabled" });
+        expect(targetWorkReads).toBe(reads);
+        workGate.resolve();
+        await expect.poll(() => workFinished).toBe(true);
+        await expect(update).toBeEnabled();
+        await expect(page.getByText("Attention required", { exact: true })).toHaveCount(0);
+        expect(errors).toEqual([]);
+      } finally {
+        checkGate.resolve();
+        workGate.resolve();
+      }
+    });
+  }
+}
+
+for (const width of [390, 1440]) {
   test(`@save-realtime sibling tabs and header show Update before rechecking finishes at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await mockLaunchTerminalSocket(page);
