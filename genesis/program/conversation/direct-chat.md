@@ -86,8 +86,18 @@ reloads that shared query once; a provider search or later page remains a
 separate request. Applying a selection still uses the provider's current
 catalogue validation.
 
-Assistant verification waits up to ten seconds for a competing assistant
-operation to release its lock. The browser coalesces checks for the same
+Assistant verification observes an established provider connection without
+taking the session's agent-write lock or rebuilding its command environment.
+The session-agent manager shares overlapping checks after authorizing each
+caller. A missing, unloaded, or disconnected provider session goes through its
+provider controller's preparation path, which waits up to ten seconds for the
+agent-write lock. Attachment uploads retain that lock so renewal cannot freeze
+and clean up a session while an upload is writing. Provider checks discard late
+responses when their session or connection has closed or changed. Codex helper
+ownership restoration belongs to startup reconciliation and helper operations,
+not main-conversation readiness.
+
+The browser coalesces checks for the same
 connection and retries failures after one second, backing off to thirty seconds.
 Session detail reads have a twenty-second deadline and honor query cancellation,
 so a hung read cannot trap later recovery attempts. Each complete check has a

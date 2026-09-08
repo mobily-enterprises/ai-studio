@@ -25,6 +25,9 @@ Provider failures reach the conversation even when no assistant answer is create
 Confirmed Stop releases chat controls without requiring a final provider message.
 Assistant status recovers automatically after a failed connection check, without
 requiring a page reload or interrupting the assistant's work.
+Routine checks of an established assistant connection leave attachment uploads
+available. Starting or restoring an assistant still respects session renewal
+and cleanup.
 People can explore a project's database through a readable relationship diagram,
 starting with its keys and expanding detail when needed. Large diagrams load
 without blocking typing or navigation while their connections are calculated.

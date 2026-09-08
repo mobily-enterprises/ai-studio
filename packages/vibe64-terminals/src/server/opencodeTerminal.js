@@ -3,6 +3,8 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
+import { runVibe64AgentWriteExclusive } from "@local/vibe64-runtime/server/agentWriteLock";
+import { sessionIsClosing } from "@local/vibe64-runtime/server/sessionLifecycle";
 
 import {
   codexAppServerRuntimeBaseDir,
@@ -2407,8 +2409,85 @@ function createOpenCodeTerminalController({
       };
     },
     async ensureSession(sessionId, options = {}) {
-      const context = await contextFor(sessionId, options);
-      const target = await ensureUpstreamSession(context, options);
+      let context = await contextFor(sessionId, { ...options, session: null });
+      const admissionFailure = terminalNamespaceAdmissionFailure(opencodeTerminalNamespace(sessionId));
+      if (admissionFailure) {
+        return admissionFailure;
+      }
+      let target = processes.get(context.key);
+      const connection = requireOpenCodeConnection(await resolveConnection({
+        engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+        modelProviderId: context.selection.modelProviderId,
+        sessionId,
+        vibe64User: options.vibe64User || null
+      }), context.selection.modelProviderId);
+      let ready = false;
+      let unhealthyProcess = null;
+      let missingUpstream = false;
+      if (
+        target?.upstream &&
+        sameOpenCodeSelection(target.upstreamSelection, context.selection) &&
+        target.workdir === context.workdir &&
+        text(target.selection?.catalogRevision) === text(context.selection.catalogRevision) &&
+        target.connectionFingerprint === connection.fingerprint &&
+        target.canonicalUrl === connection.canonicalUrl &&
+        target.endpointCode === connection.endpointCode
+      ) {
+        const observedProcess = sharedProcess;
+        const observedServer = target.server;
+        let healthy = false;
+        try {
+          await target.server.client.health({ signal: AbortSignal.timeout(1_000) });
+          healthy = true;
+          ready = Boolean(await target.server.client.readSession(target.upstreamSessionId));
+        } catch (error) {
+          if (healthy && error?.statusCode !== 404) {
+            throw error;
+          }
+          if (!healthy) {
+            unhealthyProcess = observedProcess;
+          }
+        }
+        context = await contextFor(sessionId, { ...options, session: null });
+        if (
+          closed ||
+          processes.get(context.key) !== target ||
+          sessionIsClosing(context.session) ||
+          context.session.status === "archived" ||
+          target.abortController.signal.aborted ||
+          target.server !== observedServer ||
+          target.workdir !== context.workdir ||
+          !sameOpenCodeSelection(target.upstreamSelection, context.selection) ||
+          text(target.selection?.catalogRevision) !== text(context.selection.catalogRevision)
+        ) {
+          throw openCodeError("vibe64_agent_session_changed",
+            "The assistant session changed while its connection was being checked.", {}, 409);
+        }
+        missingUpstream = healthy && !ready;
+      }
+      if (!ready) {
+        const { value: prepared } = await runVibe64AgentWriteExclusive(context.runtime, sessionId, async () => {
+          context = await contextFor(sessionId, { ...options, session: null });
+          const failure = terminalNamespaceAdmissionFailure(opencodeTerminalNamespace(sessionId));
+          if (failure) {
+            return failure;
+          }
+          if (closed || sessionIsClosing(context.session) || context.session.status === "archived") {
+            throw openCodeError("vibe64_session_closing", "This session cannot prepare its assistant now.", {}, 409);
+          }
+          if (unhealthyProcess && sharedProcess === unhealthyProcess) {
+            await stopSharedProcess("opencode-health-check-failed");
+          }
+          if (missingUpstream && processes.get(context.key) === target) {
+            target.upstream = null;
+          }
+          return ensureUpstreamSession(context, options);
+        }, { operation: "prepare-agent-session", waitMs: 10_000 });
+        if (prepared?.ok === false) {
+          return prepared;
+        }
+        target = prepared;
+      }
       return {
         ok: true,
         thread: { id: target.upstreamSessionId },

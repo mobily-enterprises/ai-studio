@@ -45,6 +45,7 @@ async function controllerHarness({
   assistantResponses = [],
   assistantError = null,
   beforeMessages = null,
+  beforeReadSession = null,
   catalogProviders = providerResult,
   commandEnvironmentGate = null,
   gitActorFailure = null,
@@ -303,6 +304,7 @@ async function controllerHarness({
       },
       async readSession(id) {
         readSessionCalls += 1;
+        await beforeReadSession?.(id);
         if (!upstreamSessions.has(id)) {
           throw Object.assign(new Error("missing"), { statusCode: 404 });
         }

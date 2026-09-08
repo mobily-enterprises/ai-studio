@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { Readable } from "node:stream";
 
 import {
   createCodexTerminalController
@@ -1909,6 +1910,7 @@ async function withAgentMessageController(operation, { throughTerminalService = 
     },
     env: {
       VIBE64_AGENT_RUNTIME_DIR: path.join(temporaryRoot, "agent-runtimes"),
+      VIBE64_CODEX_ATTACHMENTS_ROOT: path.join(temporaryRoot, "attachments"),
       VIBE64_RUNTIME_NAMESPACE: "test",
       VIBE64_WORKSPACE: "test"
     },
@@ -1947,6 +1949,111 @@ async function withAgentMessageController(operation, { throughTerminalService = 
     await rm(temporaryRoot, { force: true, recursive: true });
   }
 }
+
+test("assistant verification shares a stalled status read while attachments remain usable", { timeout: 15_000 }, async () => {
+  await withAgentMessageController(async ({ captures, runtime, sessionId, terminalService }) => {
+    assert.equal((await terminalService.ensureAgentSession(sessionId)).ok, true);
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let reads = 0;
+    captures.provider.readThreadStatus = async () => {
+      reads += 1;
+      entered.resolve();
+      await release.promise;
+      return { status: "idle" };
+    };
+    captures.provider.ensureAvailable = async () => { throw new Error("Verification repeated provider preparation"); };
+    captures.provider.resumeThread = async () => { throw new Error("Verification resumed an already subscribed thread"); };
+    const first = terminalService.ensureAgentSession(sessionId);
+    await entered.promise;
+    const second = terminalService.ensureAgentSession(sessionId);
+    try {
+      const uploaded = await terminalService.uploadAgentAttachment(sessionId, {
+        fileName: "while-checking.txt",
+        stream: Readable.from(["Uploaded while the provider is stalled."])
+      });
+      assert.equal(uploaded.ok, true, JSON.stringify(uploaded));
+      assert.equal(await readFile(uploaded.path, "utf8"), "Uploaded while the provider is stalled.");
+      const exclusive = await runtime.store.runSessionExclusive(sessionId, "agent-write-mode", async () => true);
+      assert.equal(exclusive.acquired, true, "Verification held the source-write lock");
+      assert.equal(reads, 1, "Concurrent verification did not share the provider request");
+    } finally {
+      release.resolve();
+    }
+    const results = await Promise.all([first, second]);
+    assert.ok(results.every((result) => result.ok === true), JSON.stringify(results));
+    assert.equal(reads, 1);
+  }, { throughTerminalService: true });
+});
+
+test("a late assistant verification response cannot reattach a closed session", { timeout: 15_000 }, async () => {
+  await withAgentMessageController(async ({ captures, controller, sessionId }) => {
+    assert.equal((await controller.ensureThread(sessionId)).ok, true);
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let resumes = 0;
+    captures.provider.readThreadStatus = async () => {
+      entered.resolve();
+      await release.promise;
+      return { status: "idle" };
+    };
+    captures.provider.resumeThread = async () => { resumes += 1; };
+    const checking = controller.ensureThread(sessionId);
+    await entered.promise;
+    try {
+      await controller.closeAllForSession(sessionId);
+    } finally {
+      release.resolve();
+    }
+    const result = await checking;
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "vibe64_agent_session_changed");
+    assert.equal(resumes, 0);
+    assert.equal(captures.subscribers.size, 0);
+    assert.equal(captures.providerOptions.length, 1);
+  });
+});
+
+test("verification of an unloaded or missing Codex thread requires protected preparation", { timeout: 15_000 }, async () => {
+  await withAgentMessageController(async ({ captures, runtime, sessionId, terminalService }) => {
+    assert.equal((await terminalService.ensureAgentSession(sessionId)).ok, true);
+    captures.provider.readThreadStatus = async () => ({ status: { type: "notLoaded" } });
+    captures.provider.resumeThread = async () => { throw new Error("Verification resumed a thread without write admission"); };
+    const attempts = [];
+    runtime.store.runSessionExclusive = async (_id, lock, _operation, options) => {
+      attempts.push({ lock, ...options });
+      return { acquired: false };
+    };
+    const unloaded = await terminalService.ensureAgentSession(sessionId);
+    assert.equal(unloaded.code, "vibe64_agent_write_mode_busy");
+    captures.provider.readThreadStatus = async (threadId) => {
+      throw Object.assign(new Error(`thread not loaded: ${threadId}`), { code: -32600, method: "thread/read" });
+    };
+    const missing = await terminalService.ensureAgentSession(sessionId);
+    assert.equal(missing.code, "vibe64_agent_write_mode_busy");
+    assert.deepEqual(attempts, Array(2).fill({ lock: "agent-write-mode", operation: "prepare-agent-session", waitMs: 10_000 }));
+    captures.provider.readThreadStatus = async () => {
+      throw Object.assign(new Error("invalid thread/read configuration"), { code: -32600, method: "thread/read" });
+    };
+    const invalid = await terminalService.ensureAgentSession(sessionId);
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error, "invalid thread/read configuration");
+    assert.equal(attempts.length, 2, "An unrelated provider error triggered preparation");
+  }, { throughTerminalService: true });
+});
+
+test("assistant preparation still takes the session write lock", { timeout: 15_000 }, async () => {
+  await withAgentMessageController(async ({ runtime, sessionId, terminalService }) => {
+    const attempts = [];
+    runtime.store.runSessionExclusive = async (_id, lock, _operation, options) => {
+      attempts.push({ lock, ...options });
+      return { acquired: false };
+    };
+    const result = await terminalService.ensureAgentSession(sessionId);
+    assert.equal(result.code, "vibe64_agent_write_mode_busy");
+    assert.deepEqual(attempts, [{ lock: "agent-write-mode", operation: "prepare-agent-session", waitMs: 10_000 }]);
+  }, { throughTerminalService: true });
+});
 
 const RENEWAL_SOURCE = Object.freeze({
   authority: "github",

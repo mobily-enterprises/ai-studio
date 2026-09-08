@@ -748,6 +748,91 @@ test("OpenCode renders explicit Deslop through Genesis and leaves later follow-u
   assert.match(harness.promptCalls[2].input.prompt.text, /Explain one cleanup choice\.$/u);
 });
 
+test("OpenCode verification observes a ready session without write admission or environment preparation", { timeout: 10_000 }, async (t) => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  let checking = false;
+  const harness = await controllerHarness({
+    withCommandBoundary: true,
+    async beforeReadSession() {
+      if (checking) {
+        entered.resolve();
+        await release.promise;
+      }
+    }
+  });
+  t.after(async () => {
+    release.resolve();
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const first = await harness.controller.ensureSession("session-1");
+  const preparations = harness.commandEnvironmentCalls.length;
+  harness.runtime.store.runSessionExclusive = async () => {
+    throw new Error("Verification requested write admission");
+  };
+  checking = true;
+  const pending = harness.controller.ensureSession("session-1");
+  await entered.promise;
+  assert.equal(harness.commandEnvironmentCalls.length, preparations);
+  release.resolve();
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.thread.id, first.thread.id);
+  assert.equal(harness.processStarts.length, 1);
+  assert.equal(harness.commandEnvironmentCalls.length, preparations);
+  assert.equal(harness.switchedModels.length, 0);
+});
+
+test("OpenCode discards a late verification response after session closure", { timeout: 10_000 }, async (t) => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  let checking = false;
+  const harness = await controllerHarness({
+    async beforeReadSession() {
+      if (checking) {
+        entered.resolve();
+        await release.promise;
+      }
+    }
+  });
+  t.after(async () => {
+    release.resolve();
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.ensureSession("session-1");
+  checking = true;
+  const pending = harness.controller.ensureSession("session-1");
+  const rejected = assert.rejects(pending, { code: "vibe64_agent_session_changed" });
+  await entered.promise;
+  await harness.controller.closeAllForSession("session-1");
+  release.resolve();
+  await rejected;
+  assert.equal(harness.processStarts.length, 1);
+  assert.equal(harness.processStops.length, 1);
+});
+
+test("OpenCode recovery waits for write admission before replacing an unhealthy server", async (t) => {
+  const harness = await controllerHarness();
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.ensureSession("session-1");
+  const attempts = [];
+  harness.runtime.store.runSessionExclusive = async (_id, lock, _operation, options) => {
+    attempts.push({ lock, ...options });
+    return { acquired: false };
+  };
+  harness.failHealth();
+  const result = await harness.controller.ensureSession("session-1");
+  assert.equal(result.code, "vibe64_agent_write_mode_busy");
+  assert.equal(harness.processStarts.length, 1);
+  assert.equal(harness.processStops.length, 0);
+  assert.deepEqual(attempts, [{ lock: "agent-write-mode", operation: "prepare-agent-session", waitMs: 10_000 }]);
+});
+
 test("OpenCode rechecks its native session after recovering an unhealthy server", async (t) => {
   const harness = await controllerHarness();
   t.after(async () => {

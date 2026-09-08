@@ -263,6 +263,43 @@ test("session agent manager rejects unavailable providers", async () => {
   );
 });
 
+test("shared assistant verification authorizes every caller before joining provider work", async () => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const callers = [];
+  let checks = 0;
+  const manager = createSessionAgentManager({
+    async readAssistantAccess(context) {
+      callers.push(context.vibe64User.username);
+      return { ownerOnly: true };
+    },
+    providers: [{
+      id: "codex",
+      transportId: "codex_app_server",
+      async ensureSession() {
+        checks += 1;
+        entered.resolve();
+        await release.promise;
+        return { ok: true };
+      }
+    }]
+  });
+  const owner = { vibe64User: { role: "owner", username: "owner" } };
+  const first = manager.ensureSession("session-1", owner);
+  await entered.promise;
+  const second = manager.ensureSession("session-1", owner);
+  try {
+    await assert.rejects(manager.ensureSession("session-1", {
+      vibe64User: { role: "user", username: "member" }
+    }), { code: "vibe64_assistant_owner_required" });
+  } finally {
+    release.resolve();
+  }
+  assert.ok((await Promise.all([first, second])).every((result) => result.ok));
+  assert.equal(checks, 1);
+  assert.deepEqual(callers, ["owner", "owner", "member"]);
+});
+
 test("session agent manager keeps one provider bound to a session", async () => {
   const adapter = (id) => ({
     id,

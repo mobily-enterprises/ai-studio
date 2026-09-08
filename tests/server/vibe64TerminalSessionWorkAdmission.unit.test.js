@@ -307,7 +307,7 @@ test("foreground chat waits for workspace setup admission instead of failing", a
   ]);
 });
 
-test("assistant reconciliation waits for overlapping admission instead of reporting unknown status", async (t) => {
+test("assistant preparation waits for overlapping admission instead of reporting unknown status", async (t) => {
   const lock = agentWriteLockHarness({
     holdFirst: true,
     secondValue: { ok: true }
@@ -326,7 +326,7 @@ test("assistant reconciliation waits for overlapping admission instead of report
     lock.releaseFirst();
     await preparing;
   }
-  assert.deepEqual(await checking, { ok: true });
+  assert.equal((await checking).ok, true);
   assert.equal(lock.attempts[1].waitMs, 10_000);
 });
 
@@ -346,12 +346,15 @@ test("assistant reconciliation retains structured failure diagnostics", async (t
 
   const failure = Object.assign(new Error("Provider connection failed"), { code: "provider_unavailable" });
   runtime.store.runSessionExclusive = async () => { throw failure; };
-  await assert.rejects(() => service.ensureAgentSession(session.sessionId), failure);
+  const failed = await service.ensureAgentSession(session.sessionId);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, failure.code);
+  assert.equal(failed.error, failure.message);
   assert.equal(warnings[1].code, failure.code);
   assert.equal(warnings[1].event, "vibe64.agent_session.reconciliation_failed");
 });
 
-test("rebase, assistant verification and temporary repair identify their lock requests", async (t) => {
+test("rebase, assistant preparation and temporary repair identify their lock requests", async (t) => {
   const lock = agentWriteLockHarness();
   const { service, runtime, session } = await terminalServiceFixture(t, lock);
   const operations = [];
@@ -364,7 +367,7 @@ test("rebase, assistant verification and temporary repair identify their lock re
   });
   assert.equal((await service.ensureAgentSession(session.sessionId)).code, "vibe64_agent_write_mode_busy");
   assert.equal((await service.streamDetachedAgentChatTurn(session.sessionId)).code, "vibe64_agent_write_mode_busy");
-  assert.deepEqual(operations, ["update-session-work", "ensure-agent-session", "stream-temporary-chat"]);
+  assert.deepEqual(operations, ["update-session-work", "prepare-agent-session", "stream-temporary-chat"]);
 });
 
 test("workspace setup reuses an already-held session agent-write lock", async (t) => {

@@ -2239,9 +2239,8 @@ function createService({
       }, "Vibe64 assistant status could not be verified.");
 
       try {
-        const result = await runMainAgentWrite(sessionId, options, (context) => (
-          sessionAgent.ensureSession(sessionId, context)
-        ), { operation: "ensure-agent-session", waitMs: 10_000 });
+        const context = await assistantSessionOptions(sessionId, options);
+        const result = await sessionAgent.ensureSession(sessionId, context);
         if (result?.ok === false) {
           logFailure({
             code: result.code,

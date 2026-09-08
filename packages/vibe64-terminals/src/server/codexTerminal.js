@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
+import { runVibe64AgentWriteExclusive } from "@local/vibe64-runtime/server/agentWriteLock";
 
 import {
   beginTerminalNamespaceOperation,
@@ -3766,7 +3767,9 @@ function createCodexTerminalController({
     scheduleCodexAppServerWellbeing(normalizedProviderKey);
   }
 
-  async function maintainCodexAppServerManagedConnection(providerKey = "") {
+  async function maintainCodexAppServerManagedConnection(providerKey = "", {
+    reconnect = true
+  } = {}) {
     assertCodexAppServerControllerOpen();
     const normalizedProviderKey = normalizeText(providerKey);
     const managed = codexAppServerManagedSessions.get(normalizedProviderKey);
@@ -3777,24 +3780,61 @@ function createCodexTerminalController({
       throw new Error("Codex app-server managed connection is incomplete.");
     }
 
-    await acquireCodexAppServerRuntime({
-      operation: () => provider.ensureAvailable?.(),
-      provider,
-      providerKey: normalizedProviderKey,
-      providerOptions: managed.providerOptions || {}
-    });
+    if (reconnect) {
+      await acquireCodexAppServerRuntime({
+        operation: () => provider.ensureAvailable?.(),
+        provider,
+        providerKey: normalizedProviderKey,
+        providerOptions: managed.providerOptions || {}
+      });
+    }
     if (!threadId) {
       return {
         ok: true,
         status: "available"
       };
     }
-    const providerThread = await codexAppServerReadThreadStatus(provider, threadId);
+    let providerThread;
+    try {
+      providerThread = await codexAppServerReadThreadStatus(provider, threadId);
+    } catch (error) {
+      if (reconnect || !codexAppServerThreadIsMissing(error, threadId)) {
+        throw error;
+      }
+      providerThread = { status: "notLoaded" };
+    }
+    // A status request may outlive closure or renewal. Never attach its late
+    // result to a removed/replaced session or reconnect a stopped provider.
+    assertCodexAppServerControllerOpen();
+    const admissionError = codexAppServerAdmissionError(sessionId);
+    if (admissionError) {
+      throw admissionError;
+    }
+    const runtime = await createRuntimeForSession();
+    const session = await runtime.getSession(sessionId, { inspectSource: false });
+    if (
+      sessionIsClosing(session) || session.status === VIBE64_SESSION_STATUS.ARCHIVED ||
+      codexAppServerManagedSessions.get(normalizedProviderKey) !== managed ||
+      codexAppServerProviders.get(normalizedProviderKey) !== provider ||
+      codexThreadIdForWorkdir(session, managed.workdir) !== threadId
+    ) {
+      throw Object.assign(new Error("The assistant session changed while its connection was being checked."), {
+        code: "vibe64_agent_session_changed",
+        retryable: true
+      });
+    }
+    const nativeStatus = codexAppServerThreadRawValue(providerThread).status;
     const subscriptionKey = codexAppServerEventSubscriptionKey(
       normalizedProviderKey,
       threadId
     );
-    if (!codexAppServerEventSubscriptionIsCurrent(subscriptionKey, provider)) {
+    const subscriptionIsCurrent = codexAppServerEventSubscriptionIsCurrent(subscriptionKey, provider);
+    if (!reconnect && (
+      nativeStatus === "notLoaded" || nativeStatus?.type === "notLoaded" || !subscriptionIsCurrent
+    )) {
+      return { ok: true, requiresPreparation: true };
+    }
+    if (!subscriptionIsCurrent) {
       subscribeCodexAppServerEvents(
         sessionId,
         provider,
@@ -3814,9 +3854,7 @@ function createCodexTerminalController({
       );
     }
 
-    const store = await createStoreForSession(sessionId);
-    const run = await readCodexAppServerAgentRunForSession(store, sessionId);
-    const trackedTurn = codexAppServerTurnStateFromAgentRun(run || {});
+    const trackedTurn = codexAppServerTurnState(session);
     const providerStatus = codexAppServerThreadStatus(providerThread);
     const providerTurnId = codexAppServerThreadTurnId(providerThread);
     const providerIsActive = codexAppServerTurnStatusIsActive(providerStatus);
@@ -8011,10 +8049,6 @@ function createCodexTerminalController({
       toolHomeSource,
       workdir
     } = context;
-    assertCodexAppServerEconomyThreadsRestored(
-      await restoreCodexAppServerEconomyThreads({ runtime, session })
-    );
-
     let healthAttempt = null;
     try {
       const prepared = await withCodexSessionStartupGate({
@@ -13108,7 +13142,46 @@ function createCodexTerminalController({
         if (!codexAppServerPromptDeliveryEnabled) {
           return writeCodexAppServerControlDisabledFailure(sessionId);
         }
-        return ensureCodexAppServerThreadReady(sessionId);
+        const runtime = await createRuntimeForSession();
+        const session = await runtime.getSession(sessionId, { inspectSource: false });
+        const workdir = terminalWorktreePath(session);
+        const threadId = codexThreadIdForWorkdir(session, workdir);
+        if (
+          threadId &&
+          !sessionIsClosing(session) &&
+          session.status !== VIBE64_SESSION_STATUS.ARCHIVED &&
+          codexAppServerTurnState(session).state !== "starting"
+        ) {
+          for (const [providerKey, managed] of codexAppServerManagedSessions) {
+            const provider = codexAppServerProviders.get(providerKey);
+            if (
+              managed.sessionId !== sessionId ||
+              managed.workdir !== workdir ||
+              managed.threadId !== threadId ||
+              provider?.isAvailable?.() !== true
+            ) {
+              continue;
+            }
+            const observed = await maintainCodexAppServerManagedConnection(providerKey, { reconnect: false });
+            if (observed.requiresPreparation) {
+              break;
+            }
+            await writeCodexAppServerReady(runtime, sessionId, "");
+            return withCodexState({
+              ok: true,
+              codexAppServerThreadReady: true,
+              codexIdentityReady: true,
+              codexThreadReady: true,
+              codexThreadId: threadId,
+              codexSessionBriefingDelivered: false,
+              terminalSessionId: ""
+            }, await runtime.getSession(sessionId, { inspectSource: false }));
+          }
+        }
+        const exclusive = await runVibe64AgentWriteExclusive(runtime, sessionId, () => (
+          ensureCodexAppServerThreadReady(sessionId)
+        ), { operation: "prepare-agent-session", waitMs: 10_000 });
+        return exclusive.value;
       });
     },
 
