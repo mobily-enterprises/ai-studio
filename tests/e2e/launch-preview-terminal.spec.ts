@@ -145,6 +145,77 @@ for (const width of [390, 1440]) {
   });
 }
 
+test.describe("temporary workspace lifetime", () => {
+  for (const pending of ["creation", "poll"]) {
+    test(`@temporary-unmount archiving a session retires pending ${pending}`, async ({ page }, testInfo) => {
+      await mockLaunchTerminalSocket(page);
+      const requests: TemporaryAiRecoveryRequests = { mainMessages: [], temporaryStarts: [], temporaryTurns: [] };
+      await mockLaunchSession(page, {
+        assistantAccess: PERSONAL_ASSISTANT_ACCESS,
+        temporaryAiRecoveryRequests: requests
+      });
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      let held = false;
+      let reads = 0;
+      let deletes = 0;
+      let updates = 0;
+      const gate = Promise.withResolvers<void>();
+      await page.route("**/sessions/*/work", (route) => fulfillJson(route, {
+        ok: true, unsaved: true, updateAvailable: true,
+        updateOperation: {
+          operationId: "failed-update", status: "failed", code: "vibe64_session_update_conflict",
+          error: "Document conflicts with the saved version."
+        }
+      }));
+      await page.route("**/temporary-conversations", async (route) => {
+        if (pending !== "creation") { await route.fallback(); return; }
+        held = true;
+        await gate.promise;
+        await route.fallback();
+      });
+      await page.route("**/temporary-conversations/temporary-preview-identity", async (route) => {
+        if (route.request().method() === "DELETE") {
+          deletes += 1;
+          await fulfillJson(route, { ok: true });
+          return;
+        }
+        reads += 1;
+        if (pending === "poll" && reads === 1) {
+          held = true;
+          await gate.promise;
+        }
+        await fulfillJson(route, { ok: true, status: "inProgress" });
+      });
+      await page.route("**/sessions/*/updates/apply", (route) => {
+        updates += 1;
+        return fulfillJson(route, { ok: true });
+      });
+      try {
+        await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+        await page.getByRole("button", { name: "Fix it with AI", exact: true }).click();
+        await expect.poll(() => held).toBe(true);
+        await expect(page.getByRole("region", { name: "Temporary AI workspace" })).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath("repair-before-leaving.png") });
+        await page.getByRole("button", { name: "Archive session", exact: true }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "Archive session", exact: true }).click();
+        await expect(page.getByRole("region", { name: "Temporary AI workspace" })).toHaveCount(0);
+        gate.resolve();
+        await expect.poll(() => deletes).toBe(1);
+        // Observe more than two 650ms poll intervals after the held reply settles.
+        await page.waitForTimeout(1600);
+        expect(reads).toBe(pending === "poll" ? 1 : 0);
+        expect(requests.temporaryTurns).toHaveLength(pending === "poll" ? 1 : 0);
+        expect(updates).toBe(0);
+        expect(errors).toEqual([]);
+        await page.screenshot({ path: testInfo.outputPath("session-archived-no-task-work.png") });
+      } finally {
+        gate.resolve();
+      }
+    });
+  }
+});
+
 for (const width of [390, 1440]) {
   test(`@temporary-repair progress stays in the transcript and Update verifies the repair at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });

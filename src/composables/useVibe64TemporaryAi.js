@@ -69,6 +69,7 @@ function useVibe64TemporaryAi({
   const pollTimers = new Map();
   const closingTaskIds = new Set();
   const stoppingTaskIds = new Set();
+  let disposed = false;
   let nextTaskNumber = 1;
 
   const activeTask = computed(() => (
@@ -298,24 +299,6 @@ function useVibe64TemporaryAi({
     return response;
   }
 
-  async function ensureConversation(task = {}) {
-    if (task.conversationId) {
-      return task.conversationId;
-    }
-    const response = await request(
-      vibe64TemporaryConversationsPath(currentSessionsApiPath(), currentSessionId()),
-      {
-        body: {
-          agentSettings: task.agentSettings,
-          policy: task.policy
-        },
-        method: "POST"
-      }
-    );
-    updateTask(task.id, { conversationId: response.conversationId });
-    return response.conversationId;
-  }
-
   function stopPolling(taskId = "") {
     clearTimeout(pollTimers.get(taskId));
     pollTimers.delete(taskId);
@@ -326,7 +309,7 @@ function useVibe64TemporaryAi({
     const task = tasks.value.find((candidate) => candidate.id === taskId);
     const canApplyResponse = () => {
       const current = tasks.value.find((candidate) => candidate.id === taskId);
-      return current?.busy && current.runId === task.runId &&
+      return !disposed && current?.busy && current.runId === task.runId &&
         !closingTaskIds.has(taskId) && !stoppingTaskIds.has(taskId);
     };
     if (!task?.conversationId || !task.runId || !canApplyResponse()) {
@@ -383,7 +366,7 @@ function useVibe64TemporaryAi({
 
   async function send(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task || task.busy || task.recoveryOutcome === "checking") {
+    if (disposed || !task || task.busy || task.recoveryOutcome === "checking") {
       return false;
     }
     const payload = chatMessagePayload(task.draft, task.attachments);
@@ -402,12 +385,28 @@ function useVibe64TemporaryAi({
       status: "starting"
     });
     let conversationId = task.conversationId;
+    const apiPath = currentSessionsApiPath();
+    const ownerSessionId = task.sessionId;
     try {
-      conversationId = await ensureConversation(task);
+      if (!conversationId) {
+        const created = await request(vibe64TemporaryConversationsPath(apiPath, ownerSessionId), {
+          body: { agentSettings: task.agentSettings, policy: task.policy },
+          method: "POST"
+        });
+        conversationId = created.conversationId;
+        if (disposed) {
+          // Unmount could not delete a conversation whose creation was still pending.
+          await request(vibe64TemporaryConversationPath(apiPath, ownerSessionId, conversationId), {
+            method: "DELETE"
+          });
+          return false;
+        }
+        updateTask(task.id, { conversationId });
+      }
       const response = await request(
         vibe64TemporaryConversationTurnsPath(
-          currentSessionsApiPath(),
-          currentSessionId(),
+          apiPath,
+          ownerSessionId,
           conversationId
         ),
         {
@@ -422,6 +421,7 @@ function useVibe64TemporaryAi({
           method: "POST"
         }
       );
+      if (disposed) return false;
       const messages = [
         ...task.messages,
         {
@@ -454,6 +454,7 @@ function useVibe64TemporaryAi({
       void pollTask(taskId);
       return true;
     } catch (error) {
+      if (disposed) return false;
       updateTask(taskId, {
         busy: false,
         conversationId: error?.conversationExpired === true ? "" : conversationId,
@@ -470,7 +471,7 @@ function useVibe64TemporaryAi({
 
   async function stopTask(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task?.busy || stoppingTaskIds.has(taskId)) {
+    if (disposed || !task?.busy || stoppingTaskIds.has(taskId)) {
       return false;
     }
     if (task.status === "starting" || !task.conversationId || !task.runId) {
@@ -490,6 +491,7 @@ function useVibe64TemporaryAi({
           method: "POST"
         }
       );
+      if (disposed) return false;
       updateTask(taskId, {
         busy: false,
         messages: temporaryAiTurnMessages(task.messages, task.runId, {
@@ -499,7 +501,9 @@ function useVibe64TemporaryAi({
       });
       return true;
     } catch (error) {
-      pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
+      if (!disposed) {
+        pollTimers.set(taskId, setTimeout(() => void pollTask(taskId), TEMPORARY_AI_POLL_INTERVAL_MS));
+      }
       throw error;
     } finally {
       stoppingTaskIds.delete(taskId);
@@ -508,7 +512,7 @@ function useVibe64TemporaryAi({
 
   async function closeTask(taskId = "") {
     const task = tasks.value.find((candidate) => candidate.id === taskId);
-    if (!task || closingTaskIds.has(taskId) || stoppingTaskIds.has(taskId)) {
+    if (disposed || !task || closingTaskIds.has(taskId) || stoppingTaskIds.has(taskId)) {
       return;
     }
     if (task.recoveryOutcome === "checking") {
@@ -520,6 +524,7 @@ function useVibe64TemporaryAi({
       if (task.busy) {
         await stopTask(taskId);
       }
+      if (disposed) return;
       if (task.conversationId) {
         await request(
           vibe64TemporaryConversationPath(
@@ -577,6 +582,7 @@ function useVibe64TemporaryAi({
 
   onMounted(() => window.addEventListener("beforeunload", cleanupOnPageExit));
   onBeforeUnmount(() => {
+    disposed = true;
     window.removeEventListener("beforeunload", cleanupOnPageExit);
     cleanupOnPageExit();
     for (const task of tasks.value) {
