@@ -146,7 +146,8 @@ describe("Vibe64 direct session view", () => {
     expect(temporaryAiFixAction).toContain("Fix it with AI");
     expect(component).toContain("<Vibe64TemporaryAiWorkspace");
     expect(component).toContain("temporaryAiWorkspace.value?.showWorkspace?.()");
-    expect(component).toContain("@select-session=\"activateRealSession\"");
+    // Switching sessions retains the temporary workspace; Main chat closes it.
+    expect(component).not.toContain("activateRealSession");
     expect(component).toContain("@select-main-chat=\"showMainChat\"");
     expect(component).toContain("@task-finished=\"finishTemporaryAiTask\"");
     expect(component).toContain("reportTaskRecovery");
