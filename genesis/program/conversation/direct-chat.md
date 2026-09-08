@@ -48,6 +48,8 @@ including follow-up guidance while a turn is active.
 - `src/components/studio/Vibe64CodexSession.vue`
 - `src/components/studio/Vibe64InteractiveTerminal.vue`
 - `src/components/studio/Vibe64OpenCodeSession.vue`
+- `src/components/studio/LongTextPreviewBlocks.vue`
+- `src/components/studio/LongTextInlineParts.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotPromptTextarea.vue`
 - `src/components/studio/vibe64-session/Vibe64AutopilotView.vue`
 - `src/components/studio/vibe64-session/Vibe64ConversationLog.vue`
@@ -68,6 +70,11 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+The shared Markdown renderer sizes table columns from their content, wraps
+prose at word boundaries, and preserves declared column alignment. Table cells
+override the inline renderer's arbitrary word breaking; long identifiers remain
+bounded. Wide tables scroll inside a labelled, keyboard-focusable container
+without widening the conversation. Headers and row separators use theme colors.
 OpenCode connects its turn event stream before submitting a new prompt, retaining
 failures raised before a native assistant message exists. An error event does
 not by itself prove execution stopped: native idle state or a completed response

@@ -25,6 +25,8 @@ prompt busy after that confirmation.
 Send and Steer clear submitted text immediately so people can write their next
 message while delivery is pending, with failed messages kept recoverable.
 An interruption failure stays visible without covering the composer or its retry controls.
+Markdown tables keep words readable and columns sized to their content. Wide
+tables scroll within the message on small screens, including with the keyboard.
 Provider failures reach the conversation even when no assistant answer is created.
 Confirmed Stop releases chat controls without requiring a final provider message.
 Assistant status recovers automatically after a failed connection check, without

@@ -39,6 +39,9 @@
       <div
         v-else-if="block.type === 'table'"
         class="studio-long-text-review__table-wrap"
+        role="region"
+        aria-label="Table"
+        tabindex="0"
       >
         <table class="studio-long-text-review__table">
           <thead>
@@ -236,36 +239,43 @@ h5.studio-long-text-review__heading {
 .studio-long-text-review__table-wrap {
   border: 1px solid rgba(var(--v-border-color), 0.28);
   border-radius: 8px;
+  inline-size: fit-content;
+  margin-block: 0.35rem;
   max-width: 100%;
   min-width: 0;
   overflow: auto;
 }
 
+.studio-long-text-review__table-wrap:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: -2px;
+}
+
 .studio-long-text-review__table {
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 0.8rem;
-  inline-size: 100%;
-  line-height: 1.34;
-  min-inline-size: min(38rem, 100%);
+  font-size: 0.88rem;
+  inline-size: auto;
+  line-height: 1.45;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .studio-long-text-review__table th,
 .studio-long-text-review__table td {
   border-bottom: 1px solid rgba(var(--v-border-color), 0.22);
-  min-width: 0;
-  padding: 0.42rem 0.55rem;
+  max-inline-size: 28rem;
+  padding: 0.55rem 0.75rem;
   text-align: left;
   vertical-align: top;
 }
 
 .studio-long-text-review__table th {
   background: rgba(var(--v-theme-surface-variant), 0.48);
-  color: rgba(var(--v-theme-on-surface), 0.72);
+  color: rgb(var(--v-theme-on-surface));
   font-weight: 760;
   position: sticky;
   top: 0;
-  white-space: nowrap;
   z-index: 1;
 }
 
@@ -273,8 +283,12 @@ h5.studio-long-text-review__heading {
   border-bottom: 0;
 }
 
-.studio-long-text-review__table td {
-  max-inline-size: min(34rem, 64vw);
+.studio-long-text-review__table :deep(span),
+.studio-long-text-review__table :deep(strong),
+.studio-long-text-review__table :deep(a),
+.studio-long-text-review__table :deep(code) {
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .studio-long-text-review__table-cell--right {
