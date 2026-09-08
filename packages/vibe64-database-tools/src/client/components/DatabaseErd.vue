@@ -392,8 +392,10 @@ async function restore(state, { remote = false } = {}) {
   nodes.value = buildNodes(state.nodes);
   try {
     if (!await refreshGraph({ reset: true })) return false;
-    if (!remote && !await updateViewport(state.viewport)) return false;
-    if (!remote) persistPositions();
+    if (!remote) {
+      if (!await updateViewport(state.viewport)) return false;
+      persistPositions();
+    }
     return true;
   } finally {
     // An older restore cannot unlock a newer restore or arrangement.
@@ -455,10 +457,11 @@ async function onNodeDragStop() {
     }).map((node) => [node.table, node]));
     const shared = pendingRemoteLayout;
     pendingRemoteLayout = null;
-    if (!await restore({ ...shared, nodes: shared.nodes.map((node) => {
+    const mergedNodes = shared.nodes.map((node) => {
       const position = moved.get(node.table);
       return position ? { ...node, x: position.x, y: position.y } : node;
-    }) }, { remote: true })) return;
+    });
+    if (!await restore({ ...shared, nodes: mergedNodes }, { remote: true })) return;
   }
   if (!await refreshGraph()) return;
   persistPositions();
