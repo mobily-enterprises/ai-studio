@@ -157,15 +157,20 @@ function useVibe64AssistantCatalog({
   });
 
   async function reload() {
-    await Promise.all([
-      overview.reload(),
-      ...(!value(configuredOnly) && normalizedText(engineId) === "opencode"
-        ? [providerPage.reload()]
-        : []),
-      ...(!value(configuredOnly) && normalizedText(modelProviderId)
-        ? [modelPage.reload()]
-        : [])
-    ]);
+    const requests = [overview.reload()];
+    if (!value(configuredOnly)) {
+      // Without a search or cursor, the provider page shares the overview query.
+      if (
+        normalizedText(engineId) === "opencode" &&
+        (normalizedText(providerSearch) || normalizedText(providerCursor))
+      ) {
+        requests.push(providerPage.reload());
+      }
+      if (normalizedText(modelProviderId)) {
+        requests.push(modelPage.reload());
+      }
+    }
+    await Promise.all(requests);
   }
 
   return {

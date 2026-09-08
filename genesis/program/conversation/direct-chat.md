@@ -81,8 +81,10 @@ other conversations sharing the provider process.
 The selected session's model catalogue loads in the background. Opening its
 menu refreshes choices while retaining already loaded controls; only a first
 load shows placeholders. Identical overview and provider-list queries share
-one cached request, including their connected-provider filter. Applying a
-selection still uses the provider's current catalogue validation.
+one cached request, including their connected-provider filter. Explicit refresh
+reloads that shared query once; a provider search or later page remains a
+separate request. Applying a selection still uses the provider's current
+catalogue validation.
 
 Assistant verification waits up to ten seconds for a competing assistant
 operation to release its lock. The browser coalesces checks for the same
@@ -269,7 +271,8 @@ assistant engine that owns its native history: Codex cannot be changed to
 OpenCode or vice versa. The explicitly opened chat selector may load a complete,
 compatible model choice within that fixed engine. It remains available for
 inspection during an active turn, but can apply a choice only between turns.
-Merely opening or creating a session does not load that catalogue. Distinct
+Creating a session does not load that catalogue. The mounted session selector
+preloads it separately from provider/thread preparation. Distinct
 OpenCode provider ids remain
 distinct choices, so separate routes or plans from one provider can coexist and
 be selected independently without becoming Codex. People can choose among
