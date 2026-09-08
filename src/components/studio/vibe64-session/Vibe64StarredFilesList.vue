@@ -1,10 +1,10 @@
 <template>
-  <div class="starred-files-list">
+  <div class="starred-files-list" :class="{ 'starred-files-list--compact': compact }">
     <v-alert v-if="bookmarks.error.value" density="compact" type="error" variant="tonal">
       {{ bookmarks.error.value }}
       <v-btn size="small" variant="text" @click="bookmarks.refresh">Retry</v-btn>
     </v-alert>
-    <v-skeleton-loader v-if="bookmarks.loading.value && !bookmarks.files.value.length" type="list-item-two-line@2" />
+    <v-skeleton-loader v-if="bookmarks.loading.value && !bookmarks.files.value.length" :type="compact ? 'list-item@2' : 'list-item-two-line@2'" />
     <p v-else-if="!bookmarks.files.value.length" class="starred-files-list__empty">
       Star files in Files to keep them handy while chatting. Only you see your stars.
     </p>
@@ -19,8 +19,8 @@
           @click="emit('open-file', file.path)"
         >
           <strong>{{ file.path.split('/').at(-1) }}</strong>
-          <span>{{ file.path }}</span>
-          <span v-if="!file.available">{{ file.reason || 'Not found in this session' }}</span>
+          <span v-if="!compact">{{ file.path }}</span>
+          <span v-if="!compact && !file.available">{{ file.reason || 'Not found in this session' }}</span>
         </button>
         <v-btn
           :aria-label="`Unstar ${file.path}`"
@@ -42,6 +42,7 @@ import { mdiStar } from "@mdi/js";
 
 const props = defineProps({
   bookmarks: { type: Object, required: true },
+  compact: { type: Boolean, default: false },
   files: { type: Array, default: null }
 });
 const emit = defineEmits(["open-file"]);
@@ -106,6 +107,12 @@ const displayedFiles = computed(() => props.files ?? props.bookmarks.files.value
 
 .starred-files-list__open:disabled {
   opacity: 0.65;
+}
+
+.starred-files-list--compact .starred-files-list__open strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .starred-files-list__empty {

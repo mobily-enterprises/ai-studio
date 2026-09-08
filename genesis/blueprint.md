@@ -13,6 +13,8 @@ session actions.
 Files refreshes after the assistant finishes a turn without discarding the
 person's place or unsaved edits. People can download individual files and keep
 personal project-wide stars, reachable from chat and the file browser in any session.
+The file browser keeps starred filenames on one line and starts larger lists
+collapsed.
 Chat responds to confirmed message acceptance and interruption immediately;
 background bookkeeping must not keep Send, Stop, or the saved-commit cleanup
 prompt busy after that confirmation.

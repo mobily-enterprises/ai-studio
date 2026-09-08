@@ -107,7 +107,7 @@ for (const width of [390, 900, 1600]) {
     await expect(editor.locator(".cm-content")).toContainText("# Hello");
     await editor.getByRole("button", { name: "Star file", exact: true }).click();
     await expect(editor.getByRole("button", { name: "Unstar file", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(editor.getByRole("list", { name: "Starred files" }).getByText("README.md", { exact: true })).toHaveCount(2);
+    await expect(editor.getByRole("list", { name: "Starred files" }).getByText("README.md", { exact: true })).toHaveCount(1);
 
     await editor.getByRole("button", { name: "Actions for notes.bin", exact: true }).click();
     const downloadPromise = page.waitForEvent("download");

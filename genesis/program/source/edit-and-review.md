@@ -62,7 +62,9 @@ devices and sessions and retain their insertion order. Missing or excluded files
 remain listed as unavailable in the selected session until unstarred. Availability
 checks touch only the bounded starred paths, never the whole source tree.
 The collapsible Starred section and chat's searchable star picker share one
-client state. The picker is a popover on larger screens and a bottom sheet on
+client state. The file browser shows one filename per row, with an ellipsis for
+long names and the full path on hover. More than four stars start collapsed.
+The picker is a popover on larger screens and a bottom sheet on
 compact screens, with a compact search field and Close on one row and no
 redundant heading. Opening a star uses normal Dashboard Files navigation without
 clearing the chat draft. Toggle failures roll back only the affected star and

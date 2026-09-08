@@ -250,9 +250,9 @@
             </div>
           </div>
 
-          <details v-if="fileBookmarks" class="vibe64-source-editor__starred" open>
+          <details v-if="fileBookmarks" class="vibe64-source-editor__starred" :open="fileBookmarks.files.value.length <= 4">
             <summary>Starred <span>{{ fileBookmarks.files.value.length }}</span></summary>
-            <Vibe64StarredFilesList :bookmarks="fileBookmarks" @open-file="editor.openFile" />
+            <Vibe64StarredFilesList :bookmarks="fileBookmarks" compact @open-file="editor.openFile" />
           </details>
 
           <section
