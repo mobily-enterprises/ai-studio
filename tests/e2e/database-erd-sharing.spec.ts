@@ -147,6 +147,83 @@ async function dragTable(page: Page, name: string, dx: number, dy: number) {
   await page.mouse.up();
 }
 
+async function controlRoutingWorker(page: Page) {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    const queued: (() => void)[] = [];
+    const control = { held: false, pending: () => queued.length, release: () => queued.shift()?.() };
+    (window as any).erdRoutingControl = control;
+    window.Worker = class extends NativeWorker {
+      postMessage(message: any, ...args: any[]) {
+        if (message?.kind === "routes" && control.held) {
+          queued.push(() => super.postMessage(message, ...args));
+        } else {
+          super.postMessage(message, ...args);
+        }
+      }
+    };
+  });
+  return {
+    hold: () => page.evaluate(() => { (window as any).erdRoutingControl.held = true; }),
+    pending: () => page.evaluate(() => (window as any).erdRoutingControl.pending()),
+    release: () => page.evaluate(() => (window as any).erdRoutingControl.release())
+  };
+}
+
+for (const pendingAction of ["remote move", "local column change"]) {
+  test(`@erd-routing-race a newer shared layout retires a pending ${pendingAction}`, async ({ browser, baseURL }, testInfo) => {
+    const server = await sharedDiagramServer(baseURL!);
+    const alice = await browser.newContext({ viewport: { width: 1600, height: 1000 }, extraHTTPHeaders: { "x-erd-user": "alice" } });
+    const bob = await browser.newContext({ viewport: { width: 1600, height: 1000 }, extraHTTPHeaders: { "x-erd-user": "bob" } });
+    try {
+      const first = await alice.newPage();
+      const second = await bob.newPage();
+      const errors: string[] = [];
+      for (const page of [first, second]) page.on("pageerror", error => errors.push(error.message));
+      const routing = await controlRoutingWorker(second);
+      await openDiagram(first, server.url);
+      await openDiagram(second, server.url);
+      await expect.poll(server.clients).toBe(2);
+      const reset = second.getByRole("button", { name: "Reset positions", exact: true });
+      const orders = '.vue-flow__node[data-id="public.orders"]';
+      const position = (page: Page) => page.locator(orders).evaluate((node: HTMLElement) => node.style.transform);
+      const initialPosition = await position(second);
+      const camera = second.locator(".vue-flow__transformationpane");
+      const initialCamera = await camera.getAttribute("style");
+      const initialSaves = server.saves.length;
+      await routing.hold();
+      if (pendingAction === "remote move") {
+        await dragTable(first, "customers", 80, 60);
+      } else {
+        await second.getByRole("button", { name: "All columns", exact: true }).click();
+      }
+      await expect.poll(routing.pending).toBe(1);
+      await dragTable(first, "orders", -70, 130);
+      const expectedSaves = initialSaves + (pendingAction === "remote move" ? 2 : 1);
+      await expect.poll(() => server.saves.length).toBe(expectedSaves);
+      await expect.poll(() => position(second)).not.toBe(initialPosition);
+      await expect(reset).toBeDisabled();
+
+      // Finish only the older route. The latest real-worker request is still
+      // held, so the stale operation must neither unlock controls nor save.
+      await routing.release();
+      await expect.poll(routing.pending).toBe(1);
+      await second.screenshot({ path: testInfo.outputPath("newer-layout-still-routing.png") });
+      expect.soft(server.saves).toHaveLength(expectedSaves);
+      await expect.soft(reset).toBeDisabled();
+      await routing.release();
+      await expect(reset).toBeEnabled();
+      await expect.poll(() => position(second)).toBe(await position(first));
+      expect(await camera.getAttribute("style")).toBe(initialCamera);
+      expect(server.saves).toHaveLength(expectedSaves);
+      expect(errors).toEqual([]);
+    } finally {
+      await Promise.allSettled([alice.close(), bob.close()]);
+      await server.close();
+    }
+  });
+}
+
 test("shared ERD moves reach another browser without reloads or echo saves", async ({ browser, baseURL }) => {
   const server = await sharedDiagramServer(baseURL!);
   const alice = await browser.newContext({ viewport: { width: 1600, height: 1000 }, extraHTTPHeaders: { "x-erd-user": "alice" } });

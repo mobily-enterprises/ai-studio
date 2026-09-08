@@ -333,7 +333,8 @@ async function refreshGraph({ dragging = false, reset = false, layoutPaths = new
   obstructedCount.value = routes.filter((route) => route.obstructed).length;
   emphasize();
   await nextTick();
-  if (!disposed) flow?.updateNodeInternals?.(nodes.value.filter((node) => !node.hidden).map((node) => node.id));
+  if (disposed || request !== graphRefreshId) return false;
+  flow?.updateNodeInternals?.(nodes.value.filter((node) => !node.hidden).map((node) => node.id));
   return true;
 }
 function requestWorker(payload) {
@@ -365,7 +366,7 @@ async function rebuild({ force = false } = {}) {
     if (disposed || request !== rebuildId) return;
     nodes.value = placeErdNodes(sourceNodes, layout.nodes, saved, force);
     if (!await refreshGraph({ reset: true, layoutPaths: new Map(layout.paths.map((path) => [path.id, path.points])) })) return;
-    await updateViewport(initialViewport);
+    if (!await updateViewport(initialViewport)) return;
     if (needsSave) persistPositions();
     if (layout.fallback) feedback.error(new Error("The recommended layout was unavailable; a basic arrangement was used."), "Layout needs attention.");
   } catch (error) {
@@ -375,7 +376,7 @@ async function rebuild({ force = false } = {}) {
   }
 }
 async function restore(state, { remote = false } = {}) {
-  rebuildId += 1;
+  const request = ++rebuildId;
   layoutPending.value = true;
   columnMode.value = state.columnMode || "keys";
   focusTable.value = state.focusTable || "";
@@ -389,10 +390,15 @@ async function restore(state, { remote = false } = {}) {
     hoveredRelationshipId.value = "";
   }
   nodes.value = buildNodes(state.nodes);
-  await refreshGraph({ reset: true });
-  if (!remote) await updateViewport(state.viewport);
-  layoutPending.value = false;
-  if (!remote) persistPositions();
+  try {
+    if (!await refreshGraph({ reset: true })) return false;
+    if (!remote && !await updateViewport(state.viewport)) return false;
+    if (!remote) persistPositions();
+    return true;
+  } finally {
+    // An older restore cannot unlock a newer restore or arrangement.
+    if (request === rebuildId) layoutPending.value = false;
+  }
 }
 async function undo() {
   if (!undoStack.value.length || layoutPending.value) return;
@@ -410,14 +416,14 @@ async function changeColumnMode(mode) {
   columnMode.value = mode;
   const saved = snapshot().nodes.map((node) => ({ ...node, expanded: false }));
   nodes.value = buildNodes(saved);
-  await refreshGraph();
+  if (!await refreshGraph()) return;
   persistPositions();
 }
 async function changeNode(id, changes) {
   checkpoint();
   const saved = snapshot().nodes.map((node) => node.table === id ? { ...node, ...changes } : node);
   nodes.value = buildNodes(saved);
-  await refreshGraph();
+  if (!await refreshGraph()) return;
   persistPositions();
 }
 function toggleNode(id) { return changeNode(id, { collapsed: !nodes.value.find((node) => node.id === id).data.collapsed }); }
@@ -449,12 +455,12 @@ async function onNodeDragStop() {
     }).map((node) => [node.table, node]));
     const shared = pendingRemoteLayout;
     pendingRemoteLayout = null;
-    await restore({ ...shared, nodes: shared.nodes.map((node) => {
+    if (!await restore({ ...shared, nodes: shared.nodes.map((node) => {
       const position = moved.get(node.table);
       return position ? { ...node, x: position.x, y: position.y } : node;
-    }) }, { remote: true });
+    }) }, { remote: true })) return;
   }
-  await refreshGraph();
+  if (!await refreshGraph()) return;
   persistPositions();
 }
 function onNodeClick({ node }) { selectedTable.value = node.id; selectedRelationshipId.value = ""; hoveredRelationshipId.value = ""; searchColumn.value = ""; emphasize(); }
@@ -467,8 +473,8 @@ async function setFocus(id) {
   focusTable.value = id;
   activeGroup.value = "";
   clearSelection();
-  await refreshGraph();
-  await fitDiagram();
+  if (!await refreshGraph()) return;
+  if (!await fitDiagram()) return;
   persistPositions();
 }
 async function changeGroupFilter(id) {
@@ -476,8 +482,8 @@ async function changeGroupFilter(id) {
   activeGroup.value = id;
   focusTable.value = "";
   clearSelection();
-  await refreshGraph();
-  await fitDiagram();
+  if (!await refreshGraph()) return;
+  if (!await fitDiagram()) return;
   persistPositions();
 }
 async function locate(item) {
@@ -491,18 +497,21 @@ async function locate(item) {
   searchColumn.value = item.column;
   const saved = snapshot().nodes.map((node) => node.table === item.table ? { ...node, collapsed: false, expanded: Boolean(item.column) || node.expanded } : node);
   nodes.value = placeErdNodes(buildNodes(saved), [], saved);
-  await refreshGraph();
-  await nextTick();
+  if (!await refreshGraph()) return;
+  const request = graphRefreshId;
   await flow?.fitView?.({ nodes: [item.table], maxZoom: 1.2, padding: 0.5, duration: 220 });
+  if (disposed || request !== graphRefreshId) return;
   persistPositions();
 }
 async function resetPositions() { checkpoint(); await rebuild({ force: true }); }
 async function updateViewport(viewport) {
+  const request = graphRefreshId;
   await nextTick();
   await new Promise((resolve) => globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve)));
-  if (disposed) return;
+  if (disposed || request !== graphRefreshId) return false;
   if (viewport) await flow?.setViewport?.(viewport, { duration: 180 });
   else await flow?.fitView?.({ nodes: nodes.value.filter((node) => !node.hidden).map((node) => node.id), duration: 220, padding: 0.18 });
+  return !disposed && request === graphRefreshId;
 }
 function fitDiagram() { return updateViewport(); }
 function onFlowInit(instance) { flow = instance; }

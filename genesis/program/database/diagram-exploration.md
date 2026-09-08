@@ -66,8 +66,10 @@ with Retry; they do not silently claim the recommended layout succeeded.
 
 During dragging, incident paths use inexpensive temporary corridors while
 unchanged unrelated routes remain stable. Pending worker updates are coalesced;
-only the latest graph can be applied. Acknowledging an unchanged saved graph
-does not reroute it or disable its controls. Drop reroutes paths obstructed by the moved
+only the latest graph can be applied. Superseded routing completions do not save
+or start moving the camera, and only the current restore or arrangement unlocks
+controls. Acknowledging an unchanged saved graph does not reroute it or disable
+its controls. Drop reroutes paths obstructed by the moved
 card and persists positions. Undo/Redo retains up to 30 diagram snapshots for
 the mounted view, including moves, Reset, display/focus/group changes and
 loading a saved view; it does not undo saving or deleting named views.
