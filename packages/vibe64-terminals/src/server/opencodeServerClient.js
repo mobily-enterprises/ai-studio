@@ -300,7 +300,7 @@ function createOpenCodeServerClient({
     return payload;
   }
 
-  async function *events(sessionId = "", { signal } = {}) {
+  async function *events(sessionId = "", { onReady = null, signal } = {}) {
     const requestPath = "/event";
     const response = await fetchImpl(new URL(requestPath, origin), {
       headers: requestHeaders("text/event-stream"),
@@ -317,6 +317,7 @@ function createOpenCodeServerClient({
         status: response.status
       });
     }
+    onReady?.();
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffered = "";
@@ -433,6 +434,10 @@ function createOpenCodeServerClient({
     },
     async interrupt(sessionId = "", { signal } = {}) {
       return request("POST", stableSessionPath(sessionId, "/abort"), { signal });
+    },
+    async sessionStatus(sessionId = "", { signal } = {}) {
+      const statuses = await request("GET", "/session/status", { signal });
+      return statuses?.[text(sessionId)] || { type: "idle" };
     },
     async messages(sessionId = "", input = {}, { signal } = {}) {
       const result = await request(

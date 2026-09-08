@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -12,9 +11,6 @@ import {
   serializeVibe64AssistantSelection
 } from "../../packages/vibe64-runtime/src/shared/index.js";
 import {
-  startTerminalSession
-} from "../../packages/vibe64-execution/src/server/engines/terminalSessions.js";
-import {
   openCodeAssistantCapabilities
 } from "../../packages/vibe64-terminals/src/server/agent/providers/opencodeAssistantCatalog.js";
 import {
@@ -25,47 +21,12 @@ import {
   OPENCODE_EPHEMERAL_AGENT_ID
 } from "../../packages/vibe64-terminals/src/server/opencodeServerProcess.js";
 import {
-  createOpenCodeTerminalController
-} from "../../packages/vibe64-terminals/src/server/opencodeTerminal.js";
-import {
   sessionRenewalHandoverHash,
   sessionRenewalSeedPrompt
 } from "../../packages/vibe64-terminals/src/server/sessionRenewalHandover.js";
 
-const providerDefinition = {
-  id: "deepseek",
-  models: {
-    "deepseek-chat": {
-      capabilities: {
-        reasoning: true,
-        toolcall: true
-      },
-      id: "deepseek-chat",
-      name: "DeepSeek Chat",
-      status: "active",
-      variants: {
-        high: {},
-        low: {}
-      }
-    }
-  },
-  name: "DeepSeek",
-  source: "api"
-};
-const providerResult = {
-  all: [providerDefinition],
-  default: { deepseek: "deepseek-chat" }
-};
-const agents = [{
-  description: "Make changes",
-  hidden: false,
-  mode: "primary",
-  name: "build"
-}];
-const providerRevision = openCodeAssistantCapabilities({
-  agents,
-  providers: providerResult
-}).modelProviders[0].definitionRevision;
+import { agents, controllerHarness, providerDefinition } from "../fixtures/opencodeController.js";
+
 const renewalSource = Object.freeze({
   authority: "github",
   commit: "a".repeat(40),
@@ -96,433 +57,79 @@ function renewalHandover() {
   ].join("\n");
 }
 
-async function controllerHarness({
-  assistantParts = [],
-  assistantResponses = [],
-  assistantError = null,
-  catalogProviders = providerResult,
-  commandEnvironmentGate = null,
-  gitActorFailure = null,
-  helperResponse = '{"subject":"Add durable OpenCode sessions"}',
-  messagesErrorAfterPrompt = null,
-  messagesErrorAfterPromptCount = 1,
-  providerEvents = [],
-  realAttachedTerminal = false,
-  serverStartGate = null,
-  serverStartErrors = [],
-  withCommandBoundary = false,
-  zenModelIds = null
-} = {}) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "vibe64-opencode-controller-"));
-  const sourceRoot = path.join(root, "sessions", "active", "session-1", "source");
-  const sessionRoot = path.join(root, "session-state", "session-1");
-  await Promise.all([
-    mkdir(sourceRoot, { recursive: true }),
-    mkdir(sessionRoot, { recursive: true })
+
+test("OpenCode Stop settles a stalled turn after native abort without waiting for a final answer", async (t) => {
+  const harness = await controllerHarness({ assistantResponses: [{ pending: true, text: "" }] });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.sendMessage("session-1", { message: "Answer briefly.", messageId: "stalled-turn" });
+  const result = await harness.controller.interruptTurn("session-1");
+  assert.equal(result.ok, true);
+  const settled = await Promise.race([
+    harness.controller.waitForTurn("session-1").then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 750))
   ]);
-  const selection = {
-    agentId: "build",
-    catalogRevision: `sha256:${"a".repeat(64)}`,
-    engineId: "opencode",
-    modelId: "deepseek-chat",
-    modelProviderId: "deepseek",
-    variantId: "high"
-  };
-  const session = {
-    metadata: {
-      assistant_selection: serializeVibe64AssistantSelection(selection),
-      source_kind: "session_clone",
-      source_path: sourceRoot,
-      source_path_authority: "managed_session_source"
-    },
-    revision: 7,
-    sessionId: "session-1",
-    sessionRoot
-  };
-  const userMessages = [];
-  const assistantMessages = [];
-  const commentaryMessages = [];
-  const thinkingMessages = [];
-  const systemMessages = [];
-  const metadataWrites = [];
-  const agentRunEvents = [];
-  const renderPromptCalls = [];
-  let runStartedAt = "";
-  let queuedMessagesErrorAfterPrompt = messagesErrorAfterPrompt;
-  let queuedMessagesErrorCount = messagesErrorAfterPrompt
-    ? Math.max(1, Number(messagesErrorAfterPromptCount) || 1)
-    : 0;
-  const runtime = {
-    projectContextRoot: root,
-    stateRoot: path.join(root, "runtime"),
-    async getSession() {
-      return session;
-    },
-    async renderPrompt(_sessionId, input = {}) {
-      renderPromptCalls.push(input);
-      return { prompt: `GENESIS ${input.task}: ${input.request}` };
-    },
-    store: {
-      async conversationMessageIdExists() {
-        return false;
-      },
-      async mutateSession(_sessionId, operation) {
-        return operation();
-      },
-      async readConversationLogPage() {
-        return {
-          conversationLog: userMessages.slice(-1).map((message) => ({ user: message })),
-          pagination: {
-            totalTurnCount: userMessages.length
-          }
-        };
-      },
-      async writeAgentRunEvent(_sessionId, id, input = {}) {
-        const updatedAt = new Date().toISOString();
-        runStartedAt ||= updatedAt;
-        const state = input.patch?.state || input.event?.state || "active";
-        const active = state === "active";
-        const run = {
-          ...input.patch,
-          active,
-          ...(active ? {} : { finishedAt: updatedAt }),
-          id,
-          startedAt: input.patch?.startedAt || runStartedAt,
-          state,
-          updatedAt
-        };
-        agentRunEvents.push({ input, run });
-        return run;
-      },
-      async writeConversationAssistantMessage(_sessionId, input) {
-        assistantMessages.push(input);
-        return { id: input.messageId, text: input.text, type: "assistant" };
-      },
-      async writeConversationCommentaryMessage(_sessionId, input) {
-        commentaryMessages.push(input);
-        return { id: input.messageId, text: input.text, type: "commentary" };
-      },
-      async writeConversationThinkingMessage(_sessionId, input) {
-        thinkingMessages.push(input);
-        return { id: input.messageId, text: input.text, type: "thinking" };
-      },
-      async writeConversationSystemMessage(_sessionId, input) {
-        systemMessages.push(input);
-        return {
-          system: { text: input.text },
-          turnId: `system-${systemMessages.length}`
-        };
-      },
-      async writeConversationUserMessage(_sessionId, input) {
-        userMessages.push(input);
-        return { id: input.messageId, text: input.text, type: "user" };
-      },
-      async writeMetadataValue(_sessionId, name, value) {
-        metadataWrites.push({ name, value });
-        session.metadata[name] = value;
-      }
-    }
-  };
-  const connection = {
-    apiKey: "deepseek-key-one",
-    canonicalUrl: "https://api.deepseek.com",
-    economyModelId: "deepseek-chat",
-    endpointCode: "deepseek_api",
-    fingerprint: `sha256:${"1".repeat(64)}`,
-    modelProviderId: "deepseek",
-    providerRevision
-  };
-  const processStarts = [];
-  const serverStartCalls = [];
-  const processStops = [];
-  const terminalStarts = [];
-  const commandEnvironmentCalls = [];
-  const catalogReadCalls = [];
-  const createdSessions = [];
-  const createdSessionDirectories = [];
-  const promptCalls = [];
-  const promptDirectories = [];
-  const publishedSessionChanges = [];
-  const switchedAgents = [];
-  const switchedModels = [];
-  const verifyConnectionCalls = [];
-  const upstreamSessions = new Map();
-  const outputs = new Map();
-  const queuedAssistantResponses = [...assistantResponses];
-  const queuedServerStartErrors = [...serverStartErrors];
-  let agentCatalogCalls = 0;
-  let failNextHealth = false;
-  let failNextPrompt = false;
-  let listConnectionCalls = 0;
-  let nextSession = 1;
-  let providerCatalogCalls = 0;
-  let readSessionCalls = 0;
-  let runtimeCreateCalls = 0;
+  assert.equal(settled, true, "Stop acknowledged, but the turn still waits for an assistant final answer");
+  assert.equal((await harness.controller.sessionState("session-1")).turn.active, false);
+  assert.equal(result.turn.state, "interrupted");
+  assert.equal(harness.systemMessages.length, 0);
+  await harness.controller.sendMessage("session-1", { message: "Next answer.", messageId: "after-stop" });
+  assert.equal((await harness.controller.waitForTurn("session-1")).state, "completed");
+  assert.equal(harness.promptCalls.at(-1).input.delivery, "queue");
+});
 
-  function client(directory = "") {
-    return {
-      async *events() {
-        for (const event of providerEvents) {
-          yield event;
-        }
-      },
-      async agents() {
-        agentCatalogCalls += 1;
-        return agents;
-      },
-      async createSession(input = {}) {
-        const id = input.id || `ses_detached_${nextSession++}`;
-        const created = { ...input, id };
-        createdSessions.push(created);
-        createdSessionDirectories.push({ directory, id });
-        upstreamSessions.set(id, created);
-        return created;
-      },
-      async deleteSession(id) {
-        upstreamSessions.delete(id);
-        return true;
-      },
-      async health() {
-        if (failNextHealth) {
-          failNextHealth = false;
-          throw new Error("health failed");
-        }
-        return { healthy: true, version: "1.18.22" };
-      },
-      async interrupt() {
-        return true;
-      },
-      async messages(id) {
-        const output = outputs.get(id);
-        const response = output && typeof output === "object" && !Array.isArray(output)
-          ? output
-          : { text: output };
-        const promptCall = [...promptCalls].reverse().find((entry) => entry.id === id);
-        if (promptCall && queuedMessagesErrorAfterPrompt && queuedMessagesErrorCount > 0) {
-          const error = queuedMessagesErrorAfterPrompt;
-          queuedMessagesErrorCount -= 1;
-          if (queuedMessagesErrorCount === 0) {
-            queuedMessagesErrorAfterPrompt = null;
-          }
-          throw error;
-        }
-        const created = Date.now();
-        return {
-          data: output === undefined ? [] : [
-            {
-              id: promptCall.input.id,
-              text: promptCall.input.prompt.text,
-              time: { created },
-              type: "user"
-            },
-            {
-              ...(response.error || assistantError
-                ? { error: response.error || assistantError }
-                : { text: response.text }),
-              ...((response.content || assistantParts).length
-                ? { content: response.content || assistantParts }
-                : {}),
-              id: "msg_assistant",
-              time: { completed: created + 1, created: created + 1 },
-              type: "assistant"
-            }
-          ]
-        };
-      },
-      async prompt(id, input = {}) {
-        promptCalls.push({ id, input });
-        promptDirectories.push({ directory, id });
-        if (failNextPrompt) {
-          failNextPrompt = false;
-          throw Object.assign(new Error("admission failed"), { statusCode: 503 });
-        }
-        outputs.set(id, id.startsWith("ses_detached_")
-          ? helperResponse
-          : queuedAssistantResponses.shift() || "Main turn complete");
-        return { admittedSeq: promptCalls.length, id: input.id };
-      },
-      async providers() {
-        providerCatalogCalls += 1;
-        return catalogProviders;
-      },
-      forDirectory(nextDirectory = "") {
-        return client(path.resolve(nextDirectory));
-      },
-      async readSession(id) {
-        readSessionCalls += 1;
-        if (!upstreamSessions.has(id)) {
-          throw Object.assign(new Error("missing"), { statusCode: 404 });
-        }
-        return upstreamSessions.get(id);
-      },
-      async switchAgent(id, agent) {
-        switchedAgents.push({ agent, id });
-      },
-      async switchModel(id, model) {
-        switchedModels.push({ id, model });
-      },
-      async wait() {
-        return true;
-      }
-    };
-  }
+test("OpenCode surfaces an event-only provider failure without waiting for an assistant answer", async (t) => {
+  const harness = await controllerHarness({
+    assistantResponses: [{ pending: true, text: "" }],
+    providerEvents: [{ data: {
+      type: "session.error",
+      properties: { error: { name: "APIError", data: { message: "This model does not support image input." } } }
+    } }]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.sendMessage("session-1", { message: "Read image.", messageId: "image-error" });
+  const result = await harness.controller.waitForTurn("session-1");
+  assert.equal(result.state, "failed");
+  assert.equal(result.error, "This model does not support image input.");
+  assert.equal(harness.systemMessages.length, 1);
+  assert.match(harness.systemMessages[0].text, /This model does not support image input\./u);
+  assert.equal(harness.publishedSessionChanges.at(-1)[1].payload.agentSession.turn.active, false);
+  assert.equal(harness.promptCalls.length, 1, "A provider failure must not trigger answer recovery");
+});
 
-  const controller = createOpenCodeTerminalController({
-    env: {
-      ...process.env,
-      VIBE64_AGENT_RUNTIME_DIR: path.join(root, "agent-providers")
-    },
-    ...(withCommandBoundary ? {
-      agentDatabaseCommand: { id: "database" },
-      agentEnvCommand: { id: "environment" },
-      agentPreviewCommand: { id: "preview" },
-      codexGitCommand: { id: "git" },
-      async prepareCommandEnvironment(input) {
-        commandEnvironmentCalls.push(input);
-        await commandEnvironmentGate?.(input);
-        return {
-          env: {
-            VIBE64_AGENT_DATABASE_COMMAND_SOCKET: "/managed/database.sock",
-            VIBE64_AGENT_ENV_COMMAND_SOCKET: "/managed/environment.sock",
-            VIBE64_AGENT_PREVIEW_COMMAND_SOCKET: "/managed/preview.sock",
-            VIBE64_CODEX_GIT_COMMAND_SOCKET: "/managed/git.sock"
-          },
-          hostWrapperDir: "/managed/wrappers",
-          ok: true,
-          shimDirs: ["/managed/wrappers"]
-        };
+test("OpenCode bounds an unresponsive abort and permits a second Stop attempt", async (t) => {
+  let attempts = 0;
+  const harness = await controllerHarness({
+    assistantResponses: [{ pending: true, text: "" }],
+    interrupt: async (_id, { signal }) => {
+      if (++attempts === 1) {
+        await new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
       }
-    } : {}),
-    async createServerProcess(options) {
-      serverStartCalls.push(options);
-      await serverStartGate?.(options);
-      const startError = queuedServerStartErrors.shift();
-      if (startError) {
-        throw startError;
-      }
-      const started = {
-        client: client(),
-        options,
-        workdir: options.workdir,
-        async startAttachedTerminal(input) {
-          terminalStarts.push(input);
-          if (realAttachedTerminal) {
-            return startTerminalSession({
-              args: ["-e", "setInterval(() => {}, 1000)"],
-              command: process.execPath,
-              commandPreview: "opencode attach",
-              cwd: sourceRoot,
-              maxRunning: 1,
-              namespace: input.namespace,
-              reuseRunning: true
-            });
-          }
-          return {
-            commandPreview: "opencode attach",
-            id: `opencode-terminal-${terminalStarts.length}`,
-            ok: true,
-            status: "running"
-          };
-        },
-        async stop() {
-          processStops.push(options);
-          return { exited: true, signal: "SIGTERM" };
-        }
-      };
-      processStarts.push(started);
-      return started;
-    },
-    async readZenModelsCommand() {
-      const zen = catalogProviders.all.find((provider) => provider.id === "opencode");
-      return Array.isArray(zenModelIds) ? zenModelIds : Object.keys(zen?.models || {});
-    },
-    async listConnections() {
-      listConnectionCalls += 1;
-      return [{
-        accessLabel: "Workspace use",
-        billingLabel: "Usage-based API billing",
-        connected: true,
-        economyModelId: connection.economyModelId,
-        fingerprint: connection.fingerprint,
-        modelProviderId: connection.modelProviderId,
-        productLabel: "DeepSeek",
-        providerRevision: connection.providerRevision
-      }];
-    },
-    projectService: {
-      async createRuntime() {
-        runtimeCreateCalls += 1;
-        return runtime;
-      },
-      async readPromptHints() {
-        return { ok: true, promptHints: true };
-      }
-    },
-    async readCatalogCommand(options) {
-      catalogReadCalls.push(options);
-      return {
-        agents,
-        providers: catalogProviders
-      };
-    },
-    async publishSessionChanged(...args) {
-      publishedSessionChanges.push(args);
-    },
-    async recordGitActor(input) {
-      return gitActorFailure || { ok: true, session: input.session };
-    },
-    async resolveConnection() {
-      return { ...connection };
-    },
-    async verifyConnectionCommand(input) {
-      verifyConnectionCalls.push(input);
-      return { ok: true };
+      return true;
     }
   });
-
-  return {
-    agentCatalogCalls: () => agentCatalogCalls,
-    agentRunEvents,
-    assistantMessages,
-    catalogReadCalls,
-    commentaryMessages,
-    connection,
-    commandEnvironmentCalls,
-    controller,
-    createdSessionDirectories,
-    createdSessions,
-    failHealth() {
-      failNextHealth = true;
-    },
-    failPrompt() {
-      failNextPrompt = true;
-    },
-    listConnectionCalls: () => listConnectionCalls,
-    metadataWrites,
-    processStarts,
-    processStops,
-    providerCatalogCalls: () => providerCatalogCalls,
-    promptDirectories,
-    promptCalls,
-    publishedSessionChanges,
-    root,
-    readSessionCalls: () => readSessionCalls,
-    renderPromptCalls,
-    runtime,
-    runtimeCreateCalls: () => runtimeCreateCalls,
-    selection,
-    serverStartCalls,
-    session,
-    switchedAgents,
-    switchedModels,
-    systemMessages,
-    terminalStarts,
-    thinkingMessages,
-    upstreamSessions,
-    userMessages,
-    verifyConnectionCalls
-  };
-}
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.sendMessage("session-1", { message: "Answer", messageId: "abort-timeout" });
+  const started = Date.now();
+  await assert.rejects(harness.controller.interruptTurn("session-1"), (error) => (
+    error.code === "vibe64_opencode_interrupt_timeout" && error.statusCode === 504
+  ));
+  assert.ok(Date.now() - started < 6_000);
+  assert.equal((await harness.controller.sessionState("session-1")).turn.active, true);
+  const result = await harness.controller.interruptTurn("session-1");
+  assert.equal(result.turn.active, false);
+  assert.equal(result.turn.state, "interrupted");
+});
 
 test("OpenCode cold catalog discovery never loads configured credentials", async (t) => {
   const harness = await controllerHarness();
@@ -538,6 +145,99 @@ test("OpenCode cold catalog discovery never loads configured credentials", async
   assert.equal(path.basename(harness.catalogReadCalls[0].workdir), "workspace");
   assert.equal(Object.hasOwn(harness.catalogReadCalls[0], "providerConnections"), false);
   assert.equal(typeof harness.catalogReadCalls[0].createServerProcess, "function");
+});
+
+test("OpenCode Stop cancels an in-flight history read without waiting for its response", async (t) => {
+  const reading = Promise.withResolvers();
+  const harness = await controllerHarness({
+    assistantResponses: [{ pending: true, text: "" }],
+    beforeMessages: async (_id, { signal }) => {
+      reading.resolve();
+      await new Promise((_resolve, reject) => {
+        signal.throwIfAborted();
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.sendMessage("session-1", { message: "Answer", messageId: "pending-read" });
+  await reading.promise;
+  const started = Date.now();
+  assert.equal((await harness.controller.interruptTurn("session-1")).turn.state, "interrupted");
+  assert.ok(Date.now() - started < 500);
+});
+
+test("OpenCode carries an early error forward but keeps Stop available until native work is idle", async (t) => {
+  let busy = true;
+  const readStatus = Promise.withResolvers();
+  const harness = await controllerHarness({
+    assistantResponses: [{ pending: true, text: "" }],
+    providerEvents: [{ data: { type: "session.error", properties: {
+      error: { name: "UnknownError", data: { message: "An input file could not be read." } }
+    } } }],
+    sessionStatus: async () => { readStatus.resolve(); return { type: busy ? "busy" : "idle" }; }
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.sendMessage("session-1", { message: "Read file", messageId: "busy-error" });
+  await readStatus.promise;
+  assert.equal((await harness.controller.sessionState("session-1")).turn.active, true);
+  busy = false;
+  const result = await harness.controller.waitForTurn("session-1");
+  assert.equal(result.state, "failed");
+  assert.equal(result.error, "An input file could not be read.");
+  assert.equal(harness.systemMessages.length, 1);
+});
+
+test("OpenCode ignores another conversation's error and Stop leaves its active turn alone", async (t) => {
+  const harness = await controllerHarness({
+    assistantResponses: [{ pending: true, text: "" }, { pending: true, text: "" }],
+    providerEvents: [{ data: { type: "session.error", properties: {
+      sessionID: "ses_unrelated", error: { name: "APIError", data: { message: "Other conversation failed" } }
+    } } }]
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  const secondSession = {
+    ...harness.session,
+    sessionId: "session-2",
+    sessionRoot: path.join(harness.root, "session-state", "session-2"),
+    metadata: { ...harness.session.metadata, source_path: path.join(harness.root, "sessions", "active", "session-2", "source") }
+  };
+  await mkdir(secondSession.metadata.source_path, { recursive: true });
+  await mkdir(secondSession.sessionRoot, { recursive: true });
+  await harness.controller.sendMessage("session-1", { message: "Answer", messageId: "one" });
+  await harness.controller.sendMessage("session-2", { message: "Answer", messageId: "two" }, { session: secondSession });
+  const result = await harness.controller.interruptTurn("session-1");
+  assert.equal(result.turn.state, "interrupted");
+  assert.equal((await harness.controller.sessionState("session-2", { session: secondSession })).turn.active, true);
+  assert.equal(harness.systemMessages.length, 0);
+  assert.equal(harness.processStops.length, 0);
+  assert.equal(harness.processStarts.length, 1);
+  await harness.controller.interruptTurn("session-2", {}, { session: secondSession });
+});
+
+test("OpenCode does not release a turn when the native abort is unconfirmed", async (t) => {
+  let attempts = 0;
+  const harness = await controllerHarness({
+    assistantResponses: [{ pending: true, text: "" }],
+    interrupt: async () => ++attempts > 1
+  });
+  t.after(async () => {
+    await harness.controller.closeAllForProject();
+    await rm(harness.root, { force: true, recursive: true });
+  });
+  await harness.controller.sendMessage("session-1", { message: "Answer", messageId: "unconfirmed" });
+  await assert.rejects(harness.controller.interruptTurn("session-1"), { code: "vibe64_opencode_interrupt_unconfirmed" });
+  assert.equal((await harness.controller.sessionState("session-1")).turn.active, true);
+  assert.equal((await harness.controller.interruptTurn("session-1")).turn.active, false);
 });
 
 test("configured OpenCode choices never read or start OpenCode", async (t) => {

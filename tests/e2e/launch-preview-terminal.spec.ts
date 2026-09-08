@@ -1,7 +1,8 @@
 import { expect, test, type Page, type Request as PlaywrightRequest, type Route } from "@playwright/test";
 import { createServer as createHttpServer, request as requestHttp, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { controllerHarness } from "../fixtures/opencodeController.js";
 import { createPreviewPreparationFixture } from "../fixtures/previewPreparation.js";
 
 import {
@@ -6116,6 +6117,157 @@ for (const engine of ["codex", "opencode"]) {
         downloadServer.closeAllConnections();
         await closeHttpServer(downloadServer);
       }
+    });
+  }
+}
+
+for (const width of [390, 820, 1440]) {
+  for (const outcome of ["stop", "provider-error", "abort-timeout"]) {
+    test(`@opencode-recovery real controller releases chat after ${outcome} at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await mockLaunchTerminalSocket(page);
+      const session = sessionPayload();
+      const conversationLog: any[] = [];
+      const errors: string[] = [];
+      let stoppingAttempts = 0;
+      let mounted = false;
+      page.on("pageerror", (error) => errors.push(error.message));
+      const harness = await controllerHarness({
+        assistantResponses: [{ pending: true, text: "" }],
+        providerEvents: outcome === "provider-error" ? [{ data: {
+          type: "session.error",
+          properties: { error: { name: "APIError", data: { message: "The provider rejected this image input." } } }
+        } }] : [],
+        interrupt: async (_id: string, { signal }: { signal: AbortSignal }) => {
+          if (++stoppingAttempts === 1 && outcome === "abort-timeout") {
+            await new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+          }
+          return true;
+        },
+        onSessionChanged: async (_id: string, event: any) => {
+          const payload = { ...event.payload };
+          if (payload.agentSession) Object.assign(session.agentSession, payload.agentSession);
+          if (payload.conversationLogPatch) {
+            const item = payload.conversationLogPatch.turn;
+            let turn;
+            if (item.type === "user") {
+              turn = { turnId: String(conversationLog.length + 1).padStart(6, "0"), user: { role: "user", at: new Date().toISOString(), messageId: item.id, text: item.text } };
+            } else if (item.system) {
+              turn = { ...item, system: { ...item.system, role: "system", at: new Date().toISOString(), messageId: item.turnId } };
+            }
+            if (turn) {
+              conversationLog.push(turn);
+              payload.conversationLogPatch = { type: "upsert-turn", turn };
+            } else delete payload.conversationLogPatch;
+          }
+          if (mounted) await publishChatSessionChange(page, { ...payload, reason: event.reason, sessionId: SESSION_ID, revision: ++session.revision });
+        }
+      });
+      Object.assign(session.assistantSelection, harness.selection);
+      Object.assign(session.agentSession, { providerId: "opencode", transportId: "opencode_server" });
+      const engine = await harness.controller.capabilities({ engineId: "opencode", modelProviderId: "deepseek" });
+      await mockLaunchSession(page, { session, conversationLog, assistantAccess: PERSONAL_ASSISTANT_ACCESS, assistantCatalog: { ok: true, engines: [engine] } as any });
+      await page.route(/\/sessions\/[^/]+\/(?:agent-message|agent-turn\/interrupt)$/u, async (route) => {
+        try {
+          const result = route.request().url().endsWith("/agent-message")
+            ? await harness.controller.sendMessage("session-1", route.request().postDataJSON())
+            : await harness.controller.interruptTurn("session-1");
+          await fulfillJson(route, result);
+        } catch (error: any) {
+          await fulfillJson(route, { ok: false, error: error.message, code: error.code }, { status: error.statusCode || 500 });
+        }
+      });
+      try {
+        await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+        const visible = page.locator(".studio-autopilot__chat-panel:visible");
+        const composer = visible.getByLabel("Message AI assistant");
+        const send = visible.getByRole("button", { name: "Send message", exact: true });
+        await expect(composer).toBeVisible();
+        mounted = true;
+        await composer.fill("Read the attached image.");
+        await send.click();
+        await expect(composer).toHaveValue("");
+        await composer.fill("Keep this new draft.");
+        const start = Date.now();
+        if (outcome === "provider-error") {
+          await expect(visible.getByText(/The provider rejected this image input\./u).first()).toBeVisible();
+        } else {
+          const stop = visible.getByRole("button", { name: "Stop", exact: true });
+          await expect(stop).toBeEnabled();
+          await stop.click();
+          if (outcome === "abort-timeout") {
+            await expect(page.getByText(/OpenCode did not confirm Stop within 5 seconds/u).first()).toBeVisible();
+            const close = page.getByRole("button", { name: "Close", exact: true });
+            if (await close.isVisible()) await close.click();
+            await expect(stop).toBeEnabled();
+            await stop.click();
+          }
+        }
+        await expect(send).toBeEnabled();
+        expect(Date.now() - start).toBeLessThan(outcome === "abort-timeout" ? 8_000 : 2_500);
+        await expect(composer).toHaveValue("Keep this new draft.");
+        await visible.getByRole("button", { name: "Choose AI", exact: true }).click();
+        await expect(page.getByRole("button", { name: /DeepSeek Chat/u, exact: false })).toBeEnabled();
+        await expect(page.getByText("AI choices are view-only while the assistant is working.")).toHaveCount(0);
+        await page.screenshot({ path: testInfo.outputPath("recovered-chat-and-model-controls.png"), animations: "disabled" });
+        expect(errors).toEqual([]);
+        expect(harness.switchedModels).toEqual([]);
+      } finally {
+        mounted = false;
+        await harness.controller.closeAllForProject();
+        await rm(harness.root, { force: true, recursive: true });
+      }
+    });
+  }
+}
+
+for (const width of [390, 820, 1440]) {
+  for (const engineId of ["codex", "opencode"]) {
+    test(`@assistant-menu-speed ${engineId} warms choices without blocking typing and keeps them during refresh at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await mockLaunchTerminalSocket(page);
+      const session = sessionPayload();
+      const catalog = assistantCatalogPayload({ includeOpenCode: true });
+      const engine = catalog.engines.find((item) => item.engineId === engineId)!;
+      Object.assign(session.assistantSelection, { ...engine.defaults, engineId });
+      Object.assign(session.agentSession, { providerId: engineId, transportId: engine.transportId });
+      await mockLaunchSession(page, { session, assistantAccess: PERSONAL_ASSISTANT_ACCESS, assistantCatalog: catalog });
+      let hold = false;
+      let releaseRefresh: (() => void) | undefined;
+      let loaded = 0;
+      const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+      const requests: string[] = [];
+      await page.route(/\/assistants\/capabilities(?:\?.*)?$/u, async (route) => {
+        const query = new URL(route.request().url()).searchParams;
+        if (query.has("configuredOnly")) { await fulfillJson(route, catalog); return; }
+        requests.push(query.toString());
+        if (hold) await refreshGate;
+        else await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await fulfillJson(route, { ok: true, engines: [engine] });
+        loaded += 1;
+      });
+      try {
+        await page.goto(`${BASE_URL}${DEVELOPMENT_PATH}`);
+        const visible = page.locator(".studio-autopilot__chat-panel:visible");
+        const composer = visible.getByLabel("Message AI assistant");
+        await composer.fill("Keep typing while AI choices load.");
+        await expect(composer).toHaveValue("Keep typing while AI choices load.");
+        await expect.poll(() => loaded).toBe(2);
+        expect(requests).toHaveLength(2);
+        hold = true;
+        const start = Date.now();
+        await visible.getByRole("button", { name: "Choose AI", exact: true }).click();
+        const model = page.getByRole("button", { name: engineId === "codex" ? /GPT-5.6 Sol/u : /GLM-5.3/u });
+        await expect(model).toBeVisible({ timeout: 1_000 });
+        await expect(model).toBeEnabled();
+        expect(Date.now() - start).toBeLessThan(1_000);
+        await expect(page.getByLabel("Loading available AIs")).toHaveCount(0);
+        await expect.poll(() => requests.length).toBeGreaterThan(2);
+        await expect(model).toBeEnabled();
+        await page.keyboard.press("Escape");
+        await expect(composer).toHaveValue("Keep typing while AI choices load.");
+        await expect(visible.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+      } finally { releaseRefresh?.(); }
     });
   }
 }

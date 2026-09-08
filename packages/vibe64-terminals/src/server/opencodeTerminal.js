@@ -70,6 +70,8 @@ import {
 const OPENCODE_AGENT_RUN_ID = "opencode_server";
 const OPENCODE_CATALOG_CACHE_MS = 10 * 60 * 1000;
 const OPENCODE_MESSAGE_POLL_MS = 250;
+const OPENCODE_EVENT_READY_TIMEOUT_MS = 5_000;
+const OPENCODE_INTERRUPT_TIMEOUT_MS = 5_000;
 const OPENCODE_REASONING_PROGRESS_MAX_CHARS = 280;
 const OPENCODE_SESSION_PREFIX = "ses_vibe64_";
 const OPENCODE_RENEWAL_TIMEOUT_MS = 3 * 60 * 1000;
@@ -412,6 +414,7 @@ function latestOpenCodeMessageResult(value = null) {
 
 async function waitForOpenCodeMessages(client, conversationId = "", inputMessageId = "", {
   onMessages = null,
+  readFailure = () => null,
   signal
 } = {}) {
   const resolveInputMessageId = typeof inputMessageId === "function"
@@ -431,6 +434,10 @@ async function waitForOpenCodeMessages(client, conversationId = "", inputMessage
     const result = expectedInputMessageId
       ? openCodeMessageResultForInput(messages, expectedInputMessageId)
       : latestOpenCodeMessageResult(messages);
+    const failure = readFailure();
+    if (failure && (await client.sessionStatus(conversationId, { signal })).type === "idle") {
+      throw failure;
+    }
     if (result?.complete) {
       if (completedInputMessageId === expectedInputMessageId) {
         return { messages, result };
@@ -1461,14 +1468,27 @@ function createOpenCodeTerminalController({
 
   async function consumeEvents(target = {}, context = {}, turn = null, {
     onEvent = null,
+    onError = null,
+    onReady = null,
     publish = true,
     signal
   } = {}) {
     for await (const event of target.server.client.events(target.upstreamSessionId, {
+      onReady,
       signal
     })) {
       const summary = eventSummary(event);
       const current = !turn || Number(summary.at) >= Number(turn.eventStartedAt);
+      if (
+        current && summary.type === "session.error" &&
+        text(event.data?.properties?.sessionID) === target.upstreamSessionId &&
+        typeof onError === "function"
+      ) {
+        const failure = record(event.data?.properties?.error);
+        onError(Object.assign(new Error(openCodeMessageError({ error: failure }) || "OpenCode turn failed."), {
+          name: text(failure.name) || "Error"
+        }));
+      }
       if (summary.type && current && typeof onEvent === "function") {
         onEvent({
           ...summary,
@@ -1493,6 +1513,8 @@ function createOpenCodeTerminalController({
     const eventStartedAt = Number(admitted.eventStartedAt) || Date.now();
     const startedAt = text(admitted.startedAt) || new Date(eventStartedAt).toISOString();
     const turn = {
+      abortController: new AbortController(),
+      admission: options.admission,
       active: true,
       error: "",
       eventStartedAt,
@@ -1504,15 +1526,17 @@ function createOpenCodeTerminalController({
       updatedAt: startedAt
     };
     turns.set(context.key, turn);
+    const signal = AbortSignal.any([target.abortController.signal, turn.abortController.signal]);
     const monitor = Promise.resolve().then(async () => {
-      await writeRun(context, turn, VIBE64_AGENT_RUN_STATE.ACTIVE);
       const eventAbort = new AbortController();
-      const abortEvents = () => eventAbort.abort();
-      target.abortController.signal.addEventListener("abort", abortEvents, { once: true });
+      let eventFailure = null;
       const events = consumeEvents(target, context, turn, {
         onEvent: options.onEvent,
-        signal: eventAbort.signal
+        onError: (error) => { eventFailure = error; },
+        onReady: options.eventReady?.resolve,
+        signal: AbortSignal.any([signal, eventAbort.signal])
       }).catch((error) => {
+        options.eventReady?.reject(error);
         if (error?.name !== "AbortError") {
           vibe64SessionDebugLog("server.opencode.events.error", {
             error: vibe64SessionDebugError(error),
@@ -1525,6 +1549,9 @@ function createOpenCodeTerminalController({
       let credentialFailure = false;
       let providerApiFailure = false;
       try {
+        await turn.admission?.promise;
+        signal.throwIfAborted();
+        await writeRun(context, turn, VIBE64_AGENT_RUN_STATE.ACTIVE);
         const waitForCompletion = () => waitForOpenCodeMessages(
           target.server.client,
           target.upstreamSessionId,
@@ -1539,7 +1566,8 @@ function createOpenCodeTerminalController({
                 requireOpenTurn: true
               }
             ),
-            signal: target.abortController.signal
+            readFailure: () => eventFailure,
+            signal
           }
         );
         let completion = await waitForCompletion();
@@ -1560,7 +1588,7 @@ function createOpenCodeTerminalController({
               text: "Your previous response ended without a user-facing final answer. Do not call tools or repeat your reasoning. Return the concise final answer to the user's latest request now."
             },
             resume: true
-          });
+          }, { signal });
           turn.inputMessageId = text(admitted?.id) || recoveryMessageId;
           turn.updatedAt = new Date().toISOString();
           completion = await waitForCompletion();
@@ -1568,8 +1596,8 @@ function createOpenCodeTerminalController({
         const projection = await writeConversationProjection(context, completion.messages, {
           inputMessageId: turn.inputMessageId
         });
-        failure = projection.failure;
-        providerApiFailure = projection.providerApiFailure;
+        failure = projection.failure || text(eventFailure?.message);
+        providerApiFailure = projection.providerApiFailure || openCodeProviderApiFailure(eventFailure);
         if (!failure && !turn.interruptRequested && !text(completion.result?.text)) {
           failure = "OpenCode finished without a user-facing final response. Please send your message again.";
           finalState = VIBE64_AGENT_RUN_STATE.FAILED;
@@ -1580,16 +1608,20 @@ function createOpenCodeTerminalController({
           finalState = VIBE64_AGENT_RUN_STATE.INTERRUPTED;
         }
       } catch (error) {
-        failure = text(error?.message) || "OpenCode turn failed.";
-        credentialFailure = openCodeCredentialFailure(failure);
-        providerApiFailure = openCodeProviderApiFailure(error);
-        finalState = target.abortController.signal.aborted
-          ? VIBE64_AGENT_RUN_STATE.CANCELLED
-          : VIBE64_AGENT_RUN_STATE.FAILED;
+        if (turn.interruptAcknowledged) {
+          finalState = VIBE64_AGENT_RUN_STATE.INTERRUPTED;
+        } else {
+          const cause = signal.aborted ? signal.reason : error;
+          failure = text(cause?.message) || "OpenCode turn failed.";
+          credentialFailure = openCodeCredentialFailure(failure);
+          providerApiFailure = openCodeProviderApiFailure(cause);
+          finalState = target.abortController.signal.aborted
+            ? VIBE64_AGENT_RUN_STATE.CANCELLED
+            : VIBE64_AGENT_RUN_STATE.FAILED;
+        }
       } finally {
         eventAbort.abort();
         await events;
-        target.abortController.signal.removeEventListener("abort", abortEvents);
         if (credentialFailure) {
           failure = openCodeCredentialFailureNoticeMessage();
           await writeOpenCodeFailureNotice(context, turn, {
@@ -1714,6 +1746,7 @@ function createOpenCodeTerminalController({
     let actorMetadata = null;
     let admitted = null;
     let target = null;
+    let admission = null;
     try {
       actor = await recordGitActor({
         env,
@@ -1760,6 +1793,26 @@ function createOpenCodeTerminalController({
           })
         : { prompt: message };
       const renderedPrompt = text(rendered?.prompt) || message;
+      if (!currentMonitor) {
+        admission = Promise.withResolvers();
+        const eventReady = Promise.withResolvers();
+        beginMonitor(target, context, { id: providerMessageId, eventStartedAt, startedAt }, {
+          ...options, admission, eventReady
+        });
+        const timeout = setTimeout(() => eventReady.reject(openCodeError(
+          "vibe64_opencode_events_timeout", "OpenCode's event connection did not become ready. Try sending again.", {}, 504
+        )), OPENCODE_EVENT_READY_TIMEOUT_MS);
+        try {
+          await eventReady.promise;
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+      const signal = AbortSignal.any([
+        target.abortController.signal,
+        turns.get(context.key).abortController.signal
+      ]);
+      signal.throwIfAborted();
       admitted = await target.server.client.prompt(target.upstreamSessionId, {
         agent: context.selection.agentId,
         delivery: currentMonitor ? "steer" : "queue",
@@ -1768,9 +1821,11 @@ function createOpenCodeTerminalController({
         prompt: { text: renderedPrompt },
         attachments: input.attachments,
         resume: true
-      });
+      }, { signal });
     } catch (error) {
-      if (startingTurn && !monitors.has(context.key)) {
+      admission?.reject(error);
+      if (admission) await monitors.get(context.key);
+      if (startingTurn && !admission && !monitors.has(context.key)) {
         startingTurn.active = false;
         startingTurn.error = text(error?.message) || "OpenCode prompt delivery failed.";
         startingTurn.state = VIBE64_AGENT_RUN_STATE.FAILED;
@@ -1795,26 +1850,32 @@ function createOpenCodeTerminalController({
           refreshRecommended: true,
           retryable: error?.retryable === true || failureCode === "vibe64_opencode_start_timeout",
           thread: { id: currentThreadId },
-          turn: openCodeTurnSnapshot(startingTurn, currentThreadId)
+          turn: openCodeTurnSnapshot(turns.get(context.key) || startingTurn, currentThreadId)
         };
       }
       throw error;
     }
-    const conversationTurn = await context.runtime.store.writeConversationUserMessage(
-      context.sessionId,
-      {
-        attachments: input.displayAttachments,
-        messageId,
-        text: text(input.displayMessage) || message,
-        turnMetadata: {
-          assistantSelection: context.selection,
-          ...actorMetadata,
-          engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
-          upstreamMessageId: text(admitted?.id)
+    let conversationTurn;
+    try {
+      conversationTurn = await context.runtime.store.writeConversationUserMessage(
+        context.sessionId,
+        {
+          attachments: input.displayAttachments,
+          messageId,
+          text: text(input.displayMessage) || message,
+          turnMetadata: {
+            assistantSelection: context.selection,
+            ...actorMetadata,
+            engineId: VIBE64_ASSISTANT_ENGINE_IDS.OPENCODE,
+            upstreamMessageId: text(admitted?.id)
+          }
         }
-      }
-    );
-    await publishConversationTurn(context, conversationTurn, "opencode-server-message-delivered");
+      );
+      await publishConversationTurn(context, conversationTurn, "opencode-server-message-delivered");
+    } catch (error) {
+      admission?.reject(error);
+      throw error;
+    }
     const activeMonitor = monitors.get(context.key);
     if (activeMonitor) {
       const activeTurn = turns.get(context.key);
@@ -1827,6 +1888,7 @@ function createOpenCodeTerminalController({
         startedAt
       }, options);
     }
+    admission?.resolve();
     const turn = openCodeTurnSnapshot(turns.get(context.key), target.upstreamSessionId);
     return {
       conversationTurn,
@@ -2377,9 +2439,29 @@ function createOpenCodeTerminalController({
       if (turn) {
         turn.interruptRequested = true;
       }
-      await target.server.client.interrupt(target.upstreamSessionId);
+      const interrupted = Boolean(turn?.active);
+      try {
+        const confirmed = await target.server.client.interrupt(target.upstreamSessionId, {
+          signal: AbortSignal.timeout(OPENCODE_INTERRUPT_TIMEOUT_MS)
+        });
+        if (confirmed !== true) {
+          throw openCodeError("vibe64_opencode_interrupt_unconfirmed", "OpenCode did not confirm Stop. Try Stop again.", {}, 502);
+        }
+      } catch (error) {
+        if (turn) turn.interruptRequested = false;
+        if (error?.name === "TimeoutError") {
+          throw openCodeError("vibe64_opencode_interrupt_timeout", "OpenCode did not confirm Stop within 5 seconds. Try Stop again.", {}, 504);
+        }
+        throw error;
+      }
+      if (turn?.active && turn.abortController) {
+        turn.interruptAcknowledged = true;
+        turn.abortController.abort();
+        turn.admission?.resolve();
+        await monitors.get(context.key);
+      }
       return {
-        interrupted: Boolean(turn?.active),
+        interrupted,
         ok: true,
         thread: { id: target.upstreamSessionId },
         turn: openCodeTurnSnapshot(turn, target.upstreamSessionId)

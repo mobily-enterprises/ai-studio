@@ -17,6 +17,8 @@ Chat responds to confirmed message acceptance and interruption immediately;
 background bookkeeping must not keep Send, Stop, or the saved-commit cleanup
 prompt busy after that confirmation.
 An interruption failure stays visible without covering the composer or its retry controls.
+Provider failures reach the conversation even when no assistant answer is created.
+Confirmed Stop releases chat controls without requiring a final provider message.
 Assistant status recovers automatically after a failed connection check, without
 requiring a page reload or interrupting the assistant's work.
 People can explore a project's database through a readable relationship diagram,
@@ -62,6 +64,8 @@ AI's declared response capacity rather than assuming every model can produce
 the same size answer.
 The chat's Codex models and thinking choices come from the connected Codex
 service, so newly available models appear without an editor update.
+AI choices load while the session is open and remain visible during refresh,
+so opening the model menu does not restart its loading screen each time.
 Codex helper tasks accept the installed stable Codex version when it meets the
 minimum requirement, so upgrading Codex does not require an editor update merely
 to recognise a newer version. Helper isolation checks still apply.

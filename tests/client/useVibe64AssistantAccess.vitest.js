@@ -321,7 +321,7 @@ describe("useVibe64AssistantAccess", () => {
     expect(assistantMenuSource).not.toMatch(/aria-label="Choose AI"[\s\S]{0,180}:disabled=/u);
     expect(assistantMenuSource).toContain('providerConnectedOnly: true');
     expect(assistantMenuSource).toContain('active: catalogActive');
-    expect(assistantMenuSource).toContain('menuOpen.value && props.session?.sessionId && engineId.value');
+    expect(assistantMenuSource).toContain('props.session?.sessionId && engineId.value');
     expect(assistantMenuSource).toContain('provider.connected === true');
     expect(assistantMenuSource).toContain('model.status === "available"');
     expect(assistantMenuSource).toContain('watch([menuOpen, modelProvider, modelRows]');

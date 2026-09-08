@@ -68,6 +68,22 @@ conversation in order, restores it after reconnection, and lets the person
 interrupt the current turn without deleting the session. Agent questions may
 be answered as free text or through suggested choices while the submitted
 reply remains ordinary conversation text.
+OpenCode connects its turn event stream before submitting a new prompt, retaining
+failures raised before a native assistant message exists. An error event does
+not by itself prove execution stopped: native idle state or a completed response
+settles that failure, and its details become a durable conversation notice.
+An acknowledged native abort cancels only that turn's history and event reads,
+persists interruption, and releases the controls without waiting for a final
+assistant message. An unresponsive abort fails after five seconds and permits
+another Stop attempt; it does not claim unconfirmed work has stopped or kill
+other conversations sharing the provider process.
+
+The selected session's model catalogue loads in the background. Opening its
+menu refreshes choices while retaining already loaded controls; only a first
+load shows placeholders. Identical overview and provider-list queries share
+one cached request, including their connected-provider filter. Applying a
+selection still uses the provider's current catalogue validation.
+
 Assistant verification waits up to ten seconds for a competing assistant
 operation to release its lock. The browser coalesces checks for the same
 connection and retries failures after one second, backing off to thirty seconds.

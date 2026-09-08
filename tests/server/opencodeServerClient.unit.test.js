@@ -351,7 +351,9 @@ test("OpenCode client decodes bounded server-sent events", async () => {
     password: "password"
   });
   const events = [];
-  for await (const event of client.events("ses_1", { after: "19" })) {
+  let ready = false;
+  for await (const event of client.events("ses_1", { onReady: () => { ready = true; } })) {
+    assert.equal(ready, true);
     events.push(event);
   }
   assert.deepEqual(events, [
@@ -367,4 +369,16 @@ test("OpenCode client decodes bounded server-sent events", async () => {
     }
   ]);
   assert.equal(new URL(eventUrl).pathname, "/event");
+});
+
+test("OpenCode session status reads native busy state and treats an omitted session as idle", async () => {
+  const client = createOpenCodeServerClient({
+    baseUrl: "http://127.0.0.1:4096",
+    fetchImpl: async (url) => {
+      assert.equal(new URL(url).pathname, "/session/status");
+      return jsonResponse({ ses_busy: { type: "busy" } });
+    }
+  });
+  assert.deepEqual(await client.sessionStatus("ses_busy"), { type: "busy" });
+  assert.deepEqual(await client.sessionStatus("ses_other"), { type: "idle" });
 });

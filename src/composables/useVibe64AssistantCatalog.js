@@ -79,11 +79,14 @@ function useVibe64AssistantCatalog({
       VIBE64_SURFACE_ID,
       ROUTE_VISIBILITY_PUBLIC,
       projectSlug.value,
-      [
+      (normalizedText(providerSearch) || normalizedText(providerCursor) ? [
         "providers",
+        value(providerConnectedOnly) ? "connected" : "all",
         normalizedText(providerSearch),
         normalizedText(providerCursor)
-      ].join(":")
+      ] : [
+        "overview", "opencode", value(providerConnectedOnly) ? "connected" : "all"
+      ]).join(":")
     )),
     queryOptions: {
       refetchOnMount: "always",
@@ -116,6 +119,7 @@ function useVibe64AssistantCatalog({
         "models",
         normalizedText(engineId),
         normalizedText(modelProviderId),
+        value(providerConnectedOnly) ? "connected" : "all",
         normalizedText(modelSearch)
       ].join(":")
     )),

@@ -349,7 +349,7 @@ const assistantSelection = computed(() => props.session?.assistantSelection || n
 const engineId = computed(() => String(assistantSelection.value?.engineId || ""));
 const accessLabel = computed(() => String(props.accessLabel || "").trim());
 const catalogActive = computed(() => Boolean(
-  menuOpen.value && props.session?.sessionId && engineId.value
+  props.session?.sessionId && engineId.value
 ));
 const catalog = useVibe64AssistantCatalog({
   active: catalogActive,
@@ -360,14 +360,12 @@ const catalog = useVibe64AssistantCatalog({
   providerCursor: emptyText,
   providerSearch: emptyText
 });
-const overviewLoading = computed(() => Boolean(
-  catalog.overview.isInitialLoading.value || catalog.overview.isLoading.value
+const overviewLoading = catalog.overview.isInitialLoading;
+const providerLoading = computed(() => engineId.value === "opencode" && (
+  catalog.providerPage.isInitialLoading.value
 ));
-const providerLoading = computed(() => engineId.value === "opencode" && Boolean(
-  catalog.providerPage.isInitialLoading.value || catalog.providerPage.isLoading.value
-));
-const modelLoading = computed(() => Boolean(modelProviderId.value) && Boolean(
-  catalog.modelPage.isInitialLoading.value || catalog.modelPage.isLoading.value
+const modelLoading = computed(() => Boolean(modelProviderId.value) && (
+  catalog.modelPage.isInitialLoading.value
 ));
 const catalogLoading = computed(() => overviewLoading.value || providerLoading.value || modelLoading.value);
 const catalogError = computed(() => String(
