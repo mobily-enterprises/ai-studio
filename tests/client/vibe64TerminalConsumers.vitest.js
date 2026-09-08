@@ -62,7 +62,10 @@ describe("Vibe64 terminal consumers", () => {
 
     expect(launch).toContain('v-if="embeddedTerminalSurfaceVisible"');
     expect(launch).toContain('v-if="!embeddedPreview && terminalWindowVisible"');
-    expect(launch).toMatch(/<Teleport\s+v-if="visible"/u);
+    const toolbarTeleport = launch.match(/<Teleport\b[^>]*>/u)?.[0] || "";
+    expect(toolbarTeleport).toContain(":disabled=\"!toolbarTeleportTarget\"");
+    expect(toolbarTeleport).toContain(":to=\"toolbarTeleportTarget || 'body'\"");
+    expect(toolbarTeleport).not.toContain("v-if=");
     expect(launch.match(/<Vibe64LongRunningTerminal/gu)).toHaveLength(2);
     expect(launch.match(/show-copy/gu)).toHaveLength(2);
     expect(launch.match(/@update:open="setTerminalExpanded"/gu)).toHaveLength(2);

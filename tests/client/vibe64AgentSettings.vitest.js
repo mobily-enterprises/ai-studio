@@ -45,15 +45,15 @@ describe("vibe64AgentSettings", () => {
     expect(displayVibe64AgentSetting("codex", "model", VIBE64_CODEX_GPT_5_5_MODEL)).toBe("GPT-5.5");
   });
 
-  it("normalizes unsupported values before they reach an AI provider adapter", () => {
+  it("preserves current catalogue ids without replacing them with legacy defaults", () => {
     expect(normalizeVibe64AgentSettings({
-      model: "unsupported-model",
+      model: " provider-new-model ",
       providerId: "codex",
-      thinking: "unsupported-thinking"
+      thinking: " provider-new-thinking "
     })).toEqual({
-      model: VIBE64_CODEX_DEFAULT_MODEL,
+      model: "provider-new-model",
       providerId: "codex",
-      thinking: VIBE64_CODEX_DEFAULT_THINKING
+      thinking: "provider-new-thinking"
     });
   });
 
@@ -77,7 +77,7 @@ describe("vibe64AgentSettings", () => {
     }
   });
 
-  it("shows and accepts only the thinking levels supported by the selected Codex model", () => {
+  it("keeps legacy picker choices separate from live-catalogue validation", () => {
     const thinkingValues = (model) => vibe64AgentSettingParameters({
       model,
       providerId: "codex"
@@ -93,7 +93,7 @@ describe("vibe64AgentSettings", () => {
     })).toEqual({
       model: VIBE64_CODEX_SPARK_MODEL,
       providerId: "codex",
-      thinking: VIBE64_CODEX_DEFAULT_THINKING
+      thinking: "max"
     });
   });
 
